@@ -1652,7 +1652,12 @@ textarea { resize: vertical; }
       tile.classList.toggle('top', index === 0);
       tile.classList.toggle('bottom', index !== 0);
       const output = tile.querySelector('.main-timer');
-      if (output) output.textContent = formatClock(values[tile.dataset.clock]);
+      const remaining = values[tile.dataset.clock];
+      if (output) {
+        output.textContent = formatClock(remaining);
+        output.classList.toggle('warning', remaining > 5000 && remaining <= 10000);
+        output.classList.toggle('danger', remaining <= 5000);
+      }
     });
   }
 
@@ -1680,7 +1685,7 @@ textarea { resize: vertical; }
     const responseRemaining = responseClock.sync();
     const displayRemaining = activeDisplayClock() === responseClock ? responseRemaining : mainRemaining;
     renderAlternateTimers(mainRemaining, responseRemaining);
-    if ($('mainTimer')) {
+    if ($('mainTimer') && state.round !== 'alternate') {
       $('mainTimer').textContent = formatClock(displayRemaining);
       $('mainTimer').classList.toggle('warning', displayRemaining > 5000 && displayRemaining <= 10000);
       $('mainTimer').classList.toggle('danger', displayRemaining <= 5000);
@@ -1792,7 +1797,7 @@ textarea { resize: vertical; }
     const responseRemaining = responseClock.sync();
     const displayRemaining = activeDisplayClock() === responseClock ? responseRemaining : mainRemaining;
     renderAlternateTimers(mainRemaining, responseRemaining);
-    if ($('mainTimer')) {
+    if ($('mainTimer') && state.round !== 'alternate') {
       $('mainTimer').textContent = formatClock(displayRemaining);
       $('mainTimer').classList.toggle('warning', displayRemaining > 5000 && displayRemaining <= 10000);
       $('mainTimer').classList.toggle('danger', displayRemaining <= 5000);
