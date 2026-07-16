@@ -198,11 +198,11 @@ kbd {
 .state-badge.running { background: rgba(69,213,138,.16); color: #7df2b0; }
 .state-badge.paused { background: rgba(255,172,89,.15); color: #ffc481; }
 .state-badge.expired { background: rgba(255,102,120,.16); color: #ff94a3; }
-.timer-stack { display: grid; gap: var(--space-sm); margin: var(--space-sm) 0 var(--space-md); }
+.timer-stack { position: relative; display: grid; gap: var(--space-sm); margin: var(--space-sm) 0 var(--space-md); }
 .timer-stack.alternate-grid { grid-template-rows: auto auto; justify-items: center; }
-.timer-button { width: 100%; min-height: 245px; display: flex; flex-direction: column; align-items: center; justify-content: center; background: transparent; border-radius: 20px; padding: var(--space-md); overflow: hidden; }
+.timer-button { position: relative; width: 100%; min-height: 245px; display: flex; flex-direction: column; align-items: center; justify-content: center; background: transparent; border-radius: 20px; padding: var(--space-md); overflow: hidden; }
 .timer-button:hover { background: rgba(255,255,255,.025); }
-.timer-tile { width: 100%; min-height: 118px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; background: rgba(255,255,255,.035); border: 1px solid var(--line); border-radius: 18px; padding: var(--space-md); cursor: pointer; touch-action: none; transition: transform .18s ease, min-height .18s ease, background .18s ease; }
+.timer-tile { position: relative; width: 100%; min-height: 118px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; background: rgba(255,255,255,.035); border: 1px solid var(--line); border-radius: 18px; padding: var(--space-md); cursor: pointer; touch-action: none; transition: transform .18s ease, min-height .18s ease, background .18s ease; }
 .timer-tile:hover { background: rgba(255,255,255,.06); }
 .timer-tile.dragging { opacity: .72; transform: scale(.985); }
 .timer-tile.top { min-height: 230px; }
@@ -215,6 +215,9 @@ kbd {
 .timer-tile.response-clock-tile .main-timer { min-width: 0; font-size: 2.25rem; letter-spacing: -.04em; }
 .timer-tile-label { color: var(--muted); font-size: .75rem; font-weight: 900; letter-spacing: .12em; text-transform: uppercase; }
 .timer-tile-instruction { color: var(--muted); font-size: .78rem; text-align: center; }
+.timer-edit-btn { position: absolute; top: 12px; right: 12px; z-index: 3; width: 38px; height: 38px; display: grid; place-items: center; border-radius: 50%; background: rgba(242,201,76,.14); border: 1px solid rgba(242,201,76,.42); color: var(--gold-2); font-size: 1rem; line-height: 1; }
+.timer-edit-btn:hover { background: rgba(242,201,76,.24); }
+.timer-tile.response-clock-tile .timer-edit-btn { display: none; }
 .main-timer { display: block; min-width: 0; max-width: 100%; text-align: center; white-space: nowrap; font-size: clamp(72px, min(8vw, 16vh), 118px); font-weight: 950; letter-spacing: -.06em; line-height: .95; font-variant-numeric: tabular-nums; }
 .main-timer.warning { color: var(--orange); }
 .main-timer.danger { color: var(--red); animation: timeFlash .5s ease-in-out infinite alternate; }
@@ -473,6 +476,7 @@ textarea { resize: vertical; }
                 <span id="alternateMainClock" class="alternate-main-clock hidden">Main clock<output id="alternateMainTimer">04:00</output></span>
                 <span class="timer-hint">Tap or press Space to start/pause</span>
               </button>
+              <button id="editMainTimerBtn" class="timer-edit-btn" type="button" aria-label="Edit main clock time" title="Edit main clock">✎</button>
             </div>
             <div class="timer-actions">
               <button id="resetMainTimerBtn" type="button" class="secondary-btn">Reset clock</button>
@@ -1160,6 +1164,42 @@ textarea { resize: vertical; }
     changed();
   }
 
+  function parseClockInput(value) {
+    const cleaned = String(value || '').trim();
+    if (!cleaned) return null;
+    if (/^\d+$/.test(cleaned)) return Number(cleaned);
+    const parts = cleaned.split(':').map(part => part.trim());
+    if (parts.length === 2 && parts.every(part => /^\d+$/.test(part))) return Number(parts[0]) * 60 + Number(parts[1]);
+    if (parts.length === 3 && parts.every(part => /^\d+$/.test(part))) return Number(parts[0]) * 3600 + Number(parts[1]) * 60 + Number(parts[2]);
+    return null;
+  }
+
+  function mainRuleFieldForRound() {
+    if (state.round === 'alternate') return 'alternateRoundSeconds';
+    if (state.round === 'speed') return 'speedPeriodSeconds';
+    if (state.round === 'buzzer') return 'buzzerRoundSeconds';
+    return '';
+  }
+
+  function editMainClockTime(event) {
+    event?.stopPropagation();
+    if (state.round === 'complete') return toast('The match is complete.');
+    mainClock.sync();
+    const current = Math.max(0, Math.round(mainClock.remainingMs / 1000));
+    const value = prompt('Enter a custom main clock time as seconds, MM:SS, or HH:MM:SS.', formatClock(current * 1000));
+    if (value === null) return;
+    const seconds = parseClockInput(value);
+    if (!Number.isFinite(seconds) || seconds < 0 || seconds > 24 * 60 * 60) return toast('Enter a valid time up to 24 hours.', true);
+    recordUndo();
+    mainClock.reset(seconds);
+    const field = mainRuleFieldForRound();
+    if (field) state.rules[field] = seconds;
+    state.status = `Main clock set to ${formatClock(seconds * 1000)}`;
+    logEvent('timer_adjusted', `${roundTitle()} main clock set to ${formatClock(seconds * 1000)}`);
+    changed();
+  }
+
+
   function switchActiveTeam() {
     recordUndo();
     state.activeTeam = otherTeam(state.activeTeam);
@@ -1620,8 +1660,10 @@ textarea { resize: vertical; }
           <span id="mainTimer" class="main-timer">00:00</span>
           <span id="alternateMainClock" class="alternate-main-clock hidden">Main clock<output id="alternateMainTimer">00:00</output></span>
           <span class="timer-hint">Tap or press Space to start/pause</span>
-        </button>`;
+        </button>
+        <button id="editMainTimerBtn" class="timer-edit-btn" type="button" aria-label="Edit main clock time" title="Edit main clock">✎</button>`;
         $('mainTimerButton')?.addEventListener('click', toggleMainTimer);
+        $('editMainTimerBtn')?.addEventListener('click', editMainClockTime);
       }
       return;
     }
@@ -1630,14 +1672,17 @@ textarea { resize: vertical; }
     if (existingOrder !== order.join(',')) {
       stack.innerHTML = order.map((kind, index) => {
         const isMain = kind === 'main';
-        return `<button class="timer-tile ${index === 0 ? 'top' : 'bottom'} ${isMain ? '' : 'response-clock-tile'}" type="button" draggable="true" data-clock="${kind}" aria-label="${isMain ? 'Start or pause main clock' : 'Start or pause response time'}">
+        return `<div class="timer-tile ${index === 0 ? 'top' : 'bottom'} ${isMain ? '' : 'response-clock-tile'}" role="button" tabindex="0" draggable="true" data-clock="${kind}" aria-label="${isMain ? 'Start or pause main clock' : 'Start or pause response time'}">
+          ${isMain ? '<button class="timer-edit-btn" type="button" aria-label="Edit main clock time" title="Edit main clock">✎</button>' : ''}
           <span class="timer-tile-label">${isMain ? 'Main clock' : 'Response time'}</span>
           <span id="${isMain ? 'alternateMainTimer' : 'mainTimer'}" class="main-timer">${formatClock(values[kind])}</span>
           <span class="timer-tile-instruction">${isMain ? 'Press Space to start/stop' : 'Click to start/stop response time'} · drag to rearrange</span>
-        </button>`;
+        </div>`;
       }).join('');
       stack.querySelectorAll('.timer-tile').forEach(tile => {
         tile.addEventListener('click', () => tile.dataset.clock === 'main' ? toggleAlternateMainTimer() : toggleResponseTimer());
+        tile.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); tile.click(); } });
+        tile.querySelector('.timer-edit-btn')?.addEventListener('click', editMainClockTime);
         tile.addEventListener('dragstart', event => { tile.classList.add('dragging'); event.dataTransfer.setData('text/plain', tile.dataset.clock); });
         tile.addEventListener('dragend', () => tile.classList.remove('dragging'));
         tile.addEventListener('dragover', event => event.preventDefault());
@@ -1832,6 +1877,7 @@ textarea { resize: vertical; }
 
   function bindEvents() {
     $('mainTimerButton').addEventListener('click', toggleMainTimer);
+    $('editMainTimerBtn').addEventListener('click', editMainClockTime);
     $('resetMainTimerBtn').addEventListener('click', resetMainTimer);
     $('resetResponseTimerBtn').addEventListener('click', resetResponseTimer);
     $('addTenBtn').addEventListener('click', addTenSeconds);
