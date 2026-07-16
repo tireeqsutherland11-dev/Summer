@@ -192,13 +192,25 @@ kbd {
 
 .timer-column { display: grid; gap: var(--space-md); min-width: 0; }
 .timer-card { padding: var(--space-lg); min-height: 390px; }
+.timer-card.alternate-mode { min-height: 520px; }
 .timer-header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-md); }
 .timer-header span:not(.state-badge) { color: var(--muted); }
 .state-badge.running { background: rgba(69,213,138,.16); color: #7df2b0; }
 .state-badge.paused { background: rgba(255,172,89,.15); color: #ffc481; }
 .state-badge.expired { background: rgba(255,102,120,.16); color: #ff94a3; }
+.timer-stack { display: grid; gap: var(--space-sm); margin: var(--space-sm) 0 var(--space-md); }
+.timer-stack.alternate-grid { grid-template-rows: 1.18fr .92fr; }
 .timer-button { width: 100%; min-height: 245px; display: flex; flex-direction: column; align-items: center; justify-content: center; background: transparent; border-radius: 20px; padding: var(--space-md); overflow: hidden; }
 .timer-button:hover { background: rgba(255,255,255,.025); }
+.timer-tile { width: 100%; min-height: 118px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; background: rgba(255,255,255,.035); border: 1px solid var(--line); border-radius: 18px; padding: var(--space-md); cursor: pointer; touch-action: none; transition: transform .18s ease, min-height .18s ease, background .18s ease; }
+.timer-tile:hover { background: rgba(255,255,255,.06); }
+.timer-tile.dragging { opacity: .72; transform: scale(.985); }
+.timer-tile.top { min-height: 245px; }
+.timer-tile.bottom { min-height: 150px; }
+.timer-tile.top .main-timer { font-size: clamp(88px, 9vw, 142px); }
+.timer-tile.bottom .main-timer { font-size: clamp(56px, 6vw, 92px); }
+.timer-tile-label { color: var(--muted); font-size: .75rem; font-weight: 900; letter-spacing: .12em; text-transform: uppercase; }
+.timer-tile-instruction { color: var(--muted); font-size: .78rem; text-align: center; }
 .main-timer { display: block; min-width: 5ch; max-width: 100%; text-align: center; white-space: nowrap; font-size: clamp(88px, 9vw, 142px); font-weight: 950; letter-spacing: -.06em; line-height: .95; font-variant-numeric: tabular-nums; }
 .main-timer.warning { color: var(--orange); }
 .main-timer.danger { color: var(--red); animation: timeFlash .5s ease-in-out infinite alternate; }
@@ -206,9 +218,7 @@ kbd {
 .timer-hint { margin-top: var(--space-md); color: var(--muted); font-size: .82rem; }
 .alternate-main-clock { margin-top: var(--space-sm); color: var(--muted); font-size: .78rem; font-weight: 900; letter-spacing: .08em; text-transform: uppercase; text-align: center; }
 .alternate-main-clock output { display: block; color: var(--text); font-size: clamp(34px, 4vw, 58px); line-height: 1; font-variant-numeric: tabular-nums; letter-spacing: -.04em; }
-.timer-actions { display: grid; grid-template-columns: 1fr 1fr minmax(96px, .9fr); gap: var(--space-sm); }
-.adjust-time-control { display: grid; grid-template-columns: 1fr 70px; gap: 6px; }
-.adjust-time-control input { min-width: 0; border-radius: 11px; border: 1px solid var(--line); background: rgba(255,255,255,.07); color: var(--text); padding: 10px 8px; font-weight: 800; text-align: center; }
+.timer-actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-sm); }
 
 .buzzer-panel { padding: var(--space-lg); display: grid; grid-template-columns: 1fr auto; align-items: center; gap: var(--space-md); }
 .buzzer-status-wrap h3 { font-size: 1.45rem; margin-bottom: 6px; }
@@ -439,13 +449,13 @@ textarea { resize: vertical; }
             <button class="score-nudge" type="button" data-score-team="A" data-delta="1" aria-label="Add one point to Team A">+</button>
           </div>
           <div class="team-actions">
-            <button class="action-btn correct" data-answer="correct" data-team="A" type="button"><span>Correct</span><kbd>A</kbd></button>
-            <button class="action-btn incorrect" data-answer="incorrect" data-team="A" type="button"><span>Incorrect</span><kbd>Z</kbd></button>
+            <button class="action-btn correct" data-answer="correct" data-team="A" type="button"><span>Correct</span><kbd>↑</kbd></button>
+            <button class="action-btn incorrect" data-answer="incorrect" data-team="A" type="button"><span>Incorrect</span><kbd>↓</kbd></button>
           </div>
         </article>
 
         <section class="timer-column">
-          <article class="timer-card card">
+          <article id="timerCard" class="timer-card card">
             <div class="timer-header">
               <div>
                 <p class="eyebrow" id="timerEyebrow">RESPONSE CLOCK</p>
@@ -453,15 +463,17 @@ textarea { resize: vertical; }
               </div>
               <span id="timerStateBadge" class="state-badge">READY</span>
             </div>
-            <button id="mainTimerButton" class="timer-button" type="button" aria-label="Start or pause main timer">
-              <span id="mainTimer" class="main-timer">00:10</span>
-              <span id="alternateMainClock" class="alternate-main-clock hidden">Main clock<output id="alternateMainTimer">04:00</output></span>
-              <span class="timer-hint">Tap or press Space to start/pause</span>
-            </button>
+            <div id="timerStack" class="timer-stack">
+              <button id="mainTimerButton" class="timer-button" type="button" aria-label="Start or pause timer">
+                <span id="mainTimer" class="main-timer">00:10</span>
+                <span id="alternateMainClock" class="alternate-main-clock hidden">Main clock<output id="alternateMainTimer">04:00</output></span>
+                <span class="timer-hint">Tap or press Space to start/pause</span>
+              </button>
+            </div>
             <div class="timer-actions">
               <button id="resetMainTimerBtn" type="button" class="secondary-btn">Reset clock</button>
               <button id="resetResponseTimerBtn" type="button" class="secondary-btn">Reset time</button>
-              <span class="adjust-time-control"><button id="addTenBtn" type="button" class="secondary-btn">+10 sec</button><input id="addSecondsInput" type="number" min="1" max="120" value="10" aria-label="Seconds to add"></span>
+              <button id="addTenBtn" type="button" class="secondary-btn">+10 sec</button>
             </div>
           </article>
 
@@ -516,8 +528,8 @@ textarea { resize: vertical; }
             <button class="score-nudge" type="button" data-score-team="B" data-delta="1" aria-label="Add one point to Team B">+</button>
           </div>
           <div class="team-actions">
-            <button class="action-btn correct" data-answer="correct" data-team="B" type="button"><span>Correct</span><kbd>L</kbd></button>
-            <button class="action-btn incorrect" data-answer="incorrect" data-team="B" type="button"><span>Incorrect</span><kbd>M</kbd></button>
+            <button class="action-btn correct" data-answer="correct" data-team="B" type="button"><span>Correct</span><kbd>←</kbd></button>
+            <button class="action-btn incorrect" data-answer="incorrect" data-team="B" type="button"><span>Incorrect</span><kbd>→</kbd></button>
           </div>
         </article>
       </section>
@@ -810,7 +822,8 @@ textarea { resize: vertical; }
     status: 'Ready',
     lastAction: 'Match ready',
     rules: deepCopy(PRESET_RULES),
-    audit: []
+    audit: [],
+    alternateClockOrder: ['response', 'main']
   });
 
   let state = defaultState();
@@ -1078,18 +1091,40 @@ textarea { resize: vertical; }
   }
 
   function activeDisplayClock() {
-    return state.round === 'alternate' ? responseClock : mainClock;
+    return state.round === 'alternate' ? (state.alternateClockOrder?.[0] === 'main' ? mainClock : responseClock) : mainClock;
+  }
+
+  function toggleResponseTimer() {
+    if (state.round !== 'alternate') return;
+    responseClock.sync();
+    if (!responseClock.running && responseClock.remainingMs <= 0) return toast('Reset the response time before starting it again.');
+    ensureAudio();
+    const running = responseClock.toggle();
+    state.status = running ? 'Response time running' : 'Response time paused';
+    logEvent(running ? 'timer_started' : 'timer_paused', `Response clock ${running ? 'started' : 'paused'}`);
+    changed();
+  }
+
+  function toggleAlternateMainTimer() {
+    if (state.round !== 'alternate') return;
+    mainClock.sync();
+    if (!mainClock.running && mainClock.remainingMs <= 0) return toast('Reset the main clock before starting it again.');
+    ensureAudio();
+    const running = mainClock.toggle();
+    state.status = running ? 'Main clock running' : 'Main clock paused';
+    logEvent(running ? 'timer_started' : 'timer_paused', `Main clock ${running ? 'started' : 'paused'}`);
+    changed();
   }
 
   function toggleMainTimer() {
     if (state.round === 'complete') return toast('The match is complete.');
-    const clock = activeDisplayClock();
+    const clock = state.round === 'alternate' ? mainClock : activeDisplayClock();
     clock.sync();
     if (!clock.running && clock.remainingMs <= 0) return toast('Reset the clock before starting it again.');
     ensureAudio();
     const running = clock.toggle();
     state.status = running ? 'Clock running' : 'Clock paused';
-    logEvent(running ? 'timer_started' : 'timer_paused', `${state.round === 'alternate' ? 'Response' : roundTitle()} clock ${running ? 'started' : 'paused'}`);
+    logEvent(running ? 'timer_started' : 'timer_paused', `${state.round === 'alternate' ? 'Main' : roundTitle()} clock ${running ? 'started' : 'paused'}`);
     changed();
   }
 
@@ -1112,7 +1147,7 @@ textarea { resize: vertical; }
   }
 
   function addTenSeconds() {
-    const seconds = clamp(Number($('addSecondsInput')?.value || 10), 1, 120);
+    const seconds = 10;
     recordUndo();
     activeDisplayClock().addSeconds(seconds);
     state.status = `${seconds} seconds added`;
@@ -1560,6 +1595,61 @@ textarea { resize: vertical; }
     else { img.removeAttribute('src'); img.alt = ''; img.classList.add('hidden'); }
   }
 
+
+  function setAlternateClockOrder(order) {
+    state.alternateClockOrder = order;
+    renderAlternateTimers();
+    scheduleSave();
+  }
+
+  function renderAlternateTimers(mainRemaining, responseRemaining) {
+    const stack = $('timerStack');
+    if (!stack) return;
+    const order = Array.isArray(state.alternateClockOrder) ? state.alternateClockOrder : ['response', 'main'];
+    stack.classList.toggle('alternate-grid', state.round === 'alternate');
+    $('timerCard')?.classList.toggle('alternate-mode', state.round === 'alternate');
+    if (state.round !== 'alternate') {
+      if (!$('mainTimerButton')) {
+        stack.innerHTML = `<button id="mainTimerButton" class="timer-button" type="button" aria-label="Start or pause timer">
+          <span id="mainTimer" class="main-timer">00:00</span>
+          <span id="alternateMainClock" class="alternate-main-clock hidden">Main clock<output id="alternateMainTimer">00:00</output></span>
+          <span class="timer-hint">Tap or press Space to start/pause</span>
+        </button>`;
+        $('mainTimerButton')?.addEventListener('click', toggleMainTimer);
+      }
+      return;
+    }
+    const values = { main: mainRemaining ?? mainClock.sync(), response: responseRemaining ?? responseClock.sync() };
+    const existingOrder = [...stack.querySelectorAll('.timer-tile')].map(tile => tile.dataset.clock).join(',');
+    if (existingOrder !== order.join(',')) {
+      stack.innerHTML = order.map((kind, index) => {
+        const isMain = kind === 'main';
+        return `<button class="timer-tile ${index === 0 ? 'top' : 'bottom'}" type="button" draggable="true" data-clock="${kind}" aria-label="${isMain ? 'Start or pause main clock' : 'Start or pause response time'}">
+          <span class="timer-tile-label">${isMain ? 'Main clock' : 'Response time'}</span>
+          <span id="${isMain ? 'alternateMainTimer' : 'mainTimer'}" class="main-timer">${formatClock(values[kind])}</span>
+          <span class="timer-tile-instruction">${isMain ? 'Press Space to start/stop' : 'Click to start/stop response time'} · drag to rearrange</span>
+        </button>`;
+      }).join('');
+      stack.querySelectorAll('.timer-tile').forEach(tile => {
+        tile.addEventListener('click', () => tile.dataset.clock === 'main' ? toggleAlternateMainTimer() : toggleResponseTimer());
+        tile.addEventListener('dragstart', event => { tile.classList.add('dragging'); event.dataTransfer.setData('text/plain', tile.dataset.clock); });
+        tile.addEventListener('dragend', () => tile.classList.remove('dragging'));
+        tile.addEventListener('dragover', event => event.preventDefault());
+        tile.addEventListener('drop', event => {
+          event.preventDefault();
+          const dragged = event.dataTransfer.getData('text/plain');
+          if (dragged && dragged !== tile.dataset.clock) setAlternateClockOrder([tile.dataset.clock, dragged]);
+        });
+      });
+    }
+    stack.querySelectorAll('.timer-tile').forEach((tile, index) => {
+      tile.classList.toggle('top', index === 0);
+      tile.classList.toggle('bottom', index !== 0);
+      const output = tile.querySelector('.main-timer');
+      if (output) output.textContent = formatClock(values[tile.dataset.clock]);
+    });
+  }
+
   function renderOperator() {
     document.documentElement.style.setProperty('--team-a', state.teams.A.color);
     document.documentElement.style.setProperty('--team-b', state.teams.B.color);
@@ -1582,16 +1672,19 @@ textarea { resize: vertical; }
     $$('.round-tab').forEach(btn => btn.classList.toggle('active', btn.dataset.round === state.round));
     const mainRemaining = mainClock.sync();
     const responseRemaining = responseClock.sync();
-    const displayRemaining = state.round === 'alternate' ? responseRemaining : mainRemaining;
-    $('mainTimer').textContent = formatClock(displayRemaining);
-    $('mainTimer').classList.toggle('warning', displayRemaining > 5000 && displayRemaining <= 10000);
-    $('mainTimer').classList.toggle('danger', displayRemaining <= 5000);
-    $('alternateMainClock').classList.toggle('hidden', state.round !== 'alternate');
-    $('alternateMainTimer').textContent = formatClock(mainRemaining);
+    const displayRemaining = activeDisplayClock() === responseClock ? responseRemaining : mainRemaining;
+    renderAlternateTimers(mainRemaining, responseRemaining);
+    if ($('mainTimer')) {
+      $('mainTimer').textContent = formatClock(displayRemaining);
+      $('mainTimer').classList.toggle('warning', displayRemaining > 5000 && displayRemaining <= 10000);
+      $('mainTimer').classList.toggle('danger', displayRemaining <= 5000);
+    }
+    if ($('alternateMainClock')) $('alternateMainClock').classList.toggle('hidden', state.round !== 'alternate');
+    if ($('alternateMainTimer') && state.round !== 'alternate') $('alternateMainTimer').textContent = formatClock(mainRemaining);
     $('timerEyebrow').textContent = state.round === 'alternate' ? 'RESPONSE CLOCK' : 'MAIN CLOCK';
     $('timerContext').textContent = state.round === 'alternate' ? '10-second response time' : state.round === 'speed' ? `Period ${state.speedPeriod} of ${state.rules.speedPeriodCount}` : state.round === 'buzzer' ? 'Buzzer section' : 'Final result';
     const badge = $('timerStateBadge');
-    const badgeClock = state.round === 'alternate' ? responseClock : mainClock;
+    const badgeClock = state.round === 'alternate' ? activeDisplayClock() : mainClock;
     badge.textContent = badgeClock.running ? 'RUNNING' : displayRemaining <= 0 ? 'ENDED' : displayRemaining < badgeClock.durationMs ? 'PAUSED' : 'READY';
     badge.className = `state-badge ${badgeClock.running ? 'running' : displayRemaining <= 0 ? 'expired' : displayRemaining < badgeClock.durationMs ? 'paused' : ''}`;
 
@@ -1691,15 +1784,18 @@ textarea { resize: vertical; }
   function renderDynamicOperator() {
     const mainRemaining = mainClock.sync();
     const responseRemaining = responseClock.sync();
-    const displayRemaining = state.round === 'alternate' ? responseRemaining : mainRemaining;
-    $('mainTimer').textContent = formatClock(displayRemaining);
-    $('mainTimer').classList.toggle('warning', displayRemaining > 5000 && displayRemaining <= 10000);
-    $('mainTimer').classList.toggle('danger', displayRemaining <= 5000);
-    $('alternateMainClock').classList.toggle('hidden', state.round !== 'alternate');
-    $('alternateMainTimer').textContent = formatClock(mainRemaining);
+    const displayRemaining = activeDisplayClock() === responseClock ? responseRemaining : mainRemaining;
+    renderAlternateTimers(mainRemaining, responseRemaining);
+    if ($('mainTimer')) {
+      $('mainTimer').textContent = formatClock(displayRemaining);
+      $('mainTimer').classList.toggle('warning', displayRemaining > 5000 && displayRemaining <= 10000);
+      $('mainTimer').classList.toggle('danger', displayRemaining <= 5000);
+    }
+    if ($('alternateMainClock')) $('alternateMainClock').classList.toggle('hidden', state.round !== 'alternate');
+    if ($('alternateMainTimer') && state.round !== 'alternate') $('alternateMainTimer').textContent = formatClock(mainRemaining);
     $('responseTimer').textContent = formatClock(responseRemaining);
     const badge = $('timerStateBadge');
-    const badgeClock = state.round === 'alternate' ? responseClock : mainClock;
+    const badgeClock = state.round === 'alternate' ? activeDisplayClock() : mainClock;
     badge.textContent = badgeClock.running ? 'RUNNING' : displayRemaining <= 0 ? 'ENDED' : displayRemaining < badgeClock.durationMs ? 'PAUSED' : 'READY';
     badge.className = `state-badge ${badgeClock.running ? 'running' : displayRemaining <= 0 ? 'expired' : displayRemaining < badgeClock.durationMs ? 'paused' : ''}`;
   }
@@ -1788,10 +1884,10 @@ textarea { resize: vertical; }
       if (audienceMode || event.repeat || event.target.matches('input, textarea, select') || document.querySelector('dialog[open]')) return;
       const key = event.key.toLowerCase();
       if (key === ' ') { event.preventDefault(); toggleMainTimer(); }
-      else if (key === 'a') judgeAnswer('A', 'correct');
-      else if (key === 'z') judgeAnswer('A', 'incorrect');
-      else if (key === 'l') judgeAnswer('B', 'correct');
-      else if (key === 'm') judgeAnswer('B', 'incorrect');
+      else if (key === 'arrowup') { event.preventDefault(); judgeAnswer('A', 'correct'); }
+      else if (key === 'arrowdown') { event.preventDefault(); judgeAnswer('A', 'incorrect'); }
+      else if (key === 'arrowleft') { event.preventDefault(); judgeAnswer('B', 'correct'); }
+      else if (key === 'arrowright') { event.preventDefault(); judgeAnswer('B', 'incorrect'); }
       else if (key === 'p') passQuestion();
       else if (key === 'u') undo();
       else if (key === 'r') resetBuzzers();
