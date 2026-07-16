@@ -174,6 +174,9 @@ kbd {
 .team-card h2 { font-size: clamp(19px, 2.2vw, 28px); overflow-wrap: anywhere; }
 .team-code { color: var(--muted); font-size: .78rem; font-weight: 900; letter-spacing: .12em; margin-bottom: 5px; }
 .active-badge, .state-badge { border-radius: 999px; padding: 6px 9px; font-size: .65rem; font-weight: 950; letter-spacing: .12em; background: rgba(69,213,138,.14); color: #73f3ad; border: 1px solid rgba(69,213,138,.28); }
+.card-reset-btn { position: absolute; top: 14px; right: 14px; z-index: 2; padding: 7px 10px; font-size: .72rem; }
+.question-card { position: relative; }
+.question-card .card-reset-btn { top: 12px; right: 12px; }
 .score-row { display: grid; grid-template-columns: 50px 1fr 50px; align-items: center; gap: 8px; padding: 5px 20px 19px; }
 .score-display { text-align: center; font-variant-numeric: tabular-nums; font-size: clamp(78px, 10vw, 138px); line-height: 1; font-weight: 950; letter-spacing: -.07em; text-shadow: 0 10px 28px rgba(0,0,0,.25); }
 .score-nudge { width: 46px; height: 46px; border-radius: 50%; background: rgba(255,255,255,.065); border: 1px solid var(--line); font-size: 1.5rem; }
@@ -201,7 +204,11 @@ kbd {
 .main-timer.danger { color: var(--red); animation: timeFlash .5s ease-in-out infinite alternate; }
 @keyframes timeFlash { to { opacity: .58; } }
 .timer-hint { margin-top: var(--space-md); color: var(--muted); font-size: .82rem; }
-.timer-actions { display: grid; grid-template-columns: 1fr 1fr 1.25fr; gap: var(--space-sm); }
+.alternate-main-clock { margin-top: var(--space-sm); color: var(--muted); font-size: .78rem; font-weight: 900; letter-spacing: .08em; text-transform: uppercase; text-align: center; }
+.alternate-main-clock output { display: block; color: var(--text); font-size: clamp(34px, 4vw, 58px); line-height: 1; font-variant-numeric: tabular-nums; letter-spacing: -.04em; }
+.timer-actions { display: grid; grid-template-columns: 1fr 1fr minmax(96px, .9fr); gap: var(--space-sm); }
+.adjust-time-control { display: grid; grid-template-columns: 1fr 70px; gap: 6px; }
+.adjust-time-control input { min-width: 0; border-radius: 11px; border: 1px solid var(--line); background: rgba(255,255,255,.07); color: var(--text); padding: 10px 8px; font-weight: 800; text-align: center; }
 
 .buzzer-panel { padding: var(--space-lg); display: grid; grid-template-columns: 1fr auto; align-items: center; gap: var(--space-md); }
 .buzzer-status-wrap h3 { font-size: 1.45rem; margin-bottom: 6px; }
@@ -213,7 +220,7 @@ kbd {
 .question-card { padding: var(--space-lg); display: grid; grid-template-columns: repeat(4, auto); align-items: center; justify-content: space-between; gap: var(--space-md); }
 .question-card strong { font-size: 1.3rem; }
 
-.lower-grid { display: grid; grid-template-columns: .92fr 1.08fr; gap: var(--space-md); margin-top: var(--space-md); }
+.lower-grid { display: grid; grid-template-columns: 1fr; gap: var(--space-md); margin-top: var(--space-md); }
 .quick-actions, .audit-card { padding: var(--space-lg); }
 .section-heading { display: flex; align-items: center; justify-content: space-between; gap: 15px; margin-bottom: 13px; }
 .quick-action-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
@@ -417,6 +424,7 @@ textarea { resize: vertical; }
 
       <section class="control-grid">
         <article id="teamACard" class="team-card card team-a-card" data-team="A">
+          <button class="secondary-btn card-reset-btn" type="button" data-reset-score="A">Reset</button>
           <div class="team-card-header">
             <div class="logo-frame"><img id="teamALogo" alt="" class="team-logo hidden"></div>
             <div>
@@ -433,7 +441,6 @@ textarea { resize: vertical; }
           <div class="team-actions">
             <button class="action-btn correct" data-answer="correct" data-team="A" type="button"><span>Correct</span><kbd>A</kbd></button>
             <button class="action-btn incorrect" data-answer="incorrect" data-team="A" type="button"><span>Incorrect</span><kbd>Z</kbd></button>
-            <button class="action-btn buzz" data-buzz="A" type="button"><span>Buzz A</span><kbd>1</kbd></button>
           </div>
         </article>
 
@@ -441,19 +448,20 @@ textarea { resize: vertical; }
           <article class="timer-card card">
             <div class="timer-header">
               <div>
-                <p class="eyebrow">MAIN CLOCK</p>
+                <p class="eyebrow" id="timerEyebrow">RESPONSE CLOCK</p>
                 <span id="timerContext">Response time</span>
               </div>
               <span id="timerStateBadge" class="state-badge">READY</span>
             </div>
             <button id="mainTimerButton" class="timer-button" type="button" aria-label="Start or pause main timer">
               <span id="mainTimer" class="main-timer">00:10</span>
+              <span id="alternateMainClock" class="alternate-main-clock hidden">Main clock<output id="alternateMainTimer">04:00</output></span>
               <span class="timer-hint">Tap or press Space to start/pause</span>
             </button>
             <div class="timer-actions">
               <button id="resetMainTimerBtn" type="button" class="secondary-btn">Reset clock</button>
-              <button id="addTenBtn" type="button" class="secondary-btn">+10 sec</button>
-              <button id="nextQuestionBtn" type="button" class="primary-btn">Next question <kbd>Enter</kbd></button>
+              <button id="resetResponseTimerBtn" type="button" class="secondary-btn">Reset time</button>
+              <span class="adjust-time-control"><button id="addTenBtn" type="button" class="secondary-btn">+10 sec</button><input id="addSecondsInput" type="number" min="1" max="120" value="10" aria-label="Seconds to add"></span>
             </div>
           </article>
 
@@ -475,6 +483,7 @@ textarea { resize: vertical; }
           </article>
 
           <article class="question-card card">
+            <button id="resetQuestionBtn" type="button" class="secondary-btn card-reset-btn">Reset</button>
             <div>
               <p class="eyebrow">QUESTION</p>
               <strong id="questionNumber">1</strong>
@@ -492,6 +501,7 @@ textarea { resize: vertical; }
         </section>
 
         <article id="teamBCard" class="team-card card team-b-card" data-team="B">
+          <button class="secondary-btn card-reset-btn" type="button" data-reset-score="B">Reset</button>
           <div class="team-card-header">
             <div class="logo-frame"><img id="teamBLogo" alt="" class="team-logo hidden"></div>
             <div>
@@ -508,32 +518,23 @@ textarea { resize: vertical; }
           <div class="team-actions">
             <button class="action-btn correct" data-answer="correct" data-team="B" type="button"><span>Correct</span><kbd>L</kbd></button>
             <button class="action-btn incorrect" data-answer="incorrect" data-team="B" type="button"><span>Incorrect</span><kbd>M</kbd></button>
-            <button class="action-btn buzz" data-buzz="B" type="button"><span>Buzz B</span><kbd>2</kbd></button>
           </div>
         </article>
       </section>
 
       <section class="lower-grid">
-        <article class="quick-actions card">
-          <div class="section-heading">
-            <div><p class="eyebrow">MATCH ACTIONS</p><h3>Fast controls</h3></div>
-            <button id="undoBtn" type="button" class="secondary-btn" disabled>Undo <kbd>U</kbd></button>
-          </div>
-          <div class="quick-action-grid">
-            <button id="passBtn" class="action-btn neutral" type="button">Pass <kbd>P</kbd></button>
-            <button id="timeoutBtn" class="action-btn warning" type="button">Time expired</button>
-            <button id="judgeBtn" class="action-btn neutral" type="button">Judges’ decision</button>
-            <button id="nextRoundBtn" class="action-btn primary" type="button">Next section</button>
-          </div>
-          <div class="last-action">
-            <span>Last action</span>
-            <strong id="lastAction">Match ready</strong>
-          </div>
-        </article>
+        <div class="hidden" aria-hidden="true">
+          <button id="undoBtn" type="button" disabled>Undo</button>
+          <button id="passBtn" type="button">Pass</button>
+          <button id="timeoutBtn" type="button">Time expired</button>
+          <button id="judgeBtn" type="button">Judges’ decision</button>
+          <button id="nextRoundBtn" type="button">Next section</button>
+          <strong id="lastAction">Match ready</strong>
+        </div>
 
         <article class="audit-card card">
           <div class="section-heading">
-            <div><p class="eyebrow">AUDIT TRAIL</p><h3>Recent events</h3></div>
+            <div><p class="eyebrow">RECENT EVENTS</p><h3>Recent events</h3></div>
             <button id="clearLogViewBtn" type="button" class="text-btn">Collapse</button>
           </div>
           <ol id="auditList" class="audit-list" aria-live="polite"></ol>
@@ -652,6 +653,7 @@ textarea { resize: vertical; }
   const MAX_AUDIT = 1500;
 
   const PRESET_RULES = Object.freeze({
+    alternateRoundSeconds: 240,
     alternateResponseSeconds: 10,
     alternateCorrectPoints: 1,
     alternateIncorrectPoints: 0,
@@ -671,6 +673,7 @@ textarea { resize: vertical; }
   });
 
   const RULE_FIELDS = [
+    ['Alternate main clock', 'alternateRoundSeconds', 'seconds', 10, 900],
     ['Alternate response', 'alternateResponseSeconds', 'seconds', 1, 120],
     ['Alternate correct', 'alternateCorrectPoints', 'points', -20, 20],
     ['Alternate incorrect', 'alternateIncorrectPoints', 'points', -20, 20],
@@ -811,8 +814,8 @@ textarea { resize: vertical; }
   });
 
   let state = defaultState();
-  let mainClock = new CountdownClock(PRESET_RULES.alternateResponseSeconds, onMainClockExpired);
-  let responseClock = new CountdownClock(PRESET_RULES.buzzerResponseSeconds, onResponseClockExpired);
+  let mainClock = new CountdownClock(PRESET_RULES.alternateRoundSeconds, onMainClockExpired);
+  let responseClock = new CountdownClock(PRESET_RULES.alternateResponseSeconds, onResponseClockExpired);
   let undoStack = [];
   let saveTimer = 0;
   let publicTimer = 0;
@@ -967,8 +970,8 @@ textarea { resize: vertical; }
       state.audit = Array.isArray(saved.state.audit) ? saved.state.audit : [];
       mainClock = new CountdownClock(0, onMainClockExpired);
       responseClock = new CountdownClock(0, onResponseClockExpired);
-      mainClock.restore(saved.mainClock || { durationMs: state.rules.alternateResponseSeconds * 1000, remainingMs: state.rules.alternateResponseSeconds * 1000 }, false);
-      responseClock.restore(saved.responseClock || { durationMs: state.rules.buzzerResponseSeconds * 1000, remainingMs: state.rules.buzzerResponseSeconds * 1000 }, false);
+      mainClock.restore(saved.mainClock || { durationMs: timerDurationForRound(state.round) * 1000, remainingMs: timerDurationForRound(state.round) * 1000 }, false);
+      responseClock.restore(saved.responseClock || { durationMs: (state.round === 'alternate' ? state.rules.alternateResponseSeconds : state.rules.buzzerResponseSeconds) * 1000, remainingMs: (state.round === 'alternate' ? state.rules.alternateResponseSeconds : state.rules.buzzerResponseSeconds) * 1000 }, false);
       state.status = saved.mainClock?.wasRunning || saved.responseClock?.wasRunning ? 'Recovered safely — clocks paused' : state.status;
       return true;
     } catch { return false; }
@@ -1020,7 +1023,7 @@ textarea { resize: vertical; }
   }
 
   function timerDurationForRound(round) {
-    if (round === 'alternate') return state.rules.alternateResponseSeconds;
+    if (round === 'alternate') return state.rules.alternateRoundSeconds;
     if (round === 'speed') return state.rules.speedPeriodSeconds;
     if (round === 'buzzer') return state.rules.buzzerRoundSeconds;
     return 0;
@@ -1040,7 +1043,7 @@ textarea { resize: vertical; }
     if (round === 'speed' && resetPeriod) state.speedPeriod = 1;
     state.speedPeriod = clamp(state.speedPeriod, 1, state.rules.speedPeriodCount);
     mainClock.reset(timerDurationForRound(round));
-    responseClock.reset(state.rules.buzzerResponseSeconds);
+    responseClock.reset(round === 'alternate' ? state.rules.alternateResponseSeconds : state.rules.buzzerResponseSeconds);
     if (round === 'complete') {
       const a = state.teams.A.score;
       const b = state.teams.B.score;
@@ -1074,14 +1077,19 @@ textarea { resize: vertical; }
     toast('The match is already complete.');
   }
 
+  function activeDisplayClock() {
+    return state.round === 'alternate' ? responseClock : mainClock;
+  }
+
   function toggleMainTimer() {
     if (state.round === 'complete') return toast('The match is complete.');
-    mainClock.sync();
-    if (!mainClock.running && mainClock.remainingMs <= 0) return toast('Reset the clock before starting it again.');
+    const clock = activeDisplayClock();
+    clock.sync();
+    if (!clock.running && clock.remainingMs <= 0) return toast('Reset the clock before starting it again.');
     ensureAudio();
-    const running = mainClock.toggle();
+    const running = clock.toggle();
     state.status = running ? 'Clock running' : 'Clock paused';
-    logEvent(running ? 'timer_started' : 'timer_paused', `${roundTitle()} clock ${running ? 'started' : 'paused'}`);
+    logEvent(running ? 'timer_started' : 'timer_paused', `${state.round === 'alternate' ? 'Response' : roundTitle()} clock ${running ? 'started' : 'paused'}`);
     changed();
   }
 
@@ -1089,17 +1097,26 @@ textarea { resize: vertical; }
     confirmAction('Reset the main clock?', 'The current round clock will return to its full configured duration.', () => {
       recordUndo();
       mainClock.reset(timerDurationForRound(state.round));
-      state.status = 'Clock reset';
+      state.status = 'Main clock reset';
       logEvent('timer_reset', `${roundTitle()} clock reset`);
       changed();
     });
   }
 
-  function addTenSeconds() {
+  function resetResponseTimer() {
     recordUndo();
-    mainClock.addSeconds(10);
-    state.status = 'Ten seconds added';
-    logEvent('timer_adjusted', 'Added 10 seconds to the main clock');
+    responseClock.reset(state.round === 'alternate' ? state.rules.alternateResponseSeconds : state.rules.buzzerResponseSeconds);
+    state.status = 'Response time reset';
+    logEvent('timer_reset', 'Response time reset');
+    changed();
+  }
+
+  function addTenSeconds() {
+    const seconds = clamp(Number($('addSecondsInput')?.value || 10), 1, 120);
+    recordUndo();
+    activeDisplayClock().addSeconds(seconds);
+    state.status = `${seconds} seconds added`;
+    logEvent('timer_adjusted', `Added ${seconds} seconds to the ${state.round === 'alternate' ? 'response' : 'main'} clock`);
     changed();
   }
 
@@ -1147,7 +1164,7 @@ textarea { resize: vertical; }
     sound(outcome);
 
     if (state.round === 'alternate') {
-      mainClock.reset(state.rules.alternateResponseSeconds);
+      responseClock.reset(state.rules.alternateResponseSeconds);
       state.activeTeam = otherTeam(state.activeTeam);
       state.question += 1;
     } else if (state.round === 'speed') {
@@ -1155,6 +1172,23 @@ textarea { resize: vertical; }
     } else {
       finishBuzzerQuestion();
     }
+    changed();
+  }
+
+  function resetScore(team) {
+    recordUndo();
+    state.teams[team].score = 0;
+    state.status = `${teamName(team)} score reset`;
+    logEvent('score_reset', `${teamName(team)} score reset`, team);
+    changed();
+  }
+
+  function resetQuestionCard() {
+    recordUndo();
+    state.question = 1;
+    state.activeTeam = 'A';
+    state.status = 'Question and active team reset';
+    logEvent('question_reset', 'Question reset; Team A selected as active team', 'A');
     changed();
   }
 
@@ -1172,7 +1206,7 @@ textarea { resize: vertical; }
     if (state.round === 'alternate') {
       state.activeTeam = otherTeam(state.activeTeam);
       state.question += 1;
-      mainClock.reset(state.rules.alternateResponseSeconds);
+      responseClock.reset(state.rules.alternateResponseSeconds);
     } else if (state.round === 'speed') {
       state.question += 1;
     } else if (state.round === 'buzzer') {
@@ -1427,8 +1461,8 @@ textarea { resize: vertical; }
     confirmAction('Start a new match?', 'Scores, timers and the current audit trail will be cleared. Export a backup first when needed.', () => {
       state = defaultState();
       undoStack = [];
-      mainClock = new CountdownClock(state.rules.alternateResponseSeconds, onMainClockExpired);
-      responseClock = new CountdownClock(state.rules.buzzerResponseSeconds, onResponseClockExpired);
+      mainClock = new CountdownClock(state.rules.alternateRoundSeconds, onMainClockExpired);
+      responseClock = new CountdownClock(state.rules.alternateResponseSeconds, onResponseClockExpired);
       logEvent('match_created', 'New match created');
       changed();
       openSetup();
@@ -1547,13 +1581,19 @@ textarea { resize: vertical; }
 
     $$('.round-tab').forEach(btn => btn.classList.toggle('active', btn.dataset.round === state.round));
     const mainRemaining = mainClock.sync();
-    $('mainTimer').textContent = formatClock(mainRemaining);
-    $('mainTimer').classList.toggle('warning', mainRemaining > 5000 && mainRemaining <= 10000);
-    $('mainTimer').classList.toggle('danger', mainRemaining <= 5000);
-    $('timerContext').textContent = state.round === 'alternate' ? 'Response time' : state.round === 'speed' ? `Period ${state.speedPeriod} of ${state.rules.speedPeriodCount}` : state.round === 'buzzer' ? 'Buzzer section' : 'Final result';
+    const responseRemaining = responseClock.sync();
+    const displayRemaining = state.round === 'alternate' ? responseRemaining : mainRemaining;
+    $('mainTimer').textContent = formatClock(displayRemaining);
+    $('mainTimer').classList.toggle('warning', displayRemaining > 5000 && displayRemaining <= 10000);
+    $('mainTimer').classList.toggle('danger', displayRemaining <= 5000);
+    $('alternateMainClock').classList.toggle('hidden', state.round !== 'alternate');
+    $('alternateMainTimer').textContent = formatClock(mainRemaining);
+    $('timerEyebrow').textContent = state.round === 'alternate' ? 'RESPONSE CLOCK' : 'MAIN CLOCK';
+    $('timerContext').textContent = state.round === 'alternate' ? '10-second response time' : state.round === 'speed' ? `Period ${state.speedPeriod} of ${state.rules.speedPeriodCount}` : state.round === 'buzzer' ? 'Buzzer section' : 'Final result';
     const badge = $('timerStateBadge');
-    badge.textContent = mainClock.running ? 'RUNNING' : mainRemaining <= 0 ? 'ENDED' : mainRemaining < mainClock.durationMs ? 'PAUSED' : 'READY';
-    badge.className = `state-badge ${mainClock.running ? 'running' : mainRemaining <= 0 ? 'expired' : mainRemaining < mainClock.durationMs ? 'paused' : ''}`;
+    const badgeClock = state.round === 'alternate' ? responseClock : mainClock;
+    badge.textContent = badgeClock.running ? 'RUNNING' : displayRemaining <= 0 ? 'ENDED' : displayRemaining < badgeClock.durationMs ? 'PAUSED' : 'READY';
+    badge.className = `state-badge ${badgeClock.running ? 'running' : displayRemaining <= 0 ? 'expired' : displayRemaining < badgeClock.durationMs ? 'paused' : ''}`;
 
     $('questionNumber').textContent = state.question;
     $('activeTeamLabel').textContent = teamName(state.activeTeam);
@@ -1575,7 +1615,6 @@ textarea { resize: vertical; }
     $('undoBtn').disabled = !undoStack.length;
     $('passBtn').disabled = state.round === 'complete';
     $('timeoutBtn').disabled = state.round === 'complete';
-    $('nextQuestionBtn').disabled = state.round === 'complete';
     $('switchTeamBtn').disabled = state.round === 'buzzer' || state.round === 'complete';
     $('nextRoundBtn').textContent = state.round === 'speed' && state.speedPeriod < state.rules.speedPeriodCount ? 'Next speed period' : state.round === 'buzzer' ? 'Finish match' : state.round === 'complete' ? 'Match complete' : 'Next section';
     $('nextRoundBtn').disabled = state.round === 'complete';
@@ -1652,13 +1691,17 @@ textarea { resize: vertical; }
   function renderDynamicOperator() {
     const mainRemaining = mainClock.sync();
     const responseRemaining = responseClock.sync();
-    $('mainTimer').textContent = formatClock(mainRemaining);
-    $('mainTimer').classList.toggle('warning', mainRemaining > 5000 && mainRemaining <= 10000);
-    $('mainTimer').classList.toggle('danger', mainRemaining <= 5000);
+    const displayRemaining = state.round === 'alternate' ? responseRemaining : mainRemaining;
+    $('mainTimer').textContent = formatClock(displayRemaining);
+    $('mainTimer').classList.toggle('warning', displayRemaining > 5000 && displayRemaining <= 10000);
+    $('mainTimer').classList.toggle('danger', displayRemaining <= 5000);
+    $('alternateMainClock').classList.toggle('hidden', state.round !== 'alternate');
+    $('alternateMainTimer').textContent = formatClock(mainRemaining);
     $('responseTimer').textContent = formatClock(responseRemaining);
     const badge = $('timerStateBadge');
-    badge.textContent = mainClock.running ? 'RUNNING' : mainRemaining <= 0 ? 'ENDED' : mainRemaining < mainClock.durationMs ? 'PAUSED' : 'READY';
-    badge.className = `state-badge ${mainClock.running ? 'running' : mainRemaining <= 0 ? 'expired' : mainRemaining < mainClock.durationMs ? 'paused' : ''}`;
+    const badgeClock = state.round === 'alternate' ? responseClock : mainClock;
+    badge.textContent = badgeClock.running ? 'RUNNING' : displayRemaining <= 0 ? 'ENDED' : displayRemaining < badgeClock.durationMs ? 'PAUSED' : 'READY';
+    badge.className = `state-badge ${badgeClock.running ? 'running' : displayRemaining <= 0 ? 'expired' : displayRemaining < badgeClock.durationMs ? 'paused' : ''}`;
   }
 
   function animationLoop(timestamp) {
@@ -1683,9 +1726,10 @@ textarea { resize: vertical; }
   function bindEvents() {
     $('mainTimerButton').addEventListener('click', toggleMainTimer);
     $('resetMainTimerBtn').addEventListener('click', resetMainTimer);
+    $('resetResponseTimerBtn').addEventListener('click', resetResponseTimer);
     $('addTenBtn').addEventListener('click', addTenSeconds);
-    $('nextQuestionBtn').addEventListener('click', nextQuestion);
     $('switchTeamBtn').addEventListener('click', switchActiveTeam);
+    $('resetQuestionBtn').addEventListener('click', resetQuestionCard);
     $('identifyBtn').addEventListener('click', identifyBuzzerTeam);
     $('beforeIdBtn').addEventListener('click', beforeIdentificationPenalty);
     $('resetBuzzersBtn').addEventListener('click', resetBuzzers);
@@ -1702,6 +1746,7 @@ textarea { resize: vertical; }
     $$('[data-answer]').forEach(btn => btn.addEventListener('click', () => judgeAnswer(btn.dataset.team, btn.dataset.answer)));
     $$('[data-buzz]').forEach(btn => btn.addEventListener('click', () => buzz(btn.dataset.buzz)));
     $$('[data-score-team]').forEach(btn => btn.addEventListener('click', () => manualScore(btn.dataset.scoreTeam, Number(btn.dataset.delta))));
+    $$('[data-reset-score]').forEach(btn => btn.addEventListener('click', () => resetScore(btn.dataset.resetScore)));
     $$('.round-tab').forEach(btn => btn.addEventListener('click', () => btn.dataset.round === 'complete' ? confirmAction('Finish the match?', 'The winner will be calculated from the current scores.', () => configureRound('complete'), 'Finish match') : configureRound(btn.dataset.round, { resetPeriod: btn.dataset.round === 'speed' })));
 
     $('moreBtn').addEventListener('click', () => {
