@@ -328,7 +328,9 @@ input, select, textarea { width: 100%; border: 1px solid var(--line); background
 input[type="color"] { min-height: 44px; padding: 4px; }
 input[type="file"] { font-size: .78rem; }
 textarea { resize: vertical; }
-.rules-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 18px; }
+.rules-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+.rules-section { display: grid; gap: 4px; align-content: start; }
+.rules-section-full { grid-column: 1 / -1; }
 .rule-row { display: grid; grid-template-columns: 1fr 105px; gap: 12px; align-items: center; padding: 10px 0; border-bottom: 1px solid rgba(255,255,255,.07); }
 .rule-row label { margin: 0; color: var(--text); }
 .rule-row small { display: block; color: var(--muted); font-weight: 500; margin-top: 3px; }
@@ -757,26 +759,27 @@ textarea { resize: vertical; }
     incorrectSoundEnabled: true
   });
 
-  const RULE_FIELDS = [
+  const TIME_RULE_FIELDS = [
     ['Alternate main clock', 'alternateRoundSeconds', 'seconds', 10, 900],
     ['Alternate response', 'alternateResponseSeconds', 'seconds', 1, 120],
-    ['Alternate correct', 'alternateCorrectPoints', 'points', -20, 20],
-    ['Alternate incorrect', 'alternateIncorrectPoints', 'points', -20, 20],
     ['Speed minute', 'speedPeriodSeconds', 'seconds', 10, 600],
     ['Number of speed minutes', 'speedPeriodCount', 'minutes', 1, 10],
-    ['Speed correct', 'speedCorrectPoints', 'points', -20, 20],
-    ['Speed incorrect', 'speedIncorrectPoints', 'points', -20, 20],
     ['Buzzer round', 'buzzerRoundSeconds', 'seconds', 10, 900],
-    ['Buzzer response', 'buzzerResponseSeconds', 'seconds', 1, 60],
-    ['Buzzer correct', 'buzzerCorrectPoints', 'points', -20, 20],
-    ['Buzzer incorrect', 'buzzerIncorrectPoints', 'points', -20, 20],
-    ['Before identification', 'buzzerBeforeIdentifiedPoints', 'points', -20, 20],
-    ['Response timeout', 'buzzerTimeoutPoints', 'points', -20, 20]
+    ['Buzzer response', 'buzzerResponseSeconds', 'seconds', 1, 60]
   ];
 
+  const POINT_RULE_FIELDS = [
+    ['Alternate correct', 'alternateCorrectPoints', 'points', -20, 20],
+    ['Alternate incorrect', 'alternateIncorrectPoints', 'points', -20, 20],
+    ['Speed correct', 'speedCorrectPoints', 'points', -20, 20],
+    ['Speed incorrect', 'speedIncorrectPoints', 'points', -20, 20],
+    ['Buzzer correct', 'buzzerCorrectPoints', 'points', -20, 20],
+    ['Buzzer incorrect', 'buzzerIncorrectPoints', 'points', -20, 20]
+  ];
+
+  const RULE_FIELDS = [...TIME_RULE_FIELDS, ...POINT_RULE_FIELDS];
+
   const BOOLEAN_RULE_FIELDS = [
-    ['Pause main clock when a team buzzes', 'pauseMainClockOnBuzz'],
-    ['Apply timeout penalty automatically', 'autoApplyTimeoutPenalty'],
     ['Enable match sounds', 'soundEnabled'],
     ['Play correct-answer sound', 'correctSoundEnabled'],
     ['Play incorrect-answer sound', 'incorrectSoundEnabled']
@@ -1696,19 +1699,31 @@ textarea { resize: vertical; }
 
   function buildRulesForm() {
     const grid = $('rulesGrid');
-    grid.replaceChildren();
-    for (const [label, key, suffix, min, max] of RULE_FIELDS) {
+    const buildNumberRow = ([label, key, suffix, min, max]) => {
       const row = document.createElement('div');
       row.className = 'rule-row';
       row.innerHTML = `<label for="rule_${key}">${label}<small>${suffix}</small></label><input id="rule_${key}" name="${key}" type="number" min="${min}" max="${max}" step="1">`;
-      grid.append(row);
-    }
-    for (const [label, key] of BOOLEAN_RULE_FIELDS) {
+      return row;
+    };
+    const buildCheckRow = ([label, key]) => {
       const row = document.createElement('div');
       row.className = 'rule-row rule-check';
       row.innerHTML = `<label for="rule_${key}">${label}</label><input id="rule_${key}" name="${key}" type="checkbox">`;
-      grid.append(row);
-    }
+      return row;
+    };
+    const buildSection = (legend, rows, rowBuilder, className = '') => {
+      const section = document.createElement('fieldset');
+      section.className = `rules-section ${className}`.trim();
+      section.innerHTML = `<legend>${legend}</legend>`;
+      section.append(...rows.map(rowBuilder));
+      return section;
+    };
+
+    grid.replaceChildren(
+      buildSection('Time configurations', TIME_RULE_FIELDS, buildNumberRow),
+      buildSection('Points configurations', POINT_RULE_FIELDS, buildNumberRow),
+      buildSection('Audio configurations', BOOLEAN_RULE_FIELDS, buildCheckRow, 'rules-section-full')
+    );
   }
 
   function fillRulesForm(rules = state.rules) {
