@@ -257,8 +257,8 @@ kbd {
 .response-timer { font-size: 2.1rem; font-weight: 950; font-variant-numeric: tabular-nums; }
 .response-timer.danger { color: var(--red); animation: timeFlash .5s ease-in-out infinite alternate; }
 .buzzer-actions { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
-.question-card { padding: var(--space-lg) 68px var(--space-lg) var(--space-lg); display: grid; grid-template-columns: repeat(3, minmax(82px, auto)) minmax(118px, auto); align-items: center; justify-content: space-between; gap: var(--space-md); }
-.question-card strong { font-size: 1.3rem; }
+.question-card { padding: var(--space-lg) 68px; display: grid; grid-template-columns: repeat(2, minmax(120px, auto)); align-items: center; justify-content: center; gap: var(--space-xl); text-align: center; }
+.question-card strong { display: block; font-size: 1.3rem; }
 
 .lower-grid { display: grid; grid-template-columns: 1fr; gap: var(--space-md); margin-top: var(--space-md); }
 .quick-actions, .audit-card { padding: var(--space-lg); }
@@ -375,7 +375,7 @@ textarea { resize: vertical; }
   .main-timer { font-size: clamp(85px, 26vw, 136px); }
   .timer-actions, .buzzer-actions { grid-template-columns: 1fr; }
   .buzzer-panel { grid-template-columns: 1fr auto; }
-  .question-card { grid-template-columns: 1fr 1fr; padding-right: 68px; }
+  .question-card { grid-template-columns: 1fr; padding-inline: 68px; }
   .quick-action-grid { grid-template-columns: 1fr 1fr; }
   .audit-list li { grid-template-columns: 68px 1fr; }
   .audit-delta { grid-column: 2; }
@@ -478,7 +478,6 @@ textarea { resize: vertical; }
               <p class="team-code" id="teamAShort">TEAM A</p>
               <h2 id="teamAName">Team A</h2>
             </div>
-            <span id="teamAActiveBadge" class="active-badge">ACTIVE</span>
           </div>
           <div class="score-row">
             <button class="score-nudge" type="button" data-score-team="A" data-delta="-1" aria-label="Subtract one point from Team A">−</button>
@@ -538,7 +537,7 @@ textarea { resize: vertical; }
           </article>
 
           <article class="question-card card">
-            <button id="resetQuestionBtn" type="button" class="secondary-btn card-reset-btn" aria-label="Reset question and active team" title="Reset question and active team"><svg class="reset-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 4v6h6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M5.4 14.2A7 7 0 1 0 6.1 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+            <button id="resetQuestionBtn" type="button" class="secondary-btn card-reset-btn" aria-label="Reset question" title="Reset question"><svg class="reset-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 4v6h6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M5.4 14.2A7 7 0 1 0 6.1 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
             <div>
               <p class="eyebrow">QUESTION</p>
               <strong id="questionNumber">1</strong>
@@ -547,11 +546,6 @@ textarea { resize: vertical; }
               <p class="eyebrow">SPEED MINUTE</p>
               <strong id="speedPeriodLabel">1 / 3</strong>
             </div>
-            <div>
-              <p class="eyebrow">ACTIVE TEAM</p>
-              <strong id="activeTeamLabel">TEAM A</strong>
-            </div>
-            <button id="switchTeamBtn" type="button" class="secondary-btn">Switch team</button>
           </article>
         </section>
 
@@ -563,7 +557,6 @@ textarea { resize: vertical; }
               <p class="team-code" id="teamBShort">TEAM B</p>
               <h2 id="teamBName">Team B</h2>
             </div>
-            <span id="teamBActiveBadge" class="active-badge hidden">ACTIVE</span>
           </div>
           <div class="score-row">
             <button class="score-nudge" type="button" data-score-team="B" data-delta="-1" aria-label="Subtract one point from Team B">−</button>
@@ -638,7 +631,7 @@ textarea { resize: vertical; }
             <output id="audienceScoreB">0</output>
           </article>
         </section>
-        <footer class="audience-footer"><span id="audienceActiveTeam">TEAM A TO ANSWER</span><span id="audienceFooterMessage">MATCH READY</span></footer>
+        <footer class="audience-footer"><span id="audienceActiveTeam">BOTH TEAMS READY</span><span id="audienceFooterMessage">MATCH READY</span></footer>
       </div>
       <button id="exitAudienceBtn" class="exit-audience" type="button">Exit audience mode</button>
     </main>
@@ -670,9 +663,6 @@ textarea { resize: vertical; }
             <select id="setupStage">
               <option>Practice Match</option><option>Preliminary Round</option><option>Round of 16</option><option>Quarter-final</option><option>Semi-final</option><option>Final</option>
             </select>
-          </label>
-          <label>Starting team
-            <select id="setupActiveTeam"><option value="A">Team A</option><option value="B">Team B</option></select>
           </label>
         </fieldset>
       </div>
@@ -1256,7 +1246,6 @@ textarea { resize: vertical; }
         recordUndo();
         state.speedPeriod += 1;
         state.question = 1;
-        state.activeTeam = otherTeam(state.activeTeam);
         mainClock.reset(state.rules.speedPeriodSeconds);
         state.status = `Speed minute ${state.speedPeriod} ready`;
         logEvent('speed_period_changed', `Speed minute ${state.speedPeriod}/${state.rules.speedPeriodCount}`);
@@ -1407,14 +1396,6 @@ textarea { resize: vertical; }
   }
 
 
-  function switchActiveTeam() {
-    recordUndo();
-    state.activeTeam = otherTeam(state.activeTeam);
-    state.status = `${teamName(state.activeTeam)} active`;
-    logEvent('active_team_changed', `${teamName(state.activeTeam)} selected as active team`, state.activeTeam);
-    changed();
-  }
-
   function scorePointsFor(outcome) {
     if (state.round === 'alternate') return outcome === 'correct' ? state.rules.alternateCorrectPoints : state.rules.alternateIncorrectPoints;
     if (state.round === 'speed') return outcome === 'correct' ? 1 : -1;
@@ -1434,11 +1415,7 @@ textarea { resize: vertical; }
 
   function canJudgeAnswer(team) {
     if (state.round === 'alternate' || state.round === 'speed') {
-      if (team !== state.activeTeam) {
-        toast(`${teamName(state.activeTeam)} is the active team.`);
-        return false;
-      }
-      return true;
+      return ['A', 'B'].includes(team);
     }
     if (state.round === 'buzzer') {
       if (!state.buzzerTeam) { toast('No team has buzzed.'); return false; }
@@ -1462,7 +1439,6 @@ textarea { resize: vertical; }
 
     if (state.round === 'alternate') {
       responseClock.reset(state.rules.alternateResponseSeconds);
-      state.activeTeam = otherTeam(state.activeTeam);
       state.question += 1;
     } else if (state.round === 'speed') {
       state.question += 1;
@@ -1487,9 +1463,8 @@ textarea { resize: vertical; }
   function resetQuestionCard() {
     recordUndo();
     state.question = 1;
-    state.activeTeam = 'A';
-    state.status = 'Question and active team reset';
-    logEvent('question_reset', 'Question reset; Team A selected as active team', 'A');
+    state.status = 'Question reset';
+    logEvent('question_reset', 'Question counter reset');
     changed();
   }
 
@@ -1505,7 +1480,6 @@ textarea { resize: vertical; }
     if (state.round === 'complete') return;
     recordUndo();
     if (state.round === 'alternate') {
-      state.activeTeam = otherTeam(state.activeTeam);
       state.question += 1;
       responseClock.reset(state.rules.alternateResponseSeconds);
     } else if (state.round === 'speed') {
@@ -1650,7 +1624,6 @@ textarea { resize: vertical; }
     $('setupBShort').value = state.teams.B.shortName;
     $('setupBColor').value = state.teams.B.color;
     $('setupStage').value = state.stage;
-    $('setupActiveTeam').value = state.activeTeam;
     $('setupDialog').showModal();
   }
 
@@ -1682,7 +1655,6 @@ textarea { resize: vertical; }
       if (aLogoFile) state.teams.A.logo = await fileToDataUrl(aLogoFile);
       if (bLogoFile) state.teams.B.logo = await fileToDataUrl(bLogoFile);
       state.stage = $('setupStage').value;
-      state.activeTeam = $('setupActiveTeam').value;
       state.status = 'Match setup saved';
       logEvent('setup_saved', `${state.teams.A.name} vs ${state.teams.B.name} — ${state.stage}`);
       $('setupALogo').value = '';
@@ -1919,8 +1891,6 @@ textarea { resize: vertical; }
     updateLogo($('teamALogo'), state.teams.A.logo, `${state.teams.A.name} logo`);
     updateLogo($('teamBLogo'), state.teams.B.logo, `${state.teams.B.name} logo`);
 
-    $('teamAActiveBadge').classList.toggle('hidden', state.activeTeam !== 'A' || state.round === 'buzzer');
-    $('teamBActiveBadge').classList.toggle('hidden', state.activeTeam !== 'B' || state.round === 'buzzer');
     $('teamACard').classList.toggle('buzzed', state.buzzerTeam === 'A');
     $('teamBCard').classList.toggle('buzzed', state.buzzerTeam === 'B');
 
@@ -1954,7 +1924,6 @@ textarea { resize: vertical; }
     });
 
     $('questionNumber').textContent = state.question;
-    $('activeTeamLabel').textContent = teamName(state.activeTeam);
     $('speedPeriodBlock').classList.toggle('hidden', state.round !== 'speed');
     $('speedPeriodLabel').textContent = `${state.speedPeriod} / ${state.rules.speedPeriodCount}`;
     const scoringSoundEnabled = Boolean(state.rules.correctSoundEnabled && state.rules.incorrectSoundEnabled);
@@ -1973,12 +1942,11 @@ textarea { resize: vertical; }
     $$('[data-answer]').forEach(btn => {
       const team = btn.dataset.team;
       if (state.round === 'buzzer') btn.disabled = !state.buzzerTeam || state.buzzerTeam !== team || !state.buzzerIdentified;
-      else btn.disabled = state.round === 'complete' || state.activeTeam !== team;
+      else btn.disabled = state.round === 'complete';
     });
     $('undoBtn').disabled = !undoStack.length;
     $('passBtn').disabled = state.round === 'complete';
     $('timeoutBtn').disabled = state.round === 'complete';
-    $('switchTeamBtn').disabled = state.round === 'buzzer' || state.round === 'complete';
     $('nextRoundBtn').textContent = state.round === 'speed' && state.speedPeriod < state.rules.speedPeriodCount ? 'Next speed minute' : state.round === 'buzzer' ? 'Finish match' : state.round === 'complete' ? 'Match complete' : 'Next section';
     $('nextRoundBtn').disabled = state.round === 'complete';
     $('lastAction').textContent = state.lastAction;
@@ -2032,7 +2000,7 @@ textarea { resize: vertical; }
     const responseRemaining = audienceRemaining(p.response);
     $('audienceResponseWrap').classList.toggle('hidden', !(p.round === 'buzzer' && p.buzzerIdentified));
     $('audienceResponse').textContent = formatResponseClock(responseRemaining, false);
-    $('audienceActiveTeam').textContent = p.round === 'buzzer' ? (p.buzzerTeam ? `${p.teams[p.buzzerTeam].shortName} TO ANSWER` : 'BUZZERS ARMED') : `${p.teams[p.activeTeam].shortName} TO ANSWER`;
+    $('audienceActiveTeam').textContent = p.round === 'buzzer' ? (p.buzzerTeam ? `${p.teams[p.buzzerTeam].shortName} TO ANSWER` : 'BUZZERS ARMED') : 'BOTH TEAMS READY';
     $('audienceFooterMessage').textContent = p.complete ? p.winner.toUpperCase() : p.lastAction.toUpperCase();
   }
 
@@ -2121,7 +2089,6 @@ textarea { resize: vertical; }
     $('resetMainTimerBtn').addEventListener('click', resetMainTimer);
     $('resetResponseTimerBtn').addEventListener('click', resetResponseTimer);
     $('addTenBtn').addEventListener('click', addTenSeconds);
-    $('switchTeamBtn').addEventListener('click', switchActiveTeam);
     $('resetQuestionBtn').addEventListener('click', resetQuestionCard);
     $('identifyBtn').addEventListener('click', identifyBuzzerTeam);
     $('beforeIdBtn').addEventListener('click', beforeIdentificationPenalty);
