@@ -178,9 +178,8 @@ kbd {
 .card-reset-btn svg { width: 18px; height: 18px; display: block; }
 .question-card { position: relative; }
 .question-card .card-reset-btn { top: 12px; right: 12px; }
-.sound-toggle-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; width: 100%; }
-.sound-toggle { min-height: 38px; padding: 8px 10px; border-radius: 11px; background: rgba(255,255,255,.065); border: 1px solid var(--line); color: var(--text); font-size: .74rem; font-weight: 900; letter-spacing: .04em; }
-.sound-toggle[aria-pressed="false"] { background: rgba(255,102,120,.10); border-color: rgba(255,102,120,.28); color: #ffb4bf; }
+.scoring-sound-toggle { min-height: 38px; padding: 8px 12px; border-radius: 11px; background: rgba(255,255,255,.065); border: 1px solid var(--line); color: var(--text); font-size: .78rem; font-weight: 900; letter-spacing: .04em; white-space: nowrap; }
+.scoring-sound-toggle[aria-pressed="false"] { background: rgba(255,102,120,.10); border-color: rgba(255,102,120,.28); color: #ffb4bf; }
 .score-row { position: relative; display: grid; place-items: center; flex: 1; min-height: 0; padding: 15px 68px; }
 .score-display { text-align: center; font-variant-numeric: tabular-nums; font-size: clamp(96px, 10.5vw, 154px); line-height: .96; font-weight: 950; letter-spacing: -.06em; text-shadow: 0 10px 28px rgba(0,0,0,.25); }
 .score-nudge { position: absolute; top: 50%; width: 40px; height: 40px; border-radius: 50%; background: rgba(255,255,255,.065); border: 1px solid var(--line); font-size: 1.35rem; transform: translateY(-50%); }
@@ -423,6 +422,7 @@ textarea { resize: vertical; }
         </div>
       </div>
       <div class="topbar-actions">
+        <button id="scoringSoundToggle" class="scoring-sound-toggle hidden" type="button" aria-pressed="true">Scoring sound on</button>
         <span id="saveStatus" class="save-status">Saved locally</span>
         <button id="wakeLockBtn" class="ghost-btn" type="button" title="Keep this screen awake">Keep awake</button>
         <button id="openAudienceBtn" class="ghost-btn" type="button">Open audience display</button>
@@ -530,10 +530,6 @@ textarea { resize: vertical; }
             <div>
               <p class="eyebrow">ACTIVE TEAM</p>
               <strong id="activeTeamLabel">TEAM A</strong>
-            </div>
-            <div id="speedSoundToggles" class="sound-toggle-row hidden" aria-label="Speed section sound controls">
-              <button id="correctSoundToggle" class="sound-toggle" type="button" aria-pressed="true">Correct sound on</button>
-              <button id="incorrectSoundToggle" class="sound-toggle" type="button" aria-pressed="true">Incorrect sound on</button>
             </div>
             <button id="switchTeamBtn" type="button" class="secondary-btn">Switch team</button>
           </article>
@@ -1297,12 +1293,12 @@ textarea { resize: vertical; }
     return 0;
   }
 
-  function toggleAnswerSound(kind) {
-    if (kind !== 'correct' && kind !== 'incorrect') return;
-    const key = kind === 'correct' ? 'correctSoundEnabled' : 'incorrectSoundEnabled';
+  function toggleScoringSound() {
+    const enableScoringSounds = !(state.rules.correctSoundEnabled && state.rules.incorrectSoundEnabled);
     recordUndo();
-    state.rules[key] = !state.rules[key];
-    state.status = `${kind === 'correct' ? 'Correct' : 'Incorrect'} sound ${state.rules[key] ? 'enabled' : 'muted'}`;
+    state.rules.correctSoundEnabled = enableScoringSounds;
+    state.rules.incorrectSoundEnabled = enableScoringSounds;
+    state.status = `Scoring sound ${enableScoringSounds ? 'enabled' : 'muted'}`;
     logEvent('sound_toggle', state.status);
     changed();
   }
@@ -1843,11 +1839,10 @@ textarea { resize: vertical; }
     $('activeTeamLabel').textContent = teamName(state.activeTeam);
     $('speedPeriodBlock').classList.toggle('hidden', state.round !== 'speed');
     $('speedPeriodLabel').textContent = `${state.speedPeriod} / ${state.rules.speedPeriodCount}`;
-    $('speedSoundToggles').classList.toggle('hidden', state.round !== 'speed');
-    $('correctSoundToggle').setAttribute('aria-pressed', String(Boolean(state.rules.correctSoundEnabled)));
-    $('correctSoundToggle').textContent = `Correct sound ${state.rules.correctSoundEnabled ? 'on' : 'muted'}`;
-    $('incorrectSoundToggle').setAttribute('aria-pressed', String(Boolean(state.rules.incorrectSoundEnabled)));
-    $('incorrectSoundToggle').textContent = `Incorrect sound ${state.rules.incorrectSoundEnabled ? 'on' : 'muted'}`;
+    const scoringSoundEnabled = Boolean(state.rules.correctSoundEnabled && state.rules.incorrectSoundEnabled);
+    $('scoringSoundToggle').classList.toggle('hidden', state.round !== 'speed');
+    $('scoringSoundToggle').setAttribute('aria-pressed', String(scoringSoundEnabled));
+    $('scoringSoundToggle').textContent = `Scoring sound ${scoringSoundEnabled ? 'on' : 'muted'}`;
     $('buzzerPanel').classList.toggle('hidden', state.round !== 'buzzer');
     $('responseTimer').textContent = formatResponseClock(responseClock.sync());
     $('responseTimer').classList.toggle('danger', responseClock.sync() <= 5000);
@@ -1997,8 +1992,7 @@ textarea { resize: vertical; }
     $('timeoutBtn').addEventListener('click', timeoutAction);
     $('judgeBtn').addEventListener('click', () => $('judgeDialog').showModal());
     $('nextRoundBtn').addEventListener('click', nextRound);
-    $('correctSoundToggle').addEventListener('click', () => toggleAnswerSound('correct'));
-    $('incorrectSoundToggle').addEventListener('click', () => toggleAnswerSound('incorrect'));
+    $('scoringSoundToggle').addEventListener('click', toggleScoringSound);
     $('undoBtn').addEventListener('click', undo);
     $('openAudienceBtn').addEventListener('click', openAudience);
     $('fullscreenBtn').addEventListener('click', toggleFullscreen);
