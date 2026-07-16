@@ -319,6 +319,10 @@ textarea { resize: vertical; }
 .rule-check { grid-template-columns: 1fr auto; }
 .rule-check input { width: 22px; height: 22px; }
 .confirm-dialog { width: min(520px, calc(100vw - 24px)); }
+.time-edit-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-md); }
+.time-edit-grid input { text-align: center; font-size: 1.35rem; font-weight: 900; font-variant-numeric: tabular-nums; }
+.time-edit-help { color: var(--muted); margin-bottom: var(--space-md); }
+@media (max-width: 520px) { .time-edit-grid { grid-template-columns: 1fr; } }
 
 .toast-region { position: fixed; right: 16px; bottom: 16px; display: grid; gap: 8px; z-index: 200; pointer-events: none; }
 .toast { max-width: min(420px, calc(100vw - 32px)); padding: 12px 15px; background: #183252; border: 1px solid var(--line); border-radius: 11px; box-shadow: var(--shadow); font-weight: 750; animation: toastIn .18s ease-out; }
@@ -667,6 +671,21 @@ textarea { resize: vertical; }
     </form>
   </dialog>
 
+  <dialog id="timeEditDialog" class="app-dialog confirm-dialog">
+    <form id="timeEditForm" method="dialog">
+      <header class="dialog-header"><div><p class="eyebrow">MANUAL TIME EDIT</p><h2>Set main clock</h2></div><button type="button" class="icon-btn close-dialog" aria-label="Close">×</button></header>
+      <div class="dialog-body">
+        <p class="time-edit-help">Choose the new main clock time without leaving the app.</p>
+        <div class="time-edit-grid">
+          <label>Hours<input id="timeEditHours" type="number" min="0" max="24" step="1" inputmode="numeric" value="0"></label>
+          <label>Minutes<input id="timeEditMinutes" type="number" min="0" max="59" step="1" inputmode="numeric" value="0"></label>
+          <label>Seconds<input id="timeEditSeconds" type="number" min="0" max="59" step="1" inputmode="numeric" value="0"></label>
+        </div>
+      </div>
+      <footer class="dialog-footer"><button type="button" class="secondary-btn close-dialog">Cancel</button><button type="submit" class="primary-btn">Set time</button></footer>
+    </form>
+  </dialog>
+
   <input id="importFileInput" type="file" accept="application/json,.json" class="hidden">
   <div id="toastRegion" class="toast-region" aria-live="polite" aria-atomic="true"></div>
   <script>
@@ -875,6 +894,11 @@ textarea { resize: vertical; }
     const minutes = Math.floor(totalSeconds / 60);
     const seconds = totalSeconds % 60;
     return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  }
+
+  function formatResponseClock(ms, padded = true) {
+    const seconds = Math.max(0, Math.ceil(Math.max(0, Math.ceil(ms)) / 1000));
+    return padded ? String(seconds).padStart(2, '0') : String(seconds);
   }
 
   function timeOnly(iso) {
@@ -1188,15 +1212,56 @@ textarea { resize: vertical; }
     return '';
   }
 
-  function editMainClockTime(event) {
+  function showTimeEditDialog(currentSeconds) {
+    const dialog = $('timeEditDialog');
+    const form = $('timeEditForm');
+    const hoursInput = $('timeEditHours');
+    const minutesInput = $('timeEditMinutes');
+    const secondsInput = $('timeEditSeconds');
+    if (!dialog || !form || !hoursInput || !minutesInput || !secondsInput) return Promise.resolve(null);
+    const current = Math.max(0, Math.floor(currentSeconds));
+    hoursInput.value = String(Math.floor(current / 3600));
+    minutesInput.value = String(Math.floor((current % 3600) / 60));
+    secondsInput.value = String(current % 60);
+    return new Promise(resolve => {
+      let submitted = false;
+      const cleanup = () => {
+        form.removeEventListener('submit', handleSubmit);
+        dialog.removeEventListener('close', handleClose);
+      };
+      const handleSubmit = event => {
+        event.preventDefault();
+        submitted = true;
+        const hours = Number(hoursInput.value || 0);
+        const minutes = Number(minutesInput.value || 0);
+        const seconds = Number(secondsInput.value || 0);
+        cleanup();
+        dialog.close();
+        resolve({ hours, minutes, seconds });
+      };
+      const handleClose = () => {
+        if (!submitted) {
+          cleanup();
+          resolve(null);
+        }
+      };
+      form.addEventListener('submit', handleSubmit);
+      dialog.addEventListener('close', handleClose);
+      dialog.showModal();
+      secondsInput.focus();
+      secondsInput.select();
+    });
+  }
+
+  async function editMainClockTime(event) {
     event?.stopPropagation();
     if (state.round === 'complete') return toast('The match is complete.');
     mainClock.sync();
     const current = Math.max(0, Math.round(mainClock.remainingMs / 1000));
-    const value = prompt('Enter a custom main clock time as seconds, MM:SS, or HH:MM:SS.', formatClock(current * 1000));
-    if (value === null) return;
-    const seconds = parseClockInput(value);
-    if (!Number.isFinite(seconds) || seconds < 0 || seconds > 24 * 60 * 60) return toast('Enter a valid time up to 24 hours.', true);
+    const value = await showTimeEditDialog(current);
+    if (!value) return;
+    const seconds = (value.hours * 3600) + (value.minutes * 60) + value.seconds;
+    if (!Number.isFinite(seconds) || seconds < 0 || seconds > 24 * 60 * 60 || value.minutes < 0 || value.minutes > 59 || value.seconds < 0 || value.seconds > 59) return toast('Enter a valid time up to 24 hours.', true);
     recordUndo();
     mainClock.reset(seconds);
     const field = mainRuleFieldForRound();
@@ -1682,7 +1747,7 @@ textarea { resize: vertical; }
         return `<div class="timer-tile ${index === 0 ? 'top' : 'bottom'} ${isMain ? '' : 'response-clock-tile'}" role="button" tabindex="0" draggable="true" data-clock="${kind}" aria-label="${isMain ? 'Start or pause main clock' : 'Start or pause response time'}">
           ${isMain ? '<button class="timer-edit-btn" type="button" aria-label="Edit main clock time" title="Edit main clock">✎</button>' : ''}
           <span class="timer-tile-label">${isMain ? 'Main clock' : 'Response<br>time'}</span>
-          <span id="${isMain ? 'alternateMainTimer' : 'mainTimer'}" class="main-timer">${formatClock(values[kind])}</span>
+          <span id="${isMain ? 'alternateMainTimer' : 'mainTimer'}" class="main-timer">${isMain ? formatClock(values[kind]) : formatResponseClock(values[kind])}</span>
           <span class="timer-tile-instruction">${isMain ? 'Press Space to start/stop' : 'Click to start/stop response time'} · drag to rearrange</span>
         </div>`;
       }).join('');
@@ -1706,7 +1771,7 @@ textarea { resize: vertical; }
       const output = tile.querySelector('.main-timer');
       const remaining = values[tile.dataset.clock];
       if (output) {
-        output.textContent = formatClock(remaining);
+        output.textContent = tile.dataset.clock === 'response' ? formatResponseClock(remaining) : formatClock(remaining);
         output.classList.toggle('warning', remaining > 5000 && remaining <= 10000);
         output.classList.toggle('danger', remaining <= 5000);
       }
@@ -1756,7 +1821,7 @@ textarea { resize: vertical; }
     $('speedPeriodBlock').classList.toggle('hidden', state.round !== 'speed');
     $('speedPeriodLabel').textContent = `${state.speedPeriod} / ${state.rules.speedPeriodCount}`;
     $('buzzerPanel').classList.toggle('hidden', state.round !== 'buzzer');
-    $('responseTimer').textContent = formatClock(responseClock.sync());
+    $('responseTimer').textContent = formatResponseClock(responseClock.sync());
     $('responseTimer').classList.toggle('danger', responseClock.sync() <= 5000);
     $('responseTimer').closest('.response-clock-wrap')?.classList.toggle('danger', responseClock.sync() <= 5000);
     $('buzzerStatus').textContent = !state.buzzerTeam ? 'Buzzers armed' : state.buzzerIdentified ? `${teamName(state.buzzerTeam)} identified` : `${teamName(state.buzzerTeam)} buzzed`;
@@ -1808,7 +1873,7 @@ textarea { resize: vertical; }
     $('audienceQuestion').textContent = p.question;
     const responseRemaining = audienceRemaining(p.response);
     $('audienceResponseWrap').classList.toggle('hidden', !(p.round === 'buzzer' && p.buzzerIdentified));
-    $('audienceResponse').textContent = Math.max(0, Math.ceil(responseRemaining / 1000));
+    $('audienceResponse').textContent = formatResponseClock(responseRemaining, false);
     $('audienceActiveTeam').textContent = p.round === 'buzzer' ? (p.buzzerTeam ? `${p.teams[p.buzzerTeam].shortName} TO ANSWER` : 'BUZZERS ARMED') : `${p.teams[p.activeTeam].shortName} TO ANSWER`;
     $('audienceFooterMessage').textContent = p.complete ? p.winner.toUpperCase() : p.lastAction.toUpperCase();
   }
@@ -1858,7 +1923,7 @@ textarea { resize: vertical; }
     }
     if ($('alternateMainClock')) $('alternateMainClock').classList.toggle('hidden', state.round !== 'alternate');
     if ($('alternateMainTimer') && state.round !== 'alternate') $('alternateMainTimer').textContent = formatClock(mainRemaining);
-    $('responseTimer').textContent = formatClock(responseRemaining);
+    $('responseTimer').textContent = formatResponseClock(responseRemaining);
     $('responseTimer').classList.toggle('danger', responseRemaining <= 5000);
     $('responseTimer').closest('.response-clock-wrap')?.classList.toggle('danger', responseRemaining <= 5000);
     const badge = $('timerStateBadge');
