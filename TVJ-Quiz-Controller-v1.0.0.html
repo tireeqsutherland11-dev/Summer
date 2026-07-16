@@ -161,15 +161,15 @@ kbd {
 .round-tab.active { color: #0a1527; background: var(--gold); }
 .round-tab:hover:not(.active) { background: rgba(255,255,255,.09); color: var(--text); }
 
-.control-grid { display: grid; grid-template-columns: minmax(300px, 1fr) minmax(420px, 1fr) minmax(300px, 1fr); gap: var(--space-md); align-items: stretch; }
-.team-card { overflow: hidden; position: relative; min-height: 575px; display: flex; flex-direction: column; }
+.control-grid { display: grid; grid-template-columns: minmax(260px, .86fr) minmax(340px, .9fr) minmax(260px, .86fr); gap: clamp(10px, 1.2vw, var(--space-md)); align-items: stretch; }
+.team-card { overflow: hidden; position: relative; min-height: 500px; display: flex; flex-direction: column; }
 .team-card::before { content: ""; position: absolute; inset: 0 0 auto; height: 7px; background: var(--team-color); }
 .team-a-card { --team-color: var(--team-a); }
 .team-b-card { --team-color: var(--team-b); }
 .team-card.buzzed { box-shadow: 0 0 0 3px var(--gold), 0 0 70px color-mix(in srgb, var(--team-color), transparent 48%); animation: buzzPulse .75s ease-in-out infinite alternate; }
 @keyframes buzzPulse { from { box-shadow: 0 0 0 3px var(--gold), 0 0 30px color-mix(in srgb, var(--team-color), transparent 62%); } to { box-shadow: 0 0 0 5px var(--gold), 0 0 78px color-mix(in srgb, var(--team-color), transparent 38%); } }
-.team-card-header { min-height: 116px; display: grid; grid-template-columns: 66px 1fr auto; gap: 13px; align-items: center; padding: 24px 22px 15px; }
-.logo-frame { width: 62px; height: 62px; display: grid; place-items: center; background: rgba(255,255,255,.06); border-radius: 16px; border: 1px solid var(--line); }
+.team-card-header { min-height: 104px; display: grid; grid-template-columns: 58px 1fr auto; gap: 11px; align-items: center; padding: 21px 18px 12px; }
+.logo-frame { width: 54px; height: 54px; display: grid; place-items: center; background: rgba(255,255,255,.06); border-radius: 14px; border: 1px solid var(--line); }
 .team-logo { max-width: 90%; max-height: 90%; object-fit: contain; }
 .team-card h2 { font-size: clamp(19px, 2.2vw, 28px); overflow-wrap: anywhere; }
 .team-code { color: var(--muted); font-size: .78rem; font-weight: 900; letter-spacing: .12em; margin-bottom: 5px; }
@@ -177,11 +177,11 @@ kbd {
 .card-reset-btn { position: absolute; top: 14px; right: 14px; z-index: 2; padding: 7px 10px; font-size: .72rem; }
 .question-card { position: relative; }
 .question-card .card-reset-btn { top: 12px; right: 12px; }
-.score-row { display: grid; grid-template-columns: 50px 1fr 50px; align-items: center; gap: 8px; padding: 5px 20px 19px; }
-.score-display { text-align: center; font-variant-numeric: tabular-nums; font-size: clamp(78px, 10vw, 138px); line-height: 1; font-weight: 950; letter-spacing: -.07em; text-shadow: 0 10px 28px rgba(0,0,0,.25); }
-.score-nudge { width: 46px; height: 46px; border-radius: 50%; background: rgba(255,255,255,.065); border: 1px solid var(--line); font-size: 1.5rem; }
+.score-row { display: grid; grid-template-columns: 44px 1fr 44px; align-items: center; gap: 6px; padding: 2px 16px 15px; }
+.score-display { text-align: center; font-variant-numeric: tabular-nums; font-size: clamp(68px, 8vw, 112px); line-height: 1; font-weight: 950; letter-spacing: -.07em; text-shadow: 0 10px 28px rgba(0,0,0,.25); }
+.score-nudge { width: 40px; height: 40px; border-radius: 50%; background: rgba(255,255,255,.065); border: 1px solid var(--line); font-size: 1.35rem; }
 .score-nudge:hover { background: rgba(255,255,255,.12); }
-.team-actions { padding: 18px; display: grid; gap: 10px; margin-top: auto; background: rgba(0,0,0,.10); border-top: 1px solid var(--line); }
+.team-actions { padding: 14px; display: grid; gap: 9px; margin-top: auto; background: rgba(0,0,0,.10); border-top: 1px solid var(--line); }
 .action-btn { min-height: 54px; border-radius: 13px; padding: 13px 16px; font-weight: 900; display: flex; align-items: center; justify-content: space-between; gap: 10px; border: 1px solid transparent; }
 .action-btn.correct { background: rgba(69,213,138,.14); border-color: rgba(69,213,138,.34); color: #8ef8bd; }
 .action-btn.incorrect { background: rgba(255,102,120,.13); border-color: rgba(255,102,120,.32); color: #ff9cab; }
@@ -191,24 +191,28 @@ kbd {
 .action-btn.primary { background: var(--gold); color: #0a1424; }
 
 .timer-column { display: grid; gap: var(--space-md); min-width: 0; }
-.timer-card { padding: var(--space-lg); min-height: 390px; }
-.timer-card.alternate-mode { min-height: 520px; }
+.timer-card { padding: clamp(14px, 1.4vw, var(--space-lg)); min-height: 360px; }
+.timer-card.alternate-mode { min-height: 460px; }
 .timer-header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-md); }
 .timer-header span:not(.state-badge) { color: var(--muted); }
 .state-badge.running { background: rgba(69,213,138,.16); color: #7df2b0; }
 .state-badge.paused { background: rgba(255,172,89,.15); color: #ffc481; }
 .state-badge.expired { background: rgba(255,102,120,.16); color: #ff94a3; }
 .timer-stack { display: grid; gap: var(--space-sm); margin: var(--space-sm) 0 var(--space-md); }
-.timer-stack.alternate-grid { grid-template-rows: 1.18fr .92fr; }
+.timer-stack.alternate-grid { grid-template-rows: auto auto; justify-items: center; }
 .timer-button { width: 100%; min-height: 245px; display: flex; flex-direction: column; align-items: center; justify-content: center; background: transparent; border-radius: 20px; padding: var(--space-md); overflow: hidden; }
 .timer-button:hover { background: rgba(255,255,255,.025); }
 .timer-tile { width: 100%; min-height: 118px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; background: rgba(255,255,255,.035); border: 1px solid var(--line); border-radius: 18px; padding: var(--space-md); cursor: pointer; touch-action: none; transition: transform .18s ease, min-height .18s ease, background .18s ease; }
 .timer-tile:hover { background: rgba(255,255,255,.06); }
 .timer-tile.dragging { opacity: .72; transform: scale(.985); }
-.timer-tile.top { min-height: 245px; }
-.timer-tile.bottom { min-height: 150px; }
+.timer-tile.top { min-height: 230px; }
+.timer-tile.bottom { min-height: 140px; }
+.timer-tile.response-clock-tile { width: 132px; min-height: 132px; aspect-ratio: 1; border-radius: 50%; gap: 4px; padding: 12px; border: 5px solid rgba(242,201,76,.32); background: rgba(242,201,76,.07); }
+.timer-tile.response-clock-tile .timer-tile-label { color: var(--gold); font-size: .62rem; }
+.timer-tile.response-clock-tile .timer-tile-instruction { display: none; }
 .timer-tile.top .main-timer { font-size: clamp(88px, 9vw, 142px); }
 .timer-tile.bottom .main-timer { font-size: clamp(56px, 6vw, 92px); }
+.timer-tile.response-clock-tile .main-timer { min-width: 0; font-size: 2.25rem; letter-spacing: -.04em; }
 .timer-tile-label { color: var(--muted); font-size: .75rem; font-weight: 900; letter-spacing: .12em; text-transform: uppercase; }
 .timer-tile-instruction { color: var(--muted); font-size: .78rem; text-align: center; }
 .main-timer { display: block; min-width: 5ch; max-width: 100%; text-align: center; white-space: nowrap; font-size: clamp(88px, 9vw, 142px); font-weight: 950; letter-spacing: -.06em; line-height: .95; font-variant-numeric: tabular-nums; }
@@ -1624,7 +1628,7 @@ textarea { resize: vertical; }
     if (existingOrder !== order.join(',')) {
       stack.innerHTML = order.map((kind, index) => {
         const isMain = kind === 'main';
-        return `<button class="timer-tile ${index === 0 ? 'top' : 'bottom'}" type="button" draggable="true" data-clock="${kind}" aria-label="${isMain ? 'Start or pause main clock' : 'Start or pause response time'}">
+        return `<button class="timer-tile ${index === 0 ? 'top' : 'bottom'} ${isMain ? '' : 'response-clock-tile'}" type="button" draggable="true" data-clock="${kind}" aria-label="${isMain ? 'Start or pause main clock' : 'Start or pause response time'}">
           <span class="timer-tile-label">${isMain ? 'Main clock' : 'Response time'}</span>
           <span id="${isMain ? 'alternateMainTimer' : 'mainTimer'}" class="main-timer">${formatClock(values[kind])}</span>
           <span class="timer-tile-instruction">${isMain ? 'Press Space to start/stop' : 'Click to start/stop response time'} · drag to rearrange</span>
