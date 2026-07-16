@@ -435,8 +435,7 @@ textarea { resize: vertical; }
         </div>
       </div>
       <div class="topbar-actions">
-        <button id="scoringSoundToggle" class="scoring-sound-toggle hidden" type="button" aria-pressed="true">Scoring sound on</button>
-        <span id="saveStatus" class="save-status">Saved locally</span>
+        <button id="scoringSoundToggle" class="scoring-sound-toggle" type="button" aria-pressed="true">Scoring sound on</button>
         <button id="matchResetBtn" class="danger-btn" type="button">Reset match</button>
         <button id="wakeLockBtn" class="ghost-btn" type="button" title="Keep this screen awake">Keep awake</button>
         <button id="openAudienceBtn" class="ghost-btn" type="button">Open audience display</button>
@@ -1026,7 +1025,6 @@ textarea { resize: vertical; }
 
   function scheduleSave() {
     clearTimeout(saveTimer);
-    $('saveStatus') && ($('saveStatus').textContent = 'Saving…');
     saveTimer = setTimeout(saveState, 160);
   }
 
@@ -1038,9 +1036,7 @@ textarea { resize: vertical; }
         mainClock: mainClock.serialize(),
         responseClock: responseClock.serialize()
       }));
-      if ($('saveStatus')) $('saveStatus').textContent = 'Saved locally';
     } catch (error) {
-      if ($('saveStatus')) $('saveStatus').textContent = 'Session only — export backup';
       if (!storageFailureNotified) {
         storageFailureNotified = true;
         toast('Chrome blocked local recovery for this session. The match still works; export a backup before closing.', true);
@@ -1480,8 +1476,12 @@ textarea { resize: vertical; }
 
   function resetScore(team) {
     recordUndo();
+    const speedMinuteTotal = state.round === 'speed' ? speedPeriodScores()[state.speedPeriod - 1]?.[team] || 0 : 0;
     state.teams[team].score = 0;
     state.status = `${teamName(team)} score reset`;
+    if (speedMinuteTotal) {
+      logEvent('speed_minute_score_reset', `${teamName(team)} points for ${speedMinuteLabel(state.speedPeriod)} reset to zero`, team, -speedMinuteTotal);
+    }
     logEvent('score_reset', `${teamName(team)} score reset`, team);
     changed();
   }
@@ -1996,7 +1996,6 @@ textarea { resize: vertical; }
     $('speedPeriodBlock').classList.toggle('hidden', state.round !== 'speed');
     $('speedPeriodLabel').textContent = `${state.speedPeriod} / ${state.rules.speedPeriodCount}`;
     const scoringSoundEnabled = Boolean(state.rules.correctSoundEnabled && state.rules.incorrectSoundEnabled);
-    $('scoringSoundToggle').classList.toggle('hidden', state.round !== 'speed');
     $('scoringSoundToggle').setAttribute('aria-pressed', String(scoringSoundEnabled));
     $('scoringSoundToggle').textContent = `Scoring sound ${scoringSoundEnabled ? 'on' : 'muted'}`;
     $('buzzerPanel').classList.toggle('hidden', state.round !== 'buzzer');
