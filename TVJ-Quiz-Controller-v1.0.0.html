@@ -1,0 +1,1823 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#07182f">
+  <meta name="description" content="Offline Schools' Challenge Quiz timer, buzzer and scorekeeping controller.">
+  <title>Schools' Challenge Quiz Controller</title>
+  <link rel="icon" href="data:image/png;base64,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">
+  <style>
+:root {
+  color-scheme: dark;
+  --bg: #061122;
+  --bg-2: #091a31;
+  --panel: rgba(14, 35, 62, 0.92);
+  --panel-2: #102a49;
+  --panel-3: #15375e;
+  --text: #f5f8fc;
+  --muted: #9fb1c8;
+  --line: rgba(183, 207, 234, 0.16);
+  --gold: #f2c94c;
+  --gold-2: #ffdf78;
+  --green: #45d58a;
+  --red: #ff6678;
+  --orange: #ffac59;
+  --blue: #5ab4ff;
+  --shadow: 0 24px 70px rgba(0, 0, 0, 0.35);
+  --radius: 22px;
+  --team-a: #1769aa;
+  --team-b: #b32035;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+* { box-sizing: border-box; }
+html, body { min-height: 100%; }
+body {
+  margin: 0;
+  background:
+    radial-gradient(circle at 12% 12%, rgba(48, 119, 201, 0.18), transparent 32%),
+    radial-gradient(circle at 90% 90%, rgba(242, 201, 76, 0.10), transparent 28%),
+    linear-gradient(150deg, #040b17, var(--bg) 48%, #08182d);
+  color: var(--text);
+}
+button, input, select, textarea { font: inherit; }
+button { color: inherit; }
+button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+  outline: 3px solid rgba(90, 180, 255, 0.65);
+  outline-offset: 2px;
+}
+button:disabled { opacity: 0.42; cursor: not-allowed; transform: none !important; }
+.hidden { display: none !important; }
+
+.app-shell { min-height: 100vh; }
+.topbar {
+  min-height: 82px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 14px clamp(16px, 3vw, 42px);
+  border-bottom: 1px solid var(--line);
+  background: rgba(5, 14, 27, 0.82);
+  backdrop-filter: blur(18px);
+  position: sticky;
+  top: 0;
+  z-index: 50;
+}
+.brand-lockup, .audience-brand { display: flex; align-items: center; gap: 13px; }
+.brand-mark {
+  width: 48px;
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(145deg, var(--gold-2), var(--gold));
+  color: #091426;
+  border-radius: 14px;
+  font-weight: 950;
+  font-size: 27px;
+  box-shadow: 0 8px 28px rgba(242, 201, 76, 0.2);
+}
+h1, h2, h3, p { margin-top: 0; }
+h1 { margin-bottom: 0; font-size: clamp(18px, 2vw, 27px); line-height: 1.1; }
+h2, h3 { margin-bottom: 0; }
+.eyebrow {
+  margin-bottom: 4px;
+  color: var(--gold);
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+.topbar-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.save-status { color: var(--muted); font-size: 0.82rem; margin-right: 4px; }
+
+button {
+  border: 0;
+  cursor: pointer;
+  transition: transform 120ms ease, background 120ms ease, border-color 120ms ease, opacity 120ms ease;
+}
+button:not(:disabled):active { transform: translateY(1px) scale(0.99); }
+.ghost-btn, .secondary-btn, .primary-btn, .danger-btn, .warning-btn, .text-btn, .icon-btn {
+  border-radius: 11px;
+  padding: 10px 14px;
+  font-weight: 800;
+}
+.ghost-btn, .secondary-btn {
+  background: rgba(255,255,255,0.055);
+  border: 1px solid var(--line);
+}
+.ghost-btn:hover, .secondary-btn:hover { background: rgba(255,255,255,0.10); }
+.primary-btn { background: var(--gold); color: #0b1628; }
+.primary-btn:hover { background: var(--gold-2); }
+.danger-btn { background: var(--red); color: #1c0710; }
+.warning-btn { background: rgba(255, 172, 89, 0.16); color: #ffd2a8; border: 1px solid rgba(255, 172, 89, 0.42); }
+.text-btn { background: transparent; color: var(--blue); padding-inline: 4px; }
+.icon-btn { background: rgba(255,255,255,.06); width: 38px; height: 38px; padding: 0; font-size: 1.5rem; }
+.danger-text { color: #ff93a2 !important; }
+kbd {
+  font-family: inherit;
+  font-size: 0.72rem;
+  min-width: 22px;
+  padding: 3px 6px;
+  border-radius: 6px;
+  background: rgba(0,0,0,.22);
+  border: 1px solid rgba(255,255,255,.14);
+  box-shadow: inset 0 -1px 0 rgba(0,0,0,.32);
+}
+
+.menu-popover {
+  position: fixed;
+  right: clamp(16px, 3vw, 42px);
+  top: 72px;
+  width: 250px;
+  padding: 8px;
+  border-radius: 16px;
+  background: #10243e;
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow);
+  z-index: 70;
+}
+.menu-popover button { width: 100%; text-align: left; padding: 11px 12px; border-radius: 9px; background: transparent; }
+.menu-popover button:hover { background: rgba(255,255,255,.07); }
+
+.operator-view { width: min(1680px, 100%); margin: 0 auto; padding: 20px clamp(12px, 2.5vw, 38px) 38px; }
+.card {
+  background: linear-gradient(145deg, rgba(17, 43, 74, 0.96), rgba(10, 29, 52, 0.96));
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: 0 15px 44px rgba(0,0,0,.19);
+}
+.match-meta { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 17px 20px; margin-bottom: 16px; }
+.match-meta h2 { font-size: clamp(20px, 2.4vw, 31px); }
+.round-tabs { display: flex; gap: 6px; flex-wrap: wrap; }
+.round-tab { padding: 10px 14px; background: rgba(255,255,255,.045); border: 1px solid transparent; border-radius: 10px; font-weight: 800; color: var(--muted); }
+.round-tab.active { color: #0a1527; background: var(--gold); }
+.round-tab:hover:not(.active) { background: rgba(255,255,255,.09); color: var(--text); }
+
+.control-grid { display: grid; grid-template-columns: minmax(260px, .9fr) minmax(390px, 1.25fr) minmax(260px, .9fr); gap: 16px; align-items: start; }
+.team-card { overflow: hidden; position: relative; min-height: 575px; display: flex; flex-direction: column; }
+.team-card::before { content: ""; position: absolute; inset: 0 0 auto; height: 7px; background: var(--team-color); }
+.team-a-card { --team-color: var(--team-a); }
+.team-b-card { --team-color: var(--team-b); }
+.team-card.buzzed { box-shadow: 0 0 0 3px var(--gold), 0 0 70px color-mix(in srgb, var(--team-color), transparent 48%); animation: buzzPulse .75s ease-in-out infinite alternate; }
+@keyframes buzzPulse { from { box-shadow: 0 0 0 3px var(--gold), 0 0 30px color-mix(in srgb, var(--team-color), transparent 62%); } to { box-shadow: 0 0 0 5px var(--gold), 0 0 78px color-mix(in srgb, var(--team-color), transparent 38%); } }
+.team-card-header { min-height: 116px; display: grid; grid-template-columns: 66px 1fr auto; gap: 13px; align-items: center; padding: 24px 22px 15px; }
+.logo-frame { width: 62px; height: 62px; display: grid; place-items: center; background: rgba(255,255,255,.06); border-radius: 16px; border: 1px solid var(--line); }
+.team-logo { max-width: 90%; max-height: 90%; object-fit: contain; }
+.team-card h2 { font-size: clamp(19px, 2.2vw, 28px); overflow-wrap: anywhere; }
+.team-code { color: var(--muted); font-size: .78rem; font-weight: 900; letter-spacing: .12em; margin-bottom: 5px; }
+.active-badge, .state-badge { border-radius: 999px; padding: 6px 9px; font-size: .65rem; font-weight: 950; letter-spacing: .12em; background: rgba(69,213,138,.14); color: #73f3ad; border: 1px solid rgba(69,213,138,.28); }
+.score-row { display: grid; grid-template-columns: 50px 1fr 50px; align-items: center; gap: 8px; padding: 5px 20px 19px; }
+.score-display { text-align: center; font-variant-numeric: tabular-nums; font-size: clamp(78px, 10vw, 138px); line-height: 1; font-weight: 950; letter-spacing: -.07em; text-shadow: 0 10px 28px rgba(0,0,0,.25); }
+.score-nudge { width: 46px; height: 46px; border-radius: 50%; background: rgba(255,255,255,.065); border: 1px solid var(--line); font-size: 1.5rem; }
+.score-nudge:hover { background: rgba(255,255,255,.12); }
+.team-actions { padding: 18px; display: grid; gap: 10px; margin-top: auto; background: rgba(0,0,0,.10); border-top: 1px solid var(--line); }
+.action-btn { min-height: 54px; border-radius: 13px; padding: 13px 16px; font-weight: 900; display: flex; align-items: center; justify-content: space-between; gap: 10px; border: 1px solid transparent; }
+.action-btn.correct { background: rgba(69,213,138,.14); border-color: rgba(69,213,138,.34); color: #8ef8bd; }
+.action-btn.incorrect { background: rgba(255,102,120,.13); border-color: rgba(255,102,120,.32); color: #ff9cab; }
+.action-btn.buzz { background: var(--team-color); color: white; }
+.action-btn.neutral { background: rgba(255,255,255,.065); border-color: var(--line); }
+.action-btn.warning { background: rgba(255,172,89,.13); border-color: rgba(255,172,89,.30); color: #ffd09e; }
+.action-btn.primary { background: var(--gold); color: #0a1424; }
+
+.timer-column { display: grid; gap: 16px; }
+.timer-card { padding: 20px; }
+.timer-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.timer-header span:not(.state-badge) { color: var(--muted); }
+.state-badge.running { background: rgba(69,213,138,.16); color: #7df2b0; }
+.state-badge.paused { background: rgba(255,172,89,.15); color: #ffc481; }
+.state-badge.expired { background: rgba(255,102,120,.16); color: #ff94a3; }
+.timer-button { width: 100%; min-height: 245px; display: flex; flex-direction: column; align-items: center; justify-content: center; background: transparent; border-radius: 20px; }
+.timer-button:hover { background: rgba(255,255,255,.025); }
+.main-timer { display: block; font-size: clamp(88px, 12vw, 164px); font-weight: 950; letter-spacing: -.08em; line-height: .95; font-variant-numeric: tabular-nums; }
+.main-timer.warning { color: var(--orange); }
+.main-timer.danger { color: var(--red); animation: timeFlash .5s ease-in-out infinite alternate; }
+@keyframes timeFlash { to { opacity: .58; } }
+.timer-hint { margin-top: 16px; color: var(--muted); font-size: .82rem; }
+.timer-actions { display: grid; grid-template-columns: 1fr 1fr 1.25fr; gap: 8px; }
+
+.buzzer-panel { padding: 19px; display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 15px; }
+.buzzer-status-wrap h3 { font-size: 1.45rem; margin-bottom: 6px; }
+.buzzer-status-wrap p:last-child { color: var(--muted); margin-bottom: 0; }
+.response-clock-wrap { width: 116px; height: 116px; display: flex; flex-direction: column; align-items: center; justify-content: center; border-radius: 50%; border: 5px solid rgba(242,201,76,.32); background: rgba(242,201,76,.07); }
+.response-label { color: var(--gold); font-size: .62rem; font-weight: 900; letter-spacing: .14em; }
+.response-timer { font-size: 2.1rem; font-weight: 950; font-variant-numeric: tabular-nums; }
+.buzzer-actions { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+.question-card { padding: 17px 19px; display: grid; grid-template-columns: repeat(4, auto); align-items: center; justify-content: space-between; gap: 16px; }
+.question-card strong { font-size: 1.3rem; }
+
+.lower-grid { display: grid; grid-template-columns: .92fr 1.08fr; gap: 16px; margin-top: 16px; }
+.quick-actions, .audit-card { padding: 19px; }
+.section-heading { display: flex; align-items: center; justify-content: space-between; gap: 15px; margin-bottom: 13px; }
+.quick-action-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.last-action { margin-top: 14px; padding: 12px 14px; background: rgba(0,0,0,.14); border: 1px solid var(--line); border-radius: 11px; display: flex; gap: 12px; align-items: baseline; }
+.last-action span { color: var(--muted); font-size: .78rem; text-transform: uppercase; font-weight: 900; }
+.audit-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 7px; max-height: 220px; overflow: auto; scrollbar-color: #3d5e82 transparent; }
+.audit-list li { display: grid; grid-template-columns: 76px 1fr auto; gap: 10px; padding: 9px 11px; background: rgba(255,255,255,.035); border-radius: 10px; font-size: .82rem; }
+.audit-list time { color: var(--muted); font-variant-numeric: tabular-nums; }
+.audit-delta { font-weight: 950; color: var(--gold); }
+
+/* Audience display */
+.audience-view { min-height: 100vh; padding: clamp(16px, 3vw, 42px); display: grid; place-items: stretch; }
+.audience-stage { min-height: calc(100vh - clamp(32px, 6vw, 84px)); border: 1px solid rgba(255,255,255,.14); border-radius: clamp(18px, 2vw, 34px); overflow: hidden; background: linear-gradient(140deg, #07162b, #0b213e 58%, #071428); box-shadow: var(--shadow); display: grid; grid-template-rows: auto 1fr auto; position: relative; }
+.audience-stage::after { content: ""; position: absolute; inset: 0; pointer-events: none; background: radial-gradient(circle at center, transparent 45%, rgba(0,0,0,.24)); }
+.audience-header { padding: clamp(16px, 2vw, 30px); display: flex; align-items: center; justify-content: space-between; gap: 20px; border-bottom: 1px solid var(--line); position: relative; z-index: 1; }
+.audience-brand { font-size: clamp(15px, 2vw, 28px); font-weight: 900; }
+.audience-brand .brand-mark { width: clamp(38px, 4vw, 60px); font-size: clamp(20px, 2.4vw, 34px); }
+.audience-meta { text-align: right; display: grid; gap: 4px; }
+.audience-meta strong { color: var(--gold); letter-spacing: .12em; font-size: clamp(10px, 1.3vw, 18px); }
+.audience-meta span { font-size: clamp(13px, 1.6vw, 22px); font-weight: 900; }
+.audience-scoreboard { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, .72fr) minmax(0, 1fr); align-items: stretch; position: relative; z-index: 1; }
+.audience-team { padding: clamp(20px, 3vw, 48px); display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; position: relative; overflow: hidden; }
+.audience-team::before { content: ""; position: absolute; inset: 0; opacity: .22; background: linear-gradient(160deg, var(--team-color), transparent 68%); }
+.audience-team > * { position: relative; z-index: 1; }
+.audience-team-a { --team-color: var(--team-a); border-right: 1px solid var(--line); }
+.audience-team-b { --team-color: var(--team-b); border-left: 1px solid var(--line); }
+.audience-team.buzzed { box-shadow: inset 0 0 0 8px var(--gold); }
+.audience-logo-frame { width: clamp(60px, 8vw, 125px); height: clamp(60px, 8vw, 125px); display: grid; place-items: center; margin-bottom: clamp(12px, 2vw, 24px); border-radius: 22px; background: rgba(255,255,255,.08); border: 1px solid var(--line); }
+.audience-logo { max-width: 90%; max-height: 90%; object-fit: contain; }
+.audience-team p { color: rgba(255,255,255,.68); font-size: clamp(12px, 1.5vw, 21px); font-weight: 900; letter-spacing: .15em; margin-bottom: 8px; }
+.audience-team h2 { min-height: 2.2em; display: grid; place-items: center; font-size: clamp(23px, 3.2vw, 54px); line-height: 1.08; }
+.audience-team output { margin-top: clamp(8px, 1vw, 18px); font-size: clamp(100px, 14vw, 230px); line-height: .85; font-weight: 950; letter-spacing: -.08em; font-variant-numeric: tabular-nums; text-shadow: 0 15px 35px rgba(0,0,0,.28); }
+.audience-center { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 24px 10px; }
+.audience-center > p { margin-bottom: 8px; color: var(--gold); font-weight: 950; letter-spacing: .15em; font-size: clamp(12px, 1.6vw, 23px); }
+.audience-center > output { font-size: clamp(70px, 9.5vw, 158px); line-height: 1; font-weight: 950; letter-spacing: -.08em; font-variant-numeric: tabular-nums; }
+.audience-response { margin-top: 20px; width: clamp(100px, 10vw, 160px); aspect-ratio: 1; border-radius: 50%; display: grid; place-items: center; align-content: center; background: rgba(242,201,76,.09); border: clamp(4px, .5vw, 8px) solid var(--gold); }
+.audience-response span { color: var(--gold); font-weight: 900; font-size: clamp(9px, 1vw, 14px); letter-spacing: .13em; }
+.audience-response strong { font-size: clamp(38px, 5vw, 76px); line-height: 1; }
+.question-pill { margin-top: 22px; padding: 9px 14px; border-radius: 999px; background: rgba(255,255,255,.07); border: 1px solid var(--line); color: var(--muted); font-size: clamp(10px, 1vw, 15px); font-weight: 900; letter-spacing: .1em; }
+.question-pill strong { color: var(--text); }
+.audience-footer { padding: clamp(15px, 1.8vw, 26px); display: flex; justify-content: space-between; align-items: center; gap: 18px; background: rgba(0,0,0,.18); border-top: 1px solid var(--line); font-size: clamp(12px, 1.4vw, 21px); font-weight: 900; letter-spacing: .08em; position: relative; z-index: 1; }
+.audience-footer span:last-child { color: var(--gold); text-align: right; }
+.exit-audience { position: fixed; top: 10px; right: 10px; z-index: 100; border-radius: 9px; background: rgba(0,0,0,.48); padding: 8px 10px; opacity: .08; }
+.exit-audience:hover { opacity: 1; }
+body.audience-mode { overflow: hidden; }
+body.audience-mode .operator-only { display: none !important; }
+body:not(.audience-mode) .audience-only { display: none !important; }
+
+/* Dialogs */
+.app-dialog { width: min(900px, calc(100vw - 24px)); max-height: calc(100vh - 24px); padding: 0; color: var(--text); background: #0d233e; border: 1px solid var(--line); border-radius: 22px; box-shadow: var(--shadow); }
+.app-dialog::backdrop { background: rgba(0, 4, 12, .72); backdrop-filter: blur(8px); }
+.app-dialog form { display: flex; flex-direction: column; max-height: calc(100vh - 24px); }
+.dialog-header, .dialog-footer { padding: 20px 22px; display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.dialog-header { border-bottom: 1px solid var(--line); }
+.dialog-header p:last-child { color: var(--muted); margin: 7px 0 0; }
+.dialog-body { padding: 22px; overflow: auto; }
+.dialog-footer { border-top: 1px solid var(--line); align-items: center; }
+.dialog-spacer { flex: 1; }
+.setup-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+fieldset { min-width: 0; border: 1px solid var(--line); border-radius: 15px; padding: 17px; }
+legend { color: var(--gold); font-weight: 900; padding: 0 8px; }
+.match-setup-wide { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+label { display: grid; gap: 6px; color: var(--muted); font-size: .82rem; font-weight: 800; margin-bottom: 13px; }
+input, select, textarea { width: 100%; border: 1px solid var(--line); background: rgba(0,0,0,.18); color: var(--text); border-radius: 10px; padding: 11px 12px; }
+input[type="color"] { min-height: 44px; padding: 4px; }
+input[type="file"] { font-size: .78rem; }
+textarea { resize: vertical; }
+.rules-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 18px; }
+.rule-row { display: grid; grid-template-columns: 1fr 105px; gap: 12px; align-items: center; padding: 10px 0; border-bottom: 1px solid rgba(255,255,255,.07); }
+.rule-row label { margin: 0; color: var(--text); }
+.rule-row small { display: block; color: var(--muted); font-weight: 500; margin-top: 3px; }
+.rule-check { grid-template-columns: 1fr auto; }
+.rule-check input { width: 22px; height: 22px; }
+.confirm-dialog { width: min(520px, calc(100vw - 24px)); }
+
+.toast-region { position: fixed; right: 16px; bottom: 16px; display: grid; gap: 8px; z-index: 200; pointer-events: none; }
+.toast { max-width: min(420px, calc(100vw - 32px)); padding: 12px 15px; background: #183252; border: 1px solid var(--line); border-radius: 11px; box-shadow: var(--shadow); font-weight: 750; animation: toastIn .18s ease-out; }
+.toast.error { border-color: rgba(255,102,120,.45); }
+@keyframes toastIn { from { transform: translateY(8px); opacity: 0; } }
+
+@media (max-width: 1120px) {
+  .control-grid { grid-template-columns: 1fr 1fr; }
+  .timer-column { grid-column: 1 / -1; grid-row: 1; grid-template-columns: 1.25fr .75fr; }
+  .timer-card { grid-row: span 2; }
+  .team-card { min-height: 450px; }
+  .score-display { font-size: clamp(85px, 18vw, 145px); }
+  .lower-grid { grid-template-columns: 1fr; }
+  .audience-scoreboard { grid-template-columns: 1fr .62fr 1fr; }
+}
+
+@media (max-width: 760px) {
+  .topbar { position: static; align-items: flex-start; }
+  .brand-mark { width: 41px; font-size: 23px; }
+  .topbar-actions { max-width: 55%; }
+  .save-status, #wakeLockBtn, #fullscreenBtn { display: none; }
+  .match-meta { align-items: flex-start; flex-direction: column; }
+  .round-tabs { width: 100%; display: grid; grid-template-columns: repeat(4, 1fr); }
+  .round-tab { padding-inline: 6px; font-size: .78rem; }
+  .control-grid { grid-template-columns: 1fr; }
+  .timer-column { grid-column: auto; grid-row: auto; grid-template-columns: 1fr; }
+  .timer-card { grid-row: auto; }
+  .team-card { min-height: 390px; }
+  .team-card-header { min-height: 95px; }
+  .score-display { font-size: clamp(90px, 31vw, 142px); }
+  .timer-button { min-height: 190px; }
+  .main-timer { font-size: clamp(85px, 26vw, 136px); }
+  .timer-actions, .buzzer-actions { grid-template-columns: 1fr; }
+  .buzzer-panel { grid-template-columns: 1fr auto; }
+  .question-card { grid-template-columns: 1fr 1fr; }
+  .quick-action-grid { grid-template-columns: 1fr 1fr; }
+  .audit-list li { grid-template-columns: 68px 1fr; }
+  .audit-delta { grid-column: 2; }
+  .setup-grid, .rules-grid { grid-template-columns: 1fr; }
+  .match-setup-wide { grid-column: auto; grid-template-columns: 1fr; }
+  .dialog-footer { flex-wrap: wrap; }
+
+  .audience-view { padding: 0; }
+  .audience-stage { min-height: 100vh; border-radius: 0; border: 0; }
+  .audience-header { align-items: flex-start; }
+  .audience-brand span:last-child { display: none; }
+  .audience-scoreboard { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr auto; }
+  .audience-center { grid-column: 1 / -1; grid-row: 2; order: 3; flex-direction: row; gap: 17px; padding: 12px 14px; border-top: 1px solid var(--line); }
+  .audience-center > output { font-size: clamp(57px, 18vw, 90px); }
+  .audience-response { margin-top: 0; width: 78px; }
+  .question-pill { margin-top: 0; }
+  .audience-team { padding: 18px 10px; }
+  .audience-team-a { border-right: 1px solid var(--line); }
+  .audience-team-b { border-left: 0; }
+  .audience-team h2 { font-size: clamp(19px, 6vw, 34px); }
+  .audience-team output { font-size: clamp(86px, 30vw, 145px); }
+  .audience-footer { font-size: 11px; }
+}
+
+@media (orientation: landscape) and (max-height: 650px) and (max-width: 1000px) {
+  .audience-header { padding: 10px 18px; }
+  .audience-logo-frame { display: none; }
+  .audience-team { padding: 10px; }
+  .audience-team h2 { min-height: 1.2em; }
+  .audience-team output { font-size: clamp(90px, 21vh, 160px); }
+  .audience-center > output { font-size: clamp(70px, 18vh, 128px); }
+  .audience-footer { padding: 10px 18px; }
+}
+
+@media print {
+  body { background: white; color: black; }
+  .topbar, .control-grid, .quick-actions, .audience-view { display: none !important; }
+  .lower-grid { display: block; }
+  .audit-card { box-shadow: none; border: 1px solid #bbb; background: white; color: black; }
+  .audit-list { max-height: none; overflow: visible; }
+}
+
+@media (max-width: 1100px) and (min-width: 761px) {
+  .audience-center > output { font-size: clamp(54px, 7.2vw, 92px); }
+  .audience-team output { font-size: clamp(90px, 12vw, 150px); }
+  .audience-scoreboard { grid-template-columns: minmax(0, 1fr) minmax(210px, .68fr) minmax(0, 1fr); }
+}
+
+  </style>
+</head>
+<body>
+  <div id="app" class="app-shell">
+    <header class="topbar operator-only">
+      <div class="brand-lockup">
+        <div class="brand-mark" aria-hidden="true">Q</div>
+        <div>
+          <p class="eyebrow">MATCH CONTROL</p>
+          <h1>Schools’ Challenge Quiz</h1>
+        </div>
+      </div>
+      <div class="topbar-actions">
+        <span id="saveStatus" class="save-status">Saved locally</span>
+        <button id="wakeLockBtn" class="ghost-btn" type="button" title="Keep this screen awake">Keep awake</button>
+        <button id="openAudienceBtn" class="ghost-btn" type="button">Open audience display</button>
+        <button id="fullscreenBtn" class="ghost-btn" type="button">Fullscreen</button>
+        <button id="moreBtn" class="ghost-btn" type="button" aria-expanded="false" aria-controls="moreMenu">Menu</button>
+      </div>
+      <div id="moreMenu" class="menu-popover hidden">
+        <button type="button" data-menu-action="setup">Match setup</button>
+        <button type="button" data-menu-action="rules">Rules & timing</button>
+        <button type="button" data-menu-action="export-json">Export match backup</button>
+        <button type="button" data-menu-action="export-csv">Export audit CSV</button>
+        <button type="button" data-menu-action="import">Import match backup</button>
+        <button type="button" data-menu-action="install" id="installMenuBtn" class="hidden">Install app</button>
+        <button type="button" data-menu-action="reset" class="danger-text">Start new match</button>
+      </div>
+    </header>
+
+    <main id="operatorView" class="operator-view operator-only">
+      <section class="match-meta card">
+        <div>
+          <p class="eyebrow" id="stageLabel">PRACTICE MATCH</p>
+          <h2 id="roundLabel">Alternate Section</h2>
+        </div>
+        <div class="round-tabs" role="tablist" aria-label="Match sections">
+          <button class="round-tab active" data-round="alternate" type="button">Alternate</button>
+          <button class="round-tab" data-round="speed" type="button">Speed</button>
+          <button class="round-tab" data-round="buzzer" type="button">Buzzer</button>
+          <button class="round-tab" data-round="complete" type="button">Finish</button>
+        </div>
+      </section>
+
+      <section class="control-grid">
+        <article id="teamACard" class="team-card card team-a-card" data-team="A">
+          <div class="team-card-header">
+            <div class="logo-frame"><img id="teamALogo" alt="" class="team-logo hidden"></div>
+            <div>
+              <p class="team-code" id="teamAShort">TEAM A</p>
+              <h2 id="teamAName">Team A</h2>
+            </div>
+            <span id="teamAActiveBadge" class="active-badge">ACTIVE</span>
+          </div>
+          <div class="score-row">
+            <button class="score-nudge" type="button" data-score-team="A" data-delta="-1" aria-label="Subtract one point from Team A">−</button>
+            <output id="teamAScore" class="score-display">0</output>
+            <button class="score-nudge" type="button" data-score-team="A" data-delta="1" aria-label="Add one point to Team A">+</button>
+          </div>
+          <div class="team-actions">
+            <button class="action-btn correct" data-answer="correct" data-team="A" type="button"><span>Correct</span><kbd>A</kbd></button>
+            <button class="action-btn incorrect" data-answer="incorrect" data-team="A" type="button"><span>Incorrect</span><kbd>Z</kbd></button>
+            <button class="action-btn buzz" data-buzz="A" type="button"><span>Buzz A</span><kbd>1</kbd></button>
+          </div>
+        </article>
+
+        <section class="timer-column">
+          <article class="timer-card card">
+            <div class="timer-header">
+              <div>
+                <p class="eyebrow">MAIN CLOCK</p>
+                <span id="timerContext">Response time</span>
+              </div>
+              <span id="timerStateBadge" class="state-badge">READY</span>
+            </div>
+            <button id="mainTimerButton" class="timer-button" type="button" aria-label="Start or pause main timer">
+              <span id="mainTimer" class="main-timer">00:10</span>
+              <span class="timer-hint">Tap or press Space to start/pause</span>
+            </button>
+            <div class="timer-actions">
+              <button id="resetMainTimerBtn" type="button" class="secondary-btn">Reset clock</button>
+              <button id="addTenBtn" type="button" class="secondary-btn">+10 sec</button>
+              <button id="nextQuestionBtn" type="button" class="primary-btn">Next question <kbd>Enter</kbd></button>
+            </div>
+          </article>
+
+          <article id="buzzerPanel" class="buzzer-panel card hidden">
+            <div class="buzzer-status-wrap">
+              <p class="eyebrow">BUZZER CONTROL</p>
+              <h3 id="buzzerStatus">Buzzers armed</h3>
+              <p id="buzzerInstruction">First valid buzz locks out the opposing team.</p>
+            </div>
+            <div class="response-clock-wrap">
+              <span class="response-label">RESPONSE</span>
+              <output id="responseTimer" class="response-timer">00:05</output>
+            </div>
+            <div class="buzzer-actions">
+              <button id="identifyBtn" type="button" class="primary-btn" disabled>Identify team</button>
+              <button id="beforeIdBtn" type="button" class="warning-btn" disabled>Answered before ID</button>
+              <button id="resetBuzzersBtn" type="button" class="secondary-btn">Reset buzzers <kbd>R</kbd></button>
+            </div>
+          </article>
+
+          <article class="question-card card">
+            <div>
+              <p class="eyebrow">QUESTION</p>
+              <strong id="questionNumber">1</strong>
+            </div>
+            <div id="speedPeriodBlock" class="hidden">
+              <p class="eyebrow">SPEED PERIOD</p>
+              <strong id="speedPeriodLabel">1 / 3</strong>
+            </div>
+            <div>
+              <p class="eyebrow">ACTIVE TEAM</p>
+              <strong id="activeTeamLabel">TEAM A</strong>
+            </div>
+            <button id="switchTeamBtn" type="button" class="secondary-btn">Switch team</button>
+          </article>
+        </section>
+
+        <article id="teamBCard" class="team-card card team-b-card" data-team="B">
+          <div class="team-card-header">
+            <div class="logo-frame"><img id="teamBLogo" alt="" class="team-logo hidden"></div>
+            <div>
+              <p class="team-code" id="teamBShort">TEAM B</p>
+              <h2 id="teamBName">Team B</h2>
+            </div>
+            <span id="teamBActiveBadge" class="active-badge hidden">ACTIVE</span>
+          </div>
+          <div class="score-row">
+            <button class="score-nudge" type="button" data-score-team="B" data-delta="-1" aria-label="Subtract one point from Team B">−</button>
+            <output id="teamBScore" class="score-display">0</output>
+            <button class="score-nudge" type="button" data-score-team="B" data-delta="1" aria-label="Add one point to Team B">+</button>
+          </div>
+          <div class="team-actions">
+            <button class="action-btn correct" data-answer="correct" data-team="B" type="button"><span>Correct</span><kbd>L</kbd></button>
+            <button class="action-btn incorrect" data-answer="incorrect" data-team="B" type="button"><span>Incorrect</span><kbd>M</kbd></button>
+            <button class="action-btn buzz" data-buzz="B" type="button"><span>Buzz B</span><kbd>2</kbd></button>
+          </div>
+        </article>
+      </section>
+
+      <section class="lower-grid">
+        <article class="quick-actions card">
+          <div class="section-heading">
+            <div><p class="eyebrow">MATCH ACTIONS</p><h3>Fast controls</h3></div>
+            <button id="undoBtn" type="button" class="secondary-btn" disabled>Undo <kbd>U</kbd></button>
+          </div>
+          <div class="quick-action-grid">
+            <button id="passBtn" class="action-btn neutral" type="button">Pass <kbd>P</kbd></button>
+            <button id="timeoutBtn" class="action-btn warning" type="button">Time expired</button>
+            <button id="judgeBtn" class="action-btn neutral" type="button">Judges’ decision</button>
+            <button id="nextRoundBtn" class="action-btn primary" type="button">Next section</button>
+          </div>
+          <div class="last-action">
+            <span>Last action</span>
+            <strong id="lastAction">Match ready</strong>
+          </div>
+        </article>
+
+        <article class="audit-card card">
+          <div class="section-heading">
+            <div><p class="eyebrow">AUDIT TRAIL</p><h3>Recent events</h3></div>
+            <button id="clearLogViewBtn" type="button" class="text-btn">Collapse</button>
+          </div>
+          <ol id="auditList" class="audit-list" aria-live="polite"></ol>
+        </article>
+      </section>
+    </main>
+
+    <main id="audienceView" class="audience-view audience-only">
+      <div class="audience-stage">
+        <header class="audience-header">
+          <div class="audience-brand"><span class="brand-mark">Q</span><span>Schools’ Challenge Quiz</span></div>
+          <div class="audience-meta"><strong id="audienceStage">PRACTICE MATCH</strong><span id="audienceRound">ALTERNATE SECTION</span></div>
+        </header>
+        <section class="audience-scoreboard">
+          <article id="audienceTeamA" class="audience-team audience-team-a">
+            <div class="audience-logo-frame"><img id="audienceLogoA" class="audience-logo hidden" alt=""></div>
+            <p id="audienceShortA">TEAM A</p>
+            <h2 id="audienceNameA">Team A</h2>
+            <output id="audienceScoreA">0</output>
+          </article>
+          <div class="audience-center">
+            <p id="audienceStatus">READY</p>
+            <output id="audienceTimer">00:10</output>
+            <div id="audienceResponseWrap" class="audience-response hidden">
+              <span>ANSWER</span><strong id="audienceResponse">5</strong>
+            </div>
+            <div class="question-pill">QUESTION <strong id="audienceQuestion">1</strong></div>
+          </div>
+          <article id="audienceTeamB" class="audience-team audience-team-b">
+            <div class="audience-logo-frame"><img id="audienceLogoB" class="audience-logo hidden" alt=""></div>
+            <p id="audienceShortB">TEAM B</p>
+            <h2 id="audienceNameB">Team B</h2>
+            <output id="audienceScoreB">0</output>
+          </article>
+        </section>
+        <footer class="audience-footer"><span id="audienceActiveTeam">TEAM A TO ANSWER</span><span id="audienceFooterMessage">MATCH READY</span></footer>
+      </div>
+      <button id="exitAudienceBtn" class="exit-audience" type="button">Exit audience mode</button>
+    </main>
+  </div>
+
+  <dialog id="setupDialog" class="app-dialog">
+    <form id="setupForm" method="dialog">
+      <header class="dialog-header"><div><p class="eyebrow">MATCH SETUP</p><h2>Prepare the match</h2></div><button type="button" class="icon-btn close-dialog" aria-label="Close">×</button></header>
+      <div class="dialog-body setup-grid">
+        <fieldset class="team-setup team-a-setup">
+          <legend>Team A</legend>
+          <label>School name<input id="setupAName" required maxlength="60" value="Team A"></label>
+          <label>Short name<input id="setupAShort" maxlength="16" value="TEAM A"></label>
+          <label>Team colour<input id="setupAColor" type="color" value="#1769aa"></label>
+          <label>School logo<input id="setupALogo" type="file" accept="image/*"></label>
+          <button id="clearALogoBtn" type="button" class="text-btn">Remove logo</button>
+        </fieldset>
+        <fieldset class="team-setup team-b-setup">
+          <legend>Team B</legend>
+          <label>School name<input id="setupBName" required maxlength="60" value="Team B"></label>
+          <label>Short name<input id="setupBShort" maxlength="16" value="TEAM B"></label>
+          <label>Team colour<input id="setupBColor" type="color" value="#b32035"></label>
+          <label>School logo<input id="setupBLogo" type="file" accept="image/*"></label>
+          <button id="clearBLogoBtn" type="button" class="text-btn">Remove logo</button>
+        </fieldset>
+        <fieldset class="match-setup-wide">
+          <legend>Match</legend>
+          <label>Stage
+            <select id="setupStage">
+              <option>Practice Match</option><option>Preliminary Round</option><option>Round of 16</option><option>Quarter-final</option><option>Semi-final</option><option>Final</option>
+            </select>
+          </label>
+          <label>Starting team
+            <select id="setupActiveTeam"><option value="A">Team A</option><option value="B">Team B</option></select>
+          </label>
+        </fieldset>
+      </div>
+      <footer class="dialog-footer"><button type="button" class="secondary-btn close-dialog">Cancel</button><button type="submit" class="primary-btn">Save match setup</button></footer>
+    </form>
+  </dialog>
+
+  <dialog id="rulesDialog" class="app-dialog rules-dialog">
+    <form id="rulesForm" method="dialog">
+      <header class="dialog-header"><div><p class="eyebrow">TVJ-STYLE PRESET</p><h2>Rules and timing</h2><p>All values remain editable pending confirmation against the current official rules.</p></div><button type="button" class="icon-btn close-dialog" aria-label="Close">×</button></header>
+      <div class="dialog-body rules-grid" id="rulesGrid"></div>
+      <footer class="dialog-footer"><button id="restorePresetBtn" type="button" class="secondary-btn">Restore preset</button><span class="dialog-spacer"></span><button type="button" class="secondary-btn close-dialog">Cancel</button><button type="submit" class="primary-btn">Apply rules</button></footer>
+    </form>
+  </dialog>
+
+  <dialog id="confirmDialog" class="app-dialog confirm-dialog">
+    <form method="dialog">
+      <header class="dialog-header"><div><p class="eyebrow">CONFIRM ACTION</p><h2 id="confirmTitle">Are you sure?</h2></div></header>
+      <div class="dialog-body"><p id="confirmMessage"></p></div>
+      <footer class="dialog-footer"><button value="cancel" class="secondary-btn">Cancel</button><button id="confirmActionBtn" value="confirm" class="danger-btn">Confirm</button></footer>
+    </form>
+  </dialog>
+
+  <dialog id="judgeDialog" class="app-dialog confirm-dialog">
+    <form id="judgeForm" method="dialog">
+      <header class="dialog-header"><div><p class="eyebrow">JUDGES’ DECISION</p><h2>Record a manual ruling</h2></div><button type="button" class="icon-btn close-dialog">×</button></header>
+      <div class="dialog-body">
+        <label>Team<select id="judgeTeam"><option value="A">Team A</option><option value="B">Team B</option><option value="">No team</option></select></label>
+        <label>Score adjustment<input id="judgeDelta" type="number" min="-20" max="20" value="0"></label>
+        <label>Decision note<textarea id="judgeNote" rows="3" maxlength="180" placeholder="Example: Answer accepted after consultation"></textarea></label>
+      </div>
+      <footer class="dialog-footer"><button type="button" class="secondary-btn close-dialog">Cancel</button><button type="submit" class="primary-btn">Record decision</button></footer>
+    </form>
+  </dialog>
+
+  <input id="importFileInput" type="file" accept="application/json,.json" class="hidden">
+  <div id="toastRegion" class="toast-region" aria-live="polite" aria-atomic="true"></div>
+  <script>
+(() => {
+  'use strict';
+
+  const STORAGE_KEY = 'tvj_quiz_controller_v1';
+  const PUBLIC_KEY = 'tvj_quiz_controller_public_v1';
+  const CHANNEL_NAME = 'tvj-quiz-controller-v1';
+  const MAX_UNDO = 100;
+  const MAX_AUDIT = 1500;
+
+  const PRESET_RULES = Object.freeze({
+    alternateResponseSeconds: 10,
+    alternateCorrectPoints: 1,
+    alternateIncorrectPoints: 0,
+    speedPeriodSeconds: 60,
+    speedPeriodCount: 3,
+    speedCorrectPoints: 1,
+    speedIncorrectPoints: 0,
+    buzzerRoundSeconds: 240,
+    buzzerResponseSeconds: 5,
+    buzzerCorrectPoints: 2,
+    buzzerIncorrectPoints: -2,
+    buzzerBeforeIdentifiedPoints: -2,
+    buzzerTimeoutPoints: -2,
+    pauseMainClockOnBuzz: true,
+    autoApplyTimeoutPenalty: false,
+    soundEnabled: true
+  });
+
+  const RULE_FIELDS = [
+    ['Alternate response', 'alternateResponseSeconds', 'seconds', 1, 120],
+    ['Alternate correct', 'alternateCorrectPoints', 'points', -20, 20],
+    ['Alternate incorrect', 'alternateIncorrectPoints', 'points', -20, 20],
+    ['Speed period', 'speedPeriodSeconds', 'seconds', 10, 600],
+    ['Number of speed periods', 'speedPeriodCount', 'periods', 1, 10],
+    ['Speed correct', 'speedCorrectPoints', 'points', -20, 20],
+    ['Speed incorrect', 'speedIncorrectPoints', 'points', -20, 20],
+    ['Buzzer round', 'buzzerRoundSeconds', 'seconds', 10, 900],
+    ['Buzzer response', 'buzzerResponseSeconds', 'seconds', 1, 60],
+    ['Buzzer correct', 'buzzerCorrectPoints', 'points', -20, 20],
+    ['Buzzer incorrect', 'buzzerIncorrectPoints', 'points', -20, 20],
+    ['Before identification', 'buzzerBeforeIdentifiedPoints', 'points', -20, 20],
+    ['Response timeout', 'buzzerTimeoutPoints', 'points', -20, 20]
+  ];
+
+  const BOOLEAN_RULE_FIELDS = [
+    ['Pause main clock when a team buzzes', 'pauseMainClockOnBuzz'],
+    ['Apply timeout penalty automatically', 'autoApplyTimeoutPenalty'],
+    ['Enable match sounds', 'soundEnabled']
+  ];
+
+  const $ = (id) => document.getElementById(id);
+  const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
+  const deepCopy = (value) => JSON.parse(JSON.stringify(value));
+  const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+  const audienceMode = new URLSearchParams(location.search).get('display') === 'audience' || location.hash === '#audience';
+
+  class CountdownClock {
+    constructor(seconds, onExpire) {
+      this.durationMs = Math.max(0, Math.round(seconds * 1000));
+      this.remainingMs = this.durationMs;
+      this.running = false;
+      this.startedAt = 0;
+      this.remainingAtStart = this.remainingMs;
+      this.expiredEmitted = false;
+      this.onExpire = onExpire;
+    }
+
+    sync() {
+      if (!this.running) return this.remainingMs;
+      const elapsed = performance.now() - this.startedAt;
+      this.remainingMs = Math.max(0, this.remainingAtStart - elapsed);
+      if (this.remainingMs <= 0) {
+        this.running = false;
+        if (!this.expiredEmitted) {
+          this.expiredEmitted = true;
+          queueMicrotask(() => this.onExpire?.());
+        }
+      }
+      return this.remainingMs;
+    }
+
+    start() {
+      this.sync();
+      if (this.running || this.remainingMs <= 0) return false;
+      this.running = true;
+      this.startedAt = performance.now();
+      this.remainingAtStart = this.remainingMs;
+      this.expiredEmitted = false;
+      return true;
+    }
+
+    pause() {
+      this.sync();
+      const changed = this.running;
+      this.running = false;
+      return changed;
+    }
+
+    toggle() {
+      return this.running ? (this.pause(), false) : this.start();
+    }
+
+    reset(seconds = null) {
+      if (seconds !== null) this.durationMs = Math.max(0, Math.round(Number(seconds) * 1000));
+      this.remainingMs = this.durationMs;
+      this.running = false;
+      this.startedAt = 0;
+      this.remainingAtStart = this.remainingMs;
+      this.expiredEmitted = false;
+    }
+
+    setRemaining(ms, running = false) {
+      this.remainingMs = Math.max(0, Number(ms) || 0);
+      this.remainingAtStart = this.remainingMs;
+      this.startedAt = 0;
+      this.running = false;
+      this.expiredEmitted = this.remainingMs <= 0;
+      if (running && this.remainingMs > 0) this.start();
+    }
+
+    addSeconds(seconds) {
+      this.sync();
+      this.remainingMs = Math.max(0, this.remainingMs + seconds * 1000);
+      if (this.running) {
+        this.startedAt = performance.now();
+        this.remainingAtStart = this.remainingMs;
+      }
+      this.expiredEmitted = false;
+    }
+
+    serialize() {
+      this.sync();
+      return {
+        durationMs: Math.round(this.durationMs),
+        remainingMs: Math.round(this.remainingMs),
+        wasRunning: this.running
+      };
+    }
+
+    restore(data, resume = false) {
+      this.durationMs = Math.max(0, Number(data?.durationMs) || 0);
+      this.setRemaining(Number(data?.remainingMs ?? this.durationMs), resume && Boolean(data?.wasRunning));
+    }
+  }
+
+  const defaultState = () => ({
+    version: 1,
+    teams: {
+      A: { name: 'Team A', shortName: 'TEAM A', color: '#1769aa', logo: '', score: 0 },
+      B: { name: 'Team B', shortName: 'TEAM B', color: '#b32035', logo: '', score: 0 }
+    },
+    stage: 'Practice Match',
+    round: 'alternate',
+    speedPeriod: 1,
+    activeTeam: 'A',
+    buzzerTeam: '',
+    buzzerIdentified: false,
+    mainWasRunningBeforeBuzz: false,
+    question: 1,
+    matchStarted: false,
+    complete: false,
+    winner: '',
+    status: 'Ready',
+    lastAction: 'Match ready',
+    rules: deepCopy(PRESET_RULES),
+    audit: []
+  });
+
+  let state = defaultState();
+  let mainClock = new CountdownClock(PRESET_RULES.alternateResponseSeconds, onMainClockExpired);
+  let responseClock = new CountdownClock(PRESET_RULES.buzzerResponseSeconds, onResponseClockExpired);
+  let undoStack = [];
+  let saveTimer = 0;
+  let publicTimer = 0;
+  let auditCollapsed = false;
+  let deferredInstallPrompt = null;
+  let wakeLock = null;
+  let audienceWindow = null;
+  let lastAudienceState = null;
+  let audioContext = null;
+  let timeoutApplying = false;
+  let storageFailureNotified = false;
+  let channel = null;
+
+  try { channel = 'BroadcastChannel' in window ? new BroadcastChannel(CHANNEL_NAME) : null; } catch { channel = null; }
+
+  function nowIso() { return new Date().toISOString(); }
+  function teamName(team) { return state.teams[team]?.shortName || `Team ${team}`; }
+  function otherTeam(team) { return team === 'A' ? 'B' : 'A'; }
+  function roundTitle(round = state.round) {
+    if (round === 'alternate') return 'Alternate Section';
+    if (round === 'speed') return `Speed Section · Period ${state.speedPeriod}/${state.rules.speedPeriodCount}`;
+    if (round === 'buzzer') return 'Buzzer Section';
+    return 'Match Complete';
+  }
+
+  function formatClock(ms, includeTenths = false) {
+    const safe = Math.max(0, Math.ceil(ms));
+    if (includeTenths && safe < 10000) {
+      const totalTenths = Math.ceil(safe / 100);
+      const seconds = Math.floor(totalTenths / 10);
+      const tenths = totalTenths % 10;
+      return `00:${String(seconds).padStart(2, '0')}.${tenths}`;
+    }
+    const totalSeconds = Math.ceil(safe / 1000);
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  }
+
+  function timeOnly(iso) {
+    try { return new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(new Date(iso)); }
+    catch { return ''; }
+  }
+
+  function logEvent(action, details, team = '', delta = 0) {
+    state.audit.push({ timestamp: nowIso(), action, details, team, delta, scoreA: state.teams.A.score, scoreB: state.teams.B.score });
+    if (state.audit.length > MAX_AUDIT) state.audit.splice(0, state.audit.length - MAX_AUDIT);
+    state.lastAction = details;
+  }
+
+  function snapshot() {
+    return {
+      state: deepCopy(state),
+      mainClock: mainClock.serialize(),
+      responseClock: responseClock.serialize()
+    };
+  }
+
+  function recordUndo() {
+    undoStack.push(snapshot());
+    if (undoStack.length > MAX_UNDO) undoStack.shift();
+  }
+
+  function undo() {
+    if (!undoStack.length) return toast('Nothing to undo.');
+    const preservedAudit = deepCopy(state.audit);
+    const before = `${state.teams.A.score}–${state.teams.B.score}`;
+    const snap = undoStack.pop();
+    state = snap.state;
+    state.audit = preservedAudit;
+    mainClock.restore(snap.mainClock, Boolean(snap.mainClock.wasRunning));
+    responseClock.restore(snap.responseClock, Boolean(snap.responseClock.wasRunning));
+    logEvent('undo', `Undid the previous action; score ${before} restored to ${state.teams.A.score}–${state.teams.B.score}`);
+    state.status = 'Previous action undone';
+    changed();
+  }
+
+  function ensureAudio() {
+    if (!audioContext) {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (AudioCtx) audioContext = new AudioCtx();
+    }
+    if (audioContext?.state === 'suspended') audioContext.resume().catch(() => {});
+  }
+
+  function tone(frequency = 660, duration = 0.12, type = 'sine', volume = 0.08, delay = 0) {
+    if (!state.rules.soundEnabled) return;
+    ensureAudio();
+    if (!audioContext) return;
+    const start = audioContext.currentTime + delay;
+    const oscillator = audioContext.createOscillator();
+    const gain = audioContext.createGain();
+    oscillator.type = type;
+    oscillator.frequency.setValueAtTime(frequency, start);
+    gain.gain.setValueAtTime(0.0001, start);
+    gain.gain.exponentialRampToValueAtTime(volume, start + 0.012);
+    gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
+    oscillator.connect(gain).connect(audioContext.destination);
+    oscillator.start(start);
+    oscillator.stop(start + duration + 0.02);
+  }
+
+  function sound(kind) {
+    if (kind === 'buzz') { tone(510, .11, 'square', .07); tone(760, .13, 'square', .06, .10); }
+    else if (kind === 'correct') { tone(620, .11, 'sine', .06); tone(880, .16, 'sine', .07, .10); }
+    else if (kind === 'incorrect') { tone(260, .22, 'sawtooth', .05); }
+    else if (kind === 'warning') { tone(720, .08, 'square', .045); }
+    else if (kind === 'end') { tone(420, .3, 'square', .07); tone(320, .38, 'square', .07, .28); }
+  }
+
+  function changed({ renderNow = true } = {}) {
+    state.matchStarted = true;
+    if (renderNow) render();
+    scheduleSave();
+    schedulePublicState();
+  }
+
+  function scheduleSave() {
+    clearTimeout(saveTimer);
+    $('saveStatus') && ($('saveStatus').textContent = 'Saving…');
+    saveTimer = setTimeout(saveState, 160);
+  }
+
+  function saveState() {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({
+        savedAt: nowIso(),
+        state,
+        mainClock: mainClock.serialize(),
+        responseClock: responseClock.serialize()
+      }));
+      if ($('saveStatus')) $('saveStatus').textContent = 'Saved locally';
+    } catch (error) {
+      if ($('saveStatus')) $('saveStatus').textContent = 'Session only — export backup';
+      if (!storageFailureNotified) {
+        storageFailureNotified = true;
+        toast('Chrome blocked local recovery for this session. The match still works; export a backup before closing.', true);
+      }
+    }
+  }
+
+  function validateImportedState(candidate) {
+    return candidate && candidate.state && candidate.state.teams?.A && candidate.state.teams?.B && candidate.state.rules;
+  }
+
+  function loadSavedState() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return false;
+      const saved = JSON.parse(raw);
+      if (!validateImportedState(saved)) return false;
+      state = { ...defaultState(), ...saved.state };
+      state.rules = { ...deepCopy(PRESET_RULES), ...(saved.state.rules || {}) };
+      state.teams = {
+        A: { ...defaultState().teams.A, ...(saved.state.teams?.A || {}) },
+        B: { ...defaultState().teams.B, ...(saved.state.teams?.B || {}) }
+      };
+      state.audit = Array.isArray(saved.state.audit) ? saved.state.audit : [];
+      mainClock = new CountdownClock(0, onMainClockExpired);
+      responseClock = new CountdownClock(0, onResponseClockExpired);
+      mainClock.restore(saved.mainClock || { durationMs: state.rules.alternateResponseSeconds * 1000, remainingMs: state.rules.alternateResponseSeconds * 1000 }, false);
+      responseClock.restore(saved.responseClock || { durationMs: state.rules.buzzerResponseSeconds * 1000, remainingMs: state.rules.buzzerResponseSeconds * 1000 }, false);
+      state.status = saved.mainClock?.wasRunning || saved.responseClock?.wasRunning ? 'Recovered safely — clocks paused' : state.status;
+      return true;
+    } catch { return false; }
+  }
+
+  function publicState() {
+    const mainRemaining = mainClock.sync();
+    const responseRemaining = responseClock.sync();
+    const sentAt = Date.now();
+    return {
+      sentAt,
+      stage: state.stage,
+      round: state.round,
+      roundTitle: roundTitle(),
+      speedPeriod: state.speedPeriod,
+      speedPeriodCount: state.rules.speedPeriodCount,
+      teams: deepCopy(state.teams),
+      activeTeam: state.activeTeam,
+      buzzerTeam: state.buzzerTeam,
+      buzzerIdentified: state.buzzerIdentified,
+      question: state.question,
+      status: state.status,
+      lastAction: state.lastAction,
+      complete: state.complete,
+      winner: state.winner,
+      main: { remainingMs: Math.round(mainRemaining), running: mainClock.running, endsAt: mainClock.running ? sentAt + mainRemaining : 0 },
+      response: { remainingMs: Math.round(responseRemaining), running: responseClock.running, endsAt: responseClock.running ? sentAt + responseRemaining : 0 }
+    };
+  }
+
+  function schedulePublicState() {
+    if (audienceMode) return;
+    clearTimeout(publicTimer);
+    publicTimer = setTimeout(publishPublicState, 20);
+  }
+
+  function publishPublicState() {
+    const payload = publicState();
+    try { localStorage.setItem(PUBLIC_KEY, JSON.stringify(payload)); } catch {}
+    try { channel?.postMessage({ type: 'state', payload }); } catch {}
+    try { audienceWindow?.postMessage({ type: 'tvj-state', payload }, '*'); } catch {}
+  }
+
+  function readPublicState() {
+    try {
+      const raw = localStorage.getItem(PUBLIC_KEY);
+      if (raw) lastAudienceState = JSON.parse(raw);
+    } catch {}
+  }
+
+  function timerDurationForRound(round) {
+    if (round === 'alternate') return state.rules.alternateResponseSeconds;
+    if (round === 'speed') return state.rules.speedPeriodSeconds;
+    if (round === 'buzzer') return state.rules.buzzerRoundSeconds;
+    return 0;
+  }
+
+  function configureRound(round, { record = true, resetPeriod = false } = {}) {
+    if (!['alternate', 'speed', 'buzzer', 'complete'].includes(round)) return;
+    if (record) recordUndo();
+    mainClock.pause();
+    responseClock.pause();
+    state.round = round;
+    state.buzzerTeam = '';
+    state.buzzerIdentified = false;
+    state.mainWasRunningBeforeBuzz = false;
+    state.complete = round === 'complete';
+    state.winner = '';
+    if (round === 'speed' && resetPeriod) state.speedPeriod = 1;
+    state.speedPeriod = clamp(state.speedPeriod, 1, state.rules.speedPeriodCount);
+    mainClock.reset(timerDurationForRound(round));
+    responseClock.reset(state.rules.buzzerResponseSeconds);
+    if (round === 'complete') {
+      const a = state.teams.A.score;
+      const b = state.teams.B.score;
+      state.winner = a === b ? `Match tied at ${a} points` : `${state.teams[a > b ? 'A' : 'B'].name} wins ${Math.max(a, b)}–${Math.min(a, b)}`;
+      state.status = 'Match complete';
+      logEvent('match_complete', state.winner);
+      sound('end');
+    } else {
+      state.status = 'Ready';
+      logEvent('round_changed', roundTitle(round));
+    }
+    changed();
+  }
+
+  function nextRound() {
+    if (state.round === 'alternate') return configureRound('speed', { resetPeriod: true });
+    if (state.round === 'speed') {
+      if (state.speedPeriod < state.rules.speedPeriodCount) {
+        recordUndo();
+        state.speedPeriod += 1;
+        state.question = 1;
+        state.activeTeam = otherTeam(state.activeTeam);
+        mainClock.reset(state.rules.speedPeriodSeconds);
+        state.status = `Speed period ${state.speedPeriod} ready`;
+        logEvent('speed_period_changed', `Speed period ${state.speedPeriod}/${state.rules.speedPeriodCount}`);
+        return changed();
+      }
+      return configureRound('buzzer');
+    }
+    if (state.round === 'buzzer') return configureRound('complete');
+    toast('The match is already complete.');
+  }
+
+  function toggleMainTimer() {
+    if (state.round === 'complete') return toast('The match is complete.');
+    mainClock.sync();
+    if (!mainClock.running && mainClock.remainingMs <= 0) return toast('Reset the clock before starting it again.');
+    ensureAudio();
+    const running = mainClock.toggle();
+    state.status = running ? 'Clock running' : 'Clock paused';
+    logEvent(running ? 'timer_started' : 'timer_paused', `${roundTitle()} clock ${running ? 'started' : 'paused'}`);
+    changed();
+  }
+
+  function resetMainTimer() {
+    confirmAction('Reset the main clock?', 'The current round clock will return to its full configured duration.', () => {
+      recordUndo();
+      mainClock.reset(timerDurationForRound(state.round));
+      state.status = 'Clock reset';
+      logEvent('timer_reset', `${roundTitle()} clock reset`);
+      changed();
+    });
+  }
+
+  function addTenSeconds() {
+    recordUndo();
+    mainClock.addSeconds(10);
+    state.status = 'Ten seconds added';
+    logEvent('timer_adjusted', 'Added 10 seconds to the main clock');
+    changed();
+  }
+
+  function switchActiveTeam() {
+    recordUndo();
+    state.activeTeam = otherTeam(state.activeTeam);
+    state.status = `${teamName(state.activeTeam)} active`;
+    logEvent('active_team_changed', `${teamName(state.activeTeam)} selected as active team`, state.activeTeam);
+    changed();
+  }
+
+  function scorePointsFor(outcome) {
+    if (state.round === 'alternate') return outcome === 'correct' ? state.rules.alternateCorrectPoints : state.rules.alternateIncorrectPoints;
+    if (state.round === 'speed') return outcome === 'correct' ? state.rules.speedCorrectPoints : state.rules.speedIncorrectPoints;
+    if (state.round === 'buzzer') return outcome === 'correct' ? state.rules.buzzerCorrectPoints : state.rules.buzzerIncorrectPoints;
+    return 0;
+  }
+
+  function canJudgeAnswer(team) {
+    if (state.round === 'alternate' || state.round === 'speed') {
+      if (team !== state.activeTeam) {
+        toast(`${teamName(state.activeTeam)} is the active team.`);
+        return false;
+      }
+      return true;
+    }
+    if (state.round === 'buzzer') {
+      if (!state.buzzerTeam) { toast('No team has buzzed.'); return false; }
+      if (state.buzzerTeam !== team) { toast(`${teamName(state.buzzerTeam)} has control.`); return false; }
+      if (!state.buzzerIdentified) { toast('Identify the team before judging the answer.'); return false; }
+      return true;
+    }
+    toast('The match is complete.');
+    return false;
+  }
+
+  function judgeAnswer(team, outcome) {
+    if (!canJudgeAnswer(team)) return;
+    recordUndo();
+    const delta = scorePointsFor(outcome);
+    state.teams[team].score += delta;
+    const label = outcome === 'correct' ? 'Correct answer' : 'Incorrect answer';
+    state.status = `${teamName(team)} — ${outcome}`;
+    logEvent(outcome, `${teamName(team)}: ${label}${delta ? ` (${delta > 0 ? '+' : ''}${delta})` : ''}`, team, delta);
+    sound(outcome);
+
+    if (state.round === 'alternate') {
+      mainClock.reset(state.rules.alternateResponseSeconds);
+      state.activeTeam = otherTeam(state.activeTeam);
+      state.question += 1;
+    } else if (state.round === 'speed') {
+      state.question += 1;
+    } else {
+      finishBuzzerQuestion();
+    }
+    changed();
+  }
+
+  function manualScore(team, delta) {
+    recordUndo();
+    state.teams[team].score += Number(delta);
+    state.status = `${teamName(team)} score adjusted`;
+    logEvent('manual_score', `${teamName(team)} manual score adjustment ${delta > 0 ? '+' : ''}${delta}`, team, Number(delta));
+    changed();
+  }
+
+  function passQuestion() {
+    if (state.round === 'complete') return;
+    recordUndo();
+    if (state.round === 'alternate') {
+      state.activeTeam = otherTeam(state.activeTeam);
+      state.question += 1;
+      mainClock.reset(state.rules.alternateResponseSeconds);
+    } else if (state.round === 'speed') {
+      state.question += 1;
+    } else if (state.round === 'buzzer') {
+      finishBuzzerQuestion();
+    }
+    state.status = 'Question passed';
+    logEvent('pass', `Question ${state.question - 1 || 1} passed`);
+    changed();
+  }
+
+  function nextQuestion() {
+    if (state.round === 'buzzer') {
+      recordUndo();
+      finishBuzzerQuestion();
+      state.status = 'Next question';
+      logEvent('next_question', `Advanced to question ${state.question}`);
+      return changed();
+    }
+    passQuestion();
+  }
+
+  function buzz(team) {
+    if (state.round !== 'buzzer') return toast('Buzzers are available only in the buzzer section.');
+    if (mainClock.remainingMs <= 0) return toast('The buzzer clock has ended.');
+    if (state.buzzerTeam) return;
+    ensureAudio();
+    recordUndo();
+    mainClock.sync();
+    state.mainWasRunningBeforeBuzz = mainClock.running;
+    if (state.rules.pauseMainClockOnBuzz) mainClock.pause();
+    state.buzzerTeam = team;
+    state.buzzerIdentified = false;
+    responseClock.reset(state.rules.buzzerResponseSeconds);
+    state.status = `${teamName(team)} buzzed`;
+    logEvent('buzz', `${teamName(team)} buzzed first`, team);
+    sound('buzz');
+    changed();
+  }
+
+  function identifyBuzzerTeam() {
+    if (!state.buzzerTeam || state.buzzerIdentified) return;
+    recordUndo();
+    state.buzzerIdentified = true;
+    responseClock.reset(state.rules.buzzerResponseSeconds);
+    responseClock.start();
+    state.status = `${teamName(state.buzzerTeam)} identified — answer now`;
+    logEvent('identified', `${teamName(state.buzzerTeam)} identified; response clock started`, state.buzzerTeam);
+    changed();
+  }
+
+  function finishBuzzerQuestion() {
+    const shouldResume = state.mainWasRunningBeforeBuzz && state.rules.pauseMainClockOnBuzz && mainClock.remainingMs > 0;
+    responseClock.pause();
+    responseClock.reset(state.rules.buzzerResponseSeconds);
+    state.buzzerTeam = '';
+    state.buzzerIdentified = false;
+    state.mainWasRunningBeforeBuzz = false;
+    state.question += 1;
+    if (shouldResume) mainClock.start();
+  }
+
+  function resetBuzzers() {
+    if (!state.buzzerTeam && !state.buzzerIdentified) return;
+    recordUndo();
+    const team = state.buzzerTeam;
+    const shouldResume = state.mainWasRunningBeforeBuzz && state.rules.pauseMainClockOnBuzz && mainClock.remainingMs > 0;
+    responseClock.reset(state.rules.buzzerResponseSeconds);
+    state.buzzerTeam = '';
+    state.buzzerIdentified = false;
+    state.mainWasRunningBeforeBuzz = false;
+    if (shouldResume) mainClock.start();
+    state.status = 'Buzzers reset';
+    logEvent('buzzers_reset', `${team ? teamName(team) : 'Team'} buzzer cleared`);
+    changed();
+  }
+
+  function beforeIdentificationPenalty() {
+    if (!state.buzzerTeam || state.buzzerIdentified) return;
+    recordUndo();
+    const team = state.buzzerTeam;
+    const delta = state.rules.buzzerBeforeIdentifiedPoints;
+    state.teams[team].score += delta;
+    state.status = `${teamName(team)} answered before identification`;
+    logEvent('before_identification', `${teamName(team)} answered before identification (${delta > 0 ? '+' : ''}${delta})`, team, delta);
+    sound('incorrect');
+    finishBuzzerQuestion();
+    changed();
+  }
+
+  function applyTimeoutPenalty(auto = false) {
+    if (timeoutApplying) return;
+    if (state.round !== 'buzzer' || !state.buzzerTeam) {
+      state.status = 'Time expired';
+      logEvent('timeout', `${roundTitle()} time expired`);
+      return changed();
+    }
+    timeoutApplying = true;
+    recordUndo();
+    const team = state.buzzerTeam;
+    const delta = state.rules.buzzerTimeoutPoints;
+    state.teams[team].score += delta;
+    state.status = `${teamName(team)} response time expired`;
+    logEvent('response_timeout', `${teamName(team)} response time expired${auto ? ' automatically' : ''} (${delta > 0 ? '+' : ''}${delta})`, team, delta);
+    sound('incorrect');
+    finishBuzzerQuestion();
+    timeoutApplying = false;
+    changed();
+  }
+
+  function timeoutAction() {
+    if (state.round === 'buzzer' && state.buzzerTeam) return applyTimeoutPenalty(false);
+    if (state.round === 'alternate' || state.round === 'speed') {
+      const team = state.activeTeam;
+      judgeAnswer(team, 'incorrect');
+    }
+  }
+
+  function onMainClockExpired() {
+    state.status = state.round === 'speed' ? `Speed period ${state.speedPeriod} ended` : state.round === 'buzzer' ? 'Buzzer section time ended' : 'Response time expired';
+    logEvent('main_clock_expired', `${roundTitle()} clock expired`);
+    sound('end');
+    changed();
+  }
+
+  function onResponseClockExpired() {
+    if (state.rules.autoApplyTimeoutPenalty) applyTimeoutPenalty(true);
+    else {
+      state.status = `${teamName(state.buzzerTeam)} response time expired`;
+      logEvent('response_clock_expired', `${teamName(state.buzzerTeam)} response clock expired; awaiting operator ruling`, state.buzzerTeam);
+      sound('end');
+      changed();
+    }
+  }
+
+  function openSetup() {
+    $('setupAName').value = state.teams.A.name;
+    $('setupAShort').value = state.teams.A.shortName;
+    $('setupAColor').value = state.teams.A.color;
+    $('setupBName').value = state.teams.B.name;
+    $('setupBShort').value = state.teams.B.shortName;
+    $('setupBColor').value = state.teams.B.color;
+    $('setupStage').value = state.stage;
+    $('setupActiveTeam').value = state.activeTeam;
+    $('setupDialog').showModal();
+  }
+
+  async function fileToDataUrl(file) {
+    if (!file) return '';
+    if (file.size > 2_500_000) throw new Error('Logo must be smaller than 2.5 MB.');
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = () => reject(new Error('Could not read the logo file.'));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function saveSetup() {
+    const aName = $('setupAName').value.trim();
+    const bName = $('setupBName').value.trim();
+    if (!aName || !bName) return toast('Enter both school names.', true);
+    try {
+      recordUndo();
+      const aLogoFile = $('setupALogo').files[0];
+      const bLogoFile = $('setupBLogo').files[0];
+      state.teams.A.name = aName;
+      state.teams.A.shortName = ($('setupAShort').value.trim() || aName).toUpperCase();
+      state.teams.A.color = $('setupAColor').value;
+      state.teams.B.name = bName;
+      state.teams.B.shortName = ($('setupBShort').value.trim() || bName).toUpperCase();
+      state.teams.B.color = $('setupBColor').value;
+      if (aLogoFile) state.teams.A.logo = await fileToDataUrl(aLogoFile);
+      if (bLogoFile) state.teams.B.logo = await fileToDataUrl(bLogoFile);
+      state.stage = $('setupStage').value;
+      state.activeTeam = $('setupActiveTeam').value;
+      state.status = 'Match setup saved';
+      logEvent('setup_saved', `${state.teams.A.name} vs ${state.teams.B.name} — ${state.stage}`);
+      $('setupALogo').value = '';
+      $('setupBLogo').value = '';
+      $('setupDialog').close();
+      changed();
+    } catch (error) { toast(error.message, true); }
+  }
+
+  function buildRulesForm() {
+    const grid = $('rulesGrid');
+    grid.replaceChildren();
+    for (const [label, key, suffix, min, max] of RULE_FIELDS) {
+      const row = document.createElement('div');
+      row.className = 'rule-row';
+      row.innerHTML = `<label for="rule_${key}">${label}<small>${suffix}</small></label><input id="rule_${key}" name="${key}" type="number" min="${min}" max="${max}" step="1">`;
+      grid.append(row);
+    }
+    for (const [label, key] of BOOLEAN_RULE_FIELDS) {
+      const row = document.createElement('div');
+      row.className = 'rule-row rule-check';
+      row.innerHTML = `<label for="rule_${key}">${label}</label><input id="rule_${key}" name="${key}" type="checkbox">`;
+      grid.append(row);
+    }
+  }
+
+  function fillRulesForm(rules = state.rules) {
+    for (const [, key] of RULE_FIELDS) $(`rule_${key}`).value = rules[key];
+    for (const [, key] of BOOLEAN_RULE_FIELDS) $(`rule_${key}`).checked = Boolean(rules[key]);
+  }
+
+  function openRules() { fillRulesForm(); $('rulesDialog').showModal(); }
+
+  function saveRules() {
+    const newRules = {};
+    for (const [, key, , min, max] of RULE_FIELDS) newRules[key] = clamp(Math.round(Number($(`rule_${key}`).value)), min, max);
+    for (const [, key] of BOOLEAN_RULE_FIELDS) newRules[key] = $(`rule_${key}`).checked;
+    recordUndo();
+    state.rules = { ...state.rules, ...newRules };
+    state.speedPeriod = clamp(state.speedPeriod, 1, state.rules.speedPeriodCount);
+    mainClock.reset(timerDurationForRound(state.round));
+    responseClock.reset(state.rules.buzzerResponseSeconds);
+    state.status = 'Rules updated; clocks reset';
+    logEvent('rules_updated', 'Rules and timing updated; current clocks reset');
+    $('rulesDialog').close();
+    changed();
+  }
+
+  function recordJudgeDecision() {
+    const team = $('judgeTeam').value;
+    const delta = clamp(Math.round(Number($('judgeDelta').value) || 0), -20, 20);
+    const note = $('judgeNote').value.trim() || 'Judges’ manual ruling';
+    recordUndo();
+    if (team) state.teams[team].score += delta;
+    state.status = 'Judges’ decision recorded';
+    logEvent('judges_decision', `${note}${team ? ` — ${teamName(team)} ${delta > 0 ? '+' : ''}${delta}` : ''}`, team, delta);
+    $('judgeDialog').close();
+    $('judgeNote').value = '';
+    $('judgeDelta').value = '0';
+    changed();
+  }
+
+  function confirmAction(title, message, action, confirmLabel = 'Confirm') {
+    $('confirmTitle').textContent = title;
+    $('confirmMessage').textContent = message;
+    $('confirmActionBtn').textContent = confirmLabel;
+    const dialog = $('confirmDialog');
+    const handler = () => {
+      dialog.removeEventListener('close', handler);
+      if (dialog.returnValue === 'confirm') action();
+    };
+    dialog.addEventListener('close', handler);
+    dialog.showModal();
+  }
+
+  function startNewMatch() {
+    confirmAction('Start a new match?', 'Scores, timers and the current audit trail will be cleared. Export a backup first when needed.', () => {
+      state = defaultState();
+      undoStack = [];
+      mainClock = new CountdownClock(state.rules.alternateResponseSeconds, onMainClockExpired);
+      responseClock = new CountdownClock(state.rules.buzzerResponseSeconds, onResponseClockExpired);
+      logEvent('match_created', 'New match created');
+      changed();
+      openSetup();
+    }, 'Start new match');
+  }
+
+  function exportJson() {
+    const payload = { exportedAt: nowIso(), app: 'Schools Challenge Quiz Controller', state, mainClock: mainClock.serialize(), responseClock: responseClock.serialize() };
+    downloadBlob(JSON.stringify(payload, null, 2), `${safeFilename(state.teams.A.shortName)}-vs-${safeFilename(state.teams.B.shortName)}-match.json`, 'application/json');
+    toast('Match backup exported.');
+  }
+
+  function csvEscape(value) { return `"${String(value ?? '').replaceAll('"', '""')}"`; }
+  function exportCsv() {
+    const rows = [['Timestamp', 'Action', 'Details', 'Team', 'Delta', 'Score A', 'Score B']];
+    state.audit.forEach(e => rows.push([e.timestamp, e.action, e.details, e.team, e.delta, e.scoreA, e.scoreB]));
+    const csv = rows.map(row => row.map(csvEscape).join(',')).join('\r\n');
+    downloadBlob(csv, `${safeFilename(state.teams.A.shortName)}-vs-${safeFilename(state.teams.B.shortName)}-audit.csv`, 'text/csv;charset=utf-8');
+    toast('Audit CSV exported.');
+  }
+
+  function safeFilename(value) { return String(value).replace(/[^a-z0-9_-]+/gi, '-').replace(/^-+|-+$/g, '') || 'team'; }
+  function downloadBlob(content, filename, type) {
+    const blob = new Blob([content], { type });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  async function importMatch(file) {
+    try {
+      const imported = JSON.parse(await file.text());
+      if (!validateImportedState(imported)) throw new Error('This is not a valid match backup.');
+      recordUndo();
+      state = { ...defaultState(), ...imported.state };
+      state.rules = { ...deepCopy(PRESET_RULES), ...(imported.state.rules || {}) };
+      state.teams = { A: { ...defaultState().teams.A, ...imported.state.teams.A }, B: { ...defaultState().teams.B, ...imported.state.teams.B } };
+      state.audit = Array.isArray(imported.state.audit) ? imported.state.audit : [];
+      mainClock.restore(imported.mainClock || {}, false);
+      responseClock.restore(imported.responseClock || {}, false);
+      state.status = 'Backup imported — clocks paused';
+      logEvent('backup_imported', 'Match backup imported; clocks restored in paused state');
+      changed();
+      toast('Match backup imported.');
+    } catch (error) { toast(error.message, true); }
+  }
+
+  function openAudience() {
+    publishPublicState();
+    const url = new URL(location.href);
+    url.searchParams.set('display', 'audience');
+    url.hash = '';
+    audienceWindow = window.open(url.href, 'tvj-audience-display');
+    if (!audienceWindow) toast('Chrome blocked the display window. Allow pop-ups, then try again.', true);
+    else [120, 450, 1000].forEach(delay => setTimeout(publishPublicState, delay));
+  }
+
+  async function toggleFullscreen() {
+    try {
+      if (!document.fullscreenElement) await document.documentElement.requestFullscreen();
+      else await document.exitFullscreen();
+    } catch { toast('Fullscreen was not available.', true); }
+  }
+
+  async function toggleWakeLock() {
+    if (!('wakeLock' in navigator)) return toast('Screen wake lock is not supported on this device.');
+    try {
+      if (wakeLock) {
+        await wakeLock.release();
+        wakeLock = null;
+        $('wakeLockBtn').textContent = 'Keep awake';
+      } else {
+        wakeLock = await navigator.wakeLock.request('screen');
+        $('wakeLockBtn').textContent = 'Screen awake';
+        wakeLock.addEventListener('release', () => { wakeLock = null; if ($('wakeLockBtn')) $('wakeLockBtn').textContent = 'Keep awake'; });
+      }
+    } catch (error) { toast(`Could not keep the screen awake: ${error.message}`, true); }
+  }
+
+  function toast(message, error = false) {
+    const node = document.createElement('div');
+    node.className = `toast${error ? ' error' : ''}`;
+    node.textContent = message;
+    $('toastRegion').append(node);
+    setTimeout(() => node.remove(), 3600);
+  }
+
+  function updateLogo(img, logo, alt) {
+    if (logo) { img.src = logo; img.alt = alt; img.classList.remove('hidden'); }
+    else { img.removeAttribute('src'); img.alt = ''; img.classList.add('hidden'); }
+  }
+
+  function renderOperator() {
+    document.documentElement.style.setProperty('--team-a', state.teams.A.color);
+    document.documentElement.style.setProperty('--team-b', state.teams.B.color);
+    $('stageLabel').textContent = state.stage.toUpperCase();
+    $('roundLabel').textContent = roundTitle();
+    $('teamAName').textContent = state.teams.A.name;
+    $('teamAShort').textContent = state.teams.A.shortName;
+    $('teamAScore').textContent = state.teams.A.score;
+    $('teamBName').textContent = state.teams.B.name;
+    $('teamBShort').textContent = state.teams.B.shortName;
+    $('teamBScore').textContent = state.teams.B.score;
+    updateLogo($('teamALogo'), state.teams.A.logo, `${state.teams.A.name} logo`);
+    updateLogo($('teamBLogo'), state.teams.B.logo, `${state.teams.B.name} logo`);
+
+    $('teamAActiveBadge').classList.toggle('hidden', state.activeTeam !== 'A' || state.round === 'buzzer');
+    $('teamBActiveBadge').classList.toggle('hidden', state.activeTeam !== 'B' || state.round === 'buzzer');
+    $('teamACard').classList.toggle('buzzed', state.buzzerTeam === 'A');
+    $('teamBCard').classList.toggle('buzzed', state.buzzerTeam === 'B');
+
+    $$('.round-tab').forEach(btn => btn.classList.toggle('active', btn.dataset.round === state.round));
+    const mainRemaining = mainClock.sync();
+    $('mainTimer').textContent = formatClock(mainRemaining, mainClock.running);
+    $('mainTimer').classList.toggle('warning', mainRemaining > 5000 && mainRemaining <= 10000);
+    $('mainTimer').classList.toggle('danger', mainRemaining <= 5000);
+    $('timerContext').textContent = state.round === 'alternate' ? 'Response time' : state.round === 'speed' ? `Period ${state.speedPeriod} of ${state.rules.speedPeriodCount}` : state.round === 'buzzer' ? 'Buzzer section' : 'Final result';
+    const badge = $('timerStateBadge');
+    badge.textContent = mainClock.running ? 'RUNNING' : mainRemaining <= 0 ? 'ENDED' : mainRemaining < mainClock.durationMs ? 'PAUSED' : 'READY';
+    badge.className = `state-badge ${mainClock.running ? 'running' : mainRemaining <= 0 ? 'expired' : mainRemaining < mainClock.durationMs ? 'paused' : ''}`;
+
+    $('questionNumber').textContent = state.question;
+    $('activeTeamLabel').textContent = teamName(state.activeTeam);
+    $('speedPeriodBlock').classList.toggle('hidden', state.round !== 'speed');
+    $('speedPeriodLabel').textContent = `${state.speedPeriod} / ${state.rules.speedPeriodCount}`;
+    $('buzzerPanel').classList.toggle('hidden', state.round !== 'buzzer');
+    $('responseTimer').textContent = formatClock(responseClock.sync(), responseClock.running);
+    $('buzzerStatus').textContent = !state.buzzerTeam ? 'Buzzers armed' : state.buzzerIdentified ? `${teamName(state.buzzerTeam)} identified` : `${teamName(state.buzzerTeam)} buzzed`;
+    $('buzzerInstruction').textContent = !state.buzzerTeam ? 'First valid buzz locks out the opposing team.' : state.buzzerIdentified ? 'The five-second response clock is running.' : 'Identify the team before judging its answer.';
+    $('identifyBtn').disabled = !state.buzzerTeam || state.buzzerIdentified;
+    $('beforeIdBtn').disabled = !state.buzzerTeam || state.buzzerIdentified;
+    $$('[data-buzz]').forEach(btn => btn.disabled = state.round !== 'buzzer' || Boolean(state.buzzerTeam) || mainRemaining <= 0);
+
+    $$('[data-answer]').forEach(btn => {
+      const team = btn.dataset.team;
+      if (state.round === 'buzzer') btn.disabled = !state.buzzerTeam || state.buzzerTeam !== team || !state.buzzerIdentified;
+      else btn.disabled = state.round === 'complete' || state.activeTeam !== team;
+    });
+    $('undoBtn').disabled = !undoStack.length;
+    $('passBtn').disabled = state.round === 'complete';
+    $('timeoutBtn').disabled = state.round === 'complete';
+    $('nextQuestionBtn').disabled = state.round === 'complete';
+    $('switchTeamBtn').disabled = state.round === 'buzzer' || state.round === 'complete';
+    $('nextRoundBtn').textContent = state.round === 'speed' && state.speedPeriod < state.rules.speedPeriodCount ? 'Next speed period' : state.round === 'buzzer' ? 'Finish match' : state.round === 'complete' ? 'Match complete' : 'Next section';
+    $('nextRoundBtn').disabled = state.round === 'complete';
+    $('lastAction').textContent = state.lastAction;
+    renderAudit();
+  }
+
+  function audienceRemaining(clock) {
+    if (!clock) return 0;
+    return clock.running && clock.endsAt ? Math.max(0, clock.endsAt - Date.now()) : Math.max(0, clock.remainingMs || 0);
+  }
+
+  function renderAudience(payload = null) {
+    const p = payload || publicState();
+    if (!p) return;
+    document.documentElement.style.setProperty('--team-a', p.teams.A.color);
+    document.documentElement.style.setProperty('--team-b', p.teams.B.color);
+    $('audienceStage').textContent = p.stage.toUpperCase();
+    $('audienceRound').textContent = p.roundTitle.toUpperCase();
+    $('audienceShortA').textContent = p.teams.A.shortName;
+    $('audienceNameA').textContent = p.teams.A.name;
+    $('audienceScoreA').textContent = p.teams.A.score;
+    $('audienceShortB').textContent = p.teams.B.shortName;
+    $('audienceNameB').textContent = p.teams.B.name;
+    $('audienceScoreB').textContent = p.teams.B.score;
+    updateLogo($('audienceLogoA'), p.teams.A.logo, `${p.teams.A.name} logo`);
+    updateLogo($('audienceLogoB'), p.teams.B.logo, `${p.teams.B.name} logo`);
+    $('audienceTeamA').classList.toggle('buzzed', p.buzzerTeam === 'A');
+    $('audienceTeamB').classList.toggle('buzzed', p.buzzerTeam === 'B');
+    const remaining = audienceRemaining(p.main);
+    $('audienceTimer').textContent = formatClock(remaining, p.main.running);
+    $('audienceStatus').textContent = p.complete ? 'FINAL' : p.buzzerTeam ? `${p.teams[p.buzzerTeam].shortName} BUZZED` : p.main.running ? 'TIME' : p.status.toUpperCase();
+    $('audienceQuestion').textContent = p.question;
+    const responseRemaining = audienceRemaining(p.response);
+    $('audienceResponseWrap').classList.toggle('hidden', !(p.round === 'buzzer' && p.buzzerIdentified));
+    $('audienceResponse').textContent = Math.max(0, Math.ceil(responseRemaining / 1000));
+    $('audienceActiveTeam').textContent = p.round === 'buzzer' ? (p.buzzerTeam ? `${p.teams[p.buzzerTeam].shortName} TO ANSWER` : 'BUZZERS ARMED') : `${p.teams[p.activeTeam].shortName} TO ANSWER`;
+    $('audienceFooterMessage').textContent = p.complete ? p.winner.toUpperCase() : p.lastAction.toUpperCase();
+  }
+
+  function renderAudit() {
+    const list = $('auditList');
+    if (auditCollapsed) { list.classList.add('hidden'); return; }
+    list.classList.remove('hidden');
+    const events = state.audit.slice(-12).reverse();
+    list.replaceChildren(...events.map(event => {
+      const li = document.createElement('li');
+      const delta = event.delta ? `${event.delta > 0 ? '+' : ''}${event.delta}` : '';
+      li.innerHTML = `<time>${timeOnly(event.timestamp)}</time><span></span><strong class="audit-delta"></strong>`;
+      li.children[1].textContent = event.details;
+      li.children[2].textContent = delta;
+      return li;
+    }));
+    if (!events.length) {
+      const li = document.createElement('li');
+      li.innerHTML = '<time>—</time><span>No match events yet.</span><strong></strong>';
+      list.append(li);
+    }
+  }
+
+  function render() {
+    if (!audienceMode) {
+      renderOperator();
+      renderAudience();
+    } else if (lastAudienceState) {
+      renderAudience(lastAudienceState);
+    }
+  }
+
+  let lastAnimationPaint = 0;
+  let lastLivePublish = 0;
+  let lastLiveSave = 0;
+
+  function renderDynamicOperator() {
+    const mainRemaining = mainClock.sync();
+    const responseRemaining = responseClock.sync();
+    $('mainTimer').textContent = formatClock(mainRemaining, mainClock.running);
+    $('mainTimer').classList.toggle('warning', mainRemaining > 5000 && mainRemaining <= 10000);
+    $('mainTimer').classList.toggle('danger', mainRemaining <= 5000);
+    $('responseTimer').textContent = formatClock(responseRemaining, responseClock.running);
+    const badge = $('timerStateBadge');
+    badge.textContent = mainClock.running ? 'RUNNING' : mainRemaining <= 0 ? 'ENDED' : mainRemaining < mainClock.durationMs ? 'PAUSED' : 'READY';
+    badge.className = `state-badge ${mainClock.running ? 'running' : mainRemaining <= 0 ? 'expired' : mainRemaining < mainClock.durationMs ? 'paused' : ''}`;
+  }
+
+  function animationLoop(timestamp) {
+    if (timestamp - lastAnimationPaint >= 80) {
+      if (!audienceMode) renderDynamicOperator();
+      else if (lastAudienceState) renderAudience(lastAudienceState);
+      lastAnimationPaint = timestamp;
+    }
+    if (!audienceMode && (mainClock.running || responseClock.running)) {
+      if (timestamp - lastLivePublish >= 200) {
+        publishPublicState();
+        lastLivePublish = timestamp;
+      }
+      if (timestamp - lastLiveSave >= 2000) {
+        saveState();
+        lastLiveSave = timestamp;
+      }
+    }
+    requestAnimationFrame(animationLoop);
+  }
+
+  function bindEvents() {
+    $('mainTimerButton').addEventListener('click', toggleMainTimer);
+    $('resetMainTimerBtn').addEventListener('click', resetMainTimer);
+    $('addTenBtn').addEventListener('click', addTenSeconds);
+    $('nextQuestionBtn').addEventListener('click', nextQuestion);
+    $('switchTeamBtn').addEventListener('click', switchActiveTeam);
+    $('identifyBtn').addEventListener('click', identifyBuzzerTeam);
+    $('beforeIdBtn').addEventListener('click', beforeIdentificationPenalty);
+    $('resetBuzzersBtn').addEventListener('click', resetBuzzers);
+    $('passBtn').addEventListener('click', passQuestion);
+    $('timeoutBtn').addEventListener('click', timeoutAction);
+    $('judgeBtn').addEventListener('click', () => $('judgeDialog').showModal());
+    $('nextRoundBtn').addEventListener('click', nextRound);
+    $('undoBtn').addEventListener('click', undo);
+    $('openAudienceBtn').addEventListener('click', openAudience);
+    $('fullscreenBtn').addEventListener('click', toggleFullscreen);
+    $('wakeLockBtn').addEventListener('click', toggleWakeLock);
+    $('exitAudienceBtn').addEventListener('click', () => { const url = new URL(location.href); url.searchParams.delete('display'); location.href = url.href; });
+
+    $$('[data-answer]').forEach(btn => btn.addEventListener('click', () => judgeAnswer(btn.dataset.team, btn.dataset.answer)));
+    $$('[data-buzz]').forEach(btn => btn.addEventListener('click', () => buzz(btn.dataset.buzz)));
+    $$('[data-score-team]').forEach(btn => btn.addEventListener('click', () => manualScore(btn.dataset.scoreTeam, Number(btn.dataset.delta))));
+    $$('.round-tab').forEach(btn => btn.addEventListener('click', () => btn.dataset.round === 'complete' ? confirmAction('Finish the match?', 'The winner will be calculated from the current scores.', () => configureRound('complete'), 'Finish match') : configureRound(btn.dataset.round, { resetPeriod: btn.dataset.round === 'speed' })));
+
+    $('moreBtn').addEventListener('click', () => {
+      const menu = $('moreMenu');
+      menu.classList.toggle('hidden');
+      $('moreBtn').setAttribute('aria-expanded', String(!menu.classList.contains('hidden')));
+    });
+    document.addEventListener('click', event => {
+      if (!event.target.closest('#moreMenu') && !event.target.closest('#moreBtn')) $('moreMenu').classList.add('hidden');
+    });
+    $$('[data-menu-action]').forEach(btn => btn.addEventListener('click', async () => {
+      $('moreMenu').classList.add('hidden');
+      const action = btn.dataset.menuAction;
+      if (action === 'setup') openSetup();
+      else if (action === 'rules') openRules();
+      else if (action === 'export-json') exportJson();
+      else if (action === 'export-csv') exportCsv();
+      else if (action === 'import') $('importFileInput').click();
+      else if (action === 'reset') startNewMatch();
+      else if (action === 'install' && deferredInstallPrompt) {
+        deferredInstallPrompt.prompt();
+        await deferredInstallPrompt.userChoice;
+        deferredInstallPrompt = null;
+        $('installMenuBtn').classList.add('hidden');
+      }
+    }));
+
+    $('setupForm').addEventListener('submit', event => { event.preventDefault(); saveSetup(); });
+    $('rulesForm').addEventListener('submit', event => { event.preventDefault(); saveRules(); });
+    $('judgeForm').addEventListener('submit', event => { event.preventDefault(); recordJudgeDecision(); });
+    $$('.close-dialog').forEach(btn => btn.addEventListener('click', () => btn.closest('dialog').close()));
+    $('restorePresetBtn').addEventListener('click', () => fillRulesForm(PRESET_RULES));
+    $('clearALogoBtn').addEventListener('click', () => { recordUndo(); state.teams.A.logo = ''; changed(); toast('Team A logo removed.'); });
+    $('clearBLogoBtn').addEventListener('click', () => { recordUndo(); state.teams.B.logo = ''; changed(); toast('Team B logo removed.'); });
+    $('importFileInput').addEventListener('change', () => { const file = $('importFileInput').files[0]; if (file) importMatch(file); $('importFileInput').value = ''; });
+    $('clearLogViewBtn').addEventListener('click', () => { auditCollapsed = !auditCollapsed; $('clearLogViewBtn').textContent = auditCollapsed ? 'Expand' : 'Collapse'; renderAudit(); });
+
+    document.addEventListener('keydown', event => {
+      if (audienceMode || event.repeat || event.target.matches('input, textarea, select') || document.querySelector('dialog[open]')) return;
+      const key = event.key.toLowerCase();
+      if (key === ' ') { event.preventDefault(); toggleMainTimer(); }
+      else if (key === 'a') judgeAnswer('A', 'correct');
+      else if (key === 'z') judgeAnswer('A', 'incorrect');
+      else if (key === 'l') judgeAnswer('B', 'correct');
+      else if (key === 'm') judgeAnswer('B', 'incorrect');
+      else if (key === 'p') passQuestion();
+      else if (key === 'u') undo();
+      else if (key === 'r') resetBuzzers();
+      else if (key === '1') buzz('A');
+      else if (key === '2') buzz('B');
+      else if (key === 'enter') nextQuestion();
+    });
+
+    window.addEventListener('beforeinstallprompt', event => {
+      event.preventDefault();
+      deferredInstallPrompt = event;
+      $('installMenuBtn').classList.remove('hidden');
+    });
+    window.addEventListener('message', event => {
+      if (event.data?.type === 'tvj-request-state' && !audienceMode) {
+        const payload = publicState();
+        try { event.source?.postMessage({ type: 'tvj-state', payload }, '*'); } catch {}
+        publishPublicState();
+      }
+      if (event.data?.type === 'tvj-state' && audienceMode) { lastAudienceState = event.data.payload; renderAudience(lastAudienceState); }
+    });
+    channel?.addEventListener('message', event => {
+      if (audienceMode && event.data?.type === 'state') { lastAudienceState = event.data.payload; renderAudience(lastAudienceState); }
+      if (!audienceMode && event.data?.type === 'request-state') publishPublicState();
+    });
+    window.addEventListener('storage', event => {
+      if (audienceMode && event.key === PUBLIC_KEY && event.newValue) {
+        try { lastAudienceState = JSON.parse(event.newValue); } catch {}
+      }
+    });
+    document.addEventListener('visibilitychange', async () => {
+      if (document.visibilityState === 'visible' && wakeLock === null && $('wakeLockBtn')?.textContent === 'Screen awake') {
+        try { wakeLock = await navigator.wakeLock.request('screen'); } catch {}
+      }
+    });
+  }
+
+  function registerServiceWorker() {
+    if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+      navigator.serviceWorker.register('./sw.js').catch(() => {});
+    }
+  }
+
+  function init() {
+    buildRulesForm();
+    document.body.classList.toggle('audience-mode', audienceMode);
+    if (audienceMode) {
+      readPublicState();
+      try { channel?.postMessage({ type: 'request-state' }); } catch {}
+      try { window.opener?.postMessage({ type: 'tvj-request-state' }, '*'); } catch {}
+      setInterval(readPublicState, 750);
+      $('exitAudienceBtn').title = 'Return to operator controls';
+    } else {
+      const recovered = loadSavedState();
+      if (!recovered) {
+        logEvent('match_created', 'New match created');
+        setTimeout(openSetup, 200);
+      } else if (state.status.includes('Recovered')) {
+        setTimeout(() => toast('Recovered the previous match. Timers were paused for safety.'), 300);
+      }
+    }
+    bindEvents();
+    registerServiceWorker();
+    render();
+    if (!audienceMode) publishPublicState();
+    requestAnimationFrame(animationLoop);
+  }
+
+  init();
+})();
+
+  </script>
+</body>
+</html>
