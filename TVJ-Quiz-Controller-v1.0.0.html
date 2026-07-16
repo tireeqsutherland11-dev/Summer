@@ -231,6 +231,7 @@ kbd {
 .alternate-main-clock { margin-top: var(--space-sm); color: var(--muted); font-size: .78rem; font-weight: 900; letter-spacing: .08em; text-transform: uppercase; text-align: center; }
 .alternate-main-clock output { display: block; color: var(--text); font-size: clamp(34px, 4vw, 58px); line-height: 1; font-variant-numeric: tabular-nums; letter-spacing: -.04em; }
 .timer-actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-sm); }
+.timer-actions.two-actions { grid-template-columns: repeat(2, 1fr); }
 
 .buzzer-panel { padding: var(--space-lg); display: grid; grid-template-columns: 1fr auto; align-items: center; gap: var(--space-md); }
 .buzzer-status-wrap h3 { font-size: 1.45rem; margin-bottom: 6px; }
@@ -241,7 +242,7 @@ kbd {
 .response-timer { font-size: 2.1rem; font-weight: 950; font-variant-numeric: tabular-nums; }
 .response-timer.danger { color: var(--red); animation: timeFlash .5s ease-in-out infinite alternate; }
 .buzzer-actions { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
-.question-card { padding: var(--space-lg); display: grid; grid-template-columns: repeat(4, auto); align-items: center; justify-content: space-between; gap: var(--space-md); }
+.question-card { padding: var(--space-lg) 68px var(--space-lg) var(--space-lg); display: grid; grid-template-columns: repeat(3, minmax(82px, auto)) minmax(118px, auto); align-items: center; justify-content: space-between; gap: var(--space-md); }
 .question-card strong { font-size: 1.3rem; }
 
 .lower-grid { display: grid; grid-template-columns: 1fr; gap: var(--space-md); margin-top: var(--space-md); }
@@ -357,7 +358,7 @@ textarea { resize: vertical; }
   .main-timer { font-size: clamp(85px, 26vw, 136px); }
   .timer-actions, .buzzer-actions { grid-template-columns: 1fr; }
   .buzzer-panel { grid-template-columns: 1fr auto; }
-  .question-card { grid-template-columns: 1fr 1fr; }
+  .question-card { grid-template-columns: 1fr 1fr; padding-right: 68px; }
   .quick-action-grid { grid-template-columns: 1fr 1fr; }
   .audit-list li { grid-template-columns: 68px 1fr; }
   .audit-delta { grid-column: 2; }
@@ -705,7 +706,7 @@ textarea { resize: vertical; }
     speedPeriodSeconds: 60,
     speedPeriodCount: 3,
     speedCorrectPoints: 1,
-    speedIncorrectPoints: 0,
+    speedIncorrectPoints: -1,
     buzzerRoundSeconds: 240,
     buzzerResponseSeconds: 10,
     buzzerCorrectPoints: 2,
@@ -714,7 +715,9 @@ textarea { resize: vertical; }
     buzzerTimeoutPoints: -2,
     pauseMainClockOnBuzz: true,
     autoApplyTimeoutPenalty: false,
-    soundEnabled: true
+    soundEnabled: true,
+    correctSoundEnabled: true,
+    incorrectSoundEnabled: true
   });
 
   const RULE_FIELDS = [
@@ -737,7 +740,9 @@ textarea { resize: vertical; }
   const BOOLEAN_RULE_FIELDS = [
     ['Pause main clock when a team buzzes', 'pauseMainClockOnBuzz'],
     ['Apply timeout penalty automatically', 'autoApplyTimeoutPenalty'],
-    ['Enable match sounds', 'soundEnabled']
+    ['Enable match sounds', 'soundEnabled'],
+    ['Play correct-answer sound', 'correctSoundEnabled'],
+    ['Play incorrect-answer sound', 'incorrectSoundEnabled']
   ];
 
   const $ = (id) => document.getElementById(id);
@@ -964,6 +969,8 @@ textarea { resize: vertical; }
   }
 
   function sound(kind) {
+    if (kind === 'correct' && !state.rules.correctSoundEnabled) return;
+    if (kind === 'incorrect' && !state.rules.incorrectSoundEnabled) return;
     if (kind === 'buzz') { tone(510, .11, 'square', .07); tone(760, .13, 'square', .06, .10); }
     else if (kind === 'correct') { tone(620, .11, 'sine', .06); tone(880, .16, 'sine', .07, .10); }
     else if (kind === 'incorrect') { tone(260, .22, 'sawtooth', .05); }
@@ -1811,6 +1818,9 @@ textarea { resize: vertical; }
     const badgeClock = state.round === 'alternate' ? activeDisplayClock() : mainClock;
     badge.textContent = badgeClock.running ? 'RUNNING' : displayRemaining <= 0 ? 'ENDED' : displayRemaining < badgeClock.durationMs ? 'PAUSED' : 'READY';
     badge.className = `state-badge ${badgeClock.running ? 'running' : displayRemaining <= 0 ? 'expired' : displayRemaining < badgeClock.durationMs ? 'paused' : ''}`;
+    $('resetResponseTimerBtn').classList.toggle('hidden', state.round === 'speed');
+    $('resetResponseTimerBtn').disabled = state.round === 'speed' || state.round === 'complete';
+    $('resetResponseTimerBtn').closest('.timer-actions')?.classList.toggle('two-actions', state.round === 'speed');
 
     $('questionNumber').textContent = state.question;
     $('activeTeamLabel').textContent = teamName(state.activeTeam);
@@ -1926,6 +1936,9 @@ textarea { resize: vertical; }
     const badgeClock = state.round === 'alternate' ? activeDisplayClock() : mainClock;
     badge.textContent = badgeClock.running ? 'RUNNING' : displayRemaining <= 0 ? 'ENDED' : displayRemaining < badgeClock.durationMs ? 'PAUSED' : 'READY';
     badge.className = `state-badge ${badgeClock.running ? 'running' : displayRemaining <= 0 ? 'expired' : displayRemaining < badgeClock.durationMs ? 'paused' : ''}`;
+    $('resetResponseTimerBtn').classList.toggle('hidden', state.round === 'speed');
+    $('resetResponseTimerBtn').disabled = state.round === 'speed' || state.round === 'complete';
+    $('resetResponseTimerBtn').closest('.timer-actions')?.classList.toggle('two-actions', state.round === 'speed');
   }
 
   function animationLoop(timestamp) {
