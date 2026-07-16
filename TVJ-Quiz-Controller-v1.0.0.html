@@ -156,6 +156,7 @@ kbd {
 }
 .match-meta { display: flex; justify-content: space-between; align-items: center; gap: var(--space-md); padding: var(--space-lg); margin-bottom: var(--space-md); }
 .match-meta h2 { font-size: clamp(20px, 2.4vw, 31px); }
+.section-selector-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
 .round-tabs { display: flex; gap: 6px; flex-wrap: wrap; }
 .round-tab { padding: 10px 14px; background: rgba(255,255,255,.045); border: 1px solid transparent; border-radius: 10px; font-weight: 800; color: var(--muted); }
 .round-tab.active { color: #0a1527; background: var(--gold); }
@@ -182,10 +183,11 @@ kbd {
 .scoring-sound-toggle[aria-pressed="false"] { background: rgba(255,102,120,.10); border-color: rgba(255,102,120,.28); color: #ffb4bf; }
 .score-row { position: relative; display: grid; place-items: center; flex: 1; min-height: 0; padding: 15px 68px; }
 .score-display { text-align: center; font-variant-numeric: tabular-nums; font-size: clamp(96px, 10.5vw, 154px); line-height: .96; font-weight: 950; letter-spacing: -.06em; text-shadow: 0 10px 28px rgba(0,0,0,.25); }
-.score-nudge { position: absolute; top: 50%; width: 40px; height: 40px; border-radius: 50%; background: rgba(255,255,255,.065); border: 1px solid var(--line); font-size: 1.35rem; transform: translateY(-50%); }
+.score-nudge { position: absolute; z-index: 3; top: 50%; width: 40px; height: 40px; border-radius: 50%; background: rgba(255,255,255,.065); border: 1px solid var(--line); font-size: 1.35rem; transform: translateY(-50%); }
 .score-nudge[data-delta="-1"] { left: 16px; }
 .score-nudge[data-delta="1"] { right: 16px; }
 .score-nudge:hover { background: rgba(255,255,255,.12); }
+.score-nudge:not(:disabled):active { transform: translateY(-50%) scale(0.98); }
 .team-actions { padding: 14px; display: grid; gap: 9px; background: rgba(0,0,0,.10); border-top: 1px solid var(--line); }
 .action-btn { min-height: 54px; border-radius: 13px; padding: 13px 16px; font-weight: 900; display: flex; align-items: center; justify-content: space-between; gap: 10px; border: 1px solid transparent; }
 .action-btn.correct { background: rgba(69,213,138,.14); border-color: rgba(69,213,138,.34); color: #8ef8bd; }
@@ -435,6 +437,7 @@ textarea { resize: vertical; }
       <div class="topbar-actions">
         <button id="scoringSoundToggle" class="scoring-sound-toggle hidden" type="button" aria-pressed="true">Scoring sound on</button>
         <span id="saveStatus" class="save-status">Saved locally</span>
+        <button id="matchResetBtn" class="danger-btn" type="button">Reset match</button>
         <button id="wakeLockBtn" class="ghost-btn" type="button" title="Keep this screen awake">Keep awake</button>
         <button id="openAudienceBtn" class="ghost-btn" type="button">Open audience display</button>
         <button id="fullscreenBtn" class="ghost-btn" type="button">Fullscreen</button>
@@ -457,11 +460,14 @@ textarea { resize: vertical; }
           <p class="eyebrow" id="stageLabel">PRACTICE MATCH</p>
           <h2 id="roundLabel">Alternate Section</h2>
         </div>
-        <div class="round-tabs" role="tablist" aria-label="Match sections">
+        <div class="section-selector-actions">
+          <button id="sectionResetBtn" class="secondary-btn" type="button">Reset section</button>
+          <div class="round-tabs" role="tablist" aria-label="Match sections">
           <button class="round-tab active" data-round="alternate" type="button">Alternate</button>
           <button class="round-tab" data-round="speed" type="button">Speed</button>
           <button class="round-tab" data-round="buzzer" type="button">Buzzer</button>
           <button class="round-tab" data-round="complete" type="button">Finish</button>
+          </div>
         </div>
       </section>
 
@@ -586,6 +592,7 @@ textarea { resize: vertical; }
         <article id="periodScoreCard" class="period-score-card card hidden">
           <div class="section-heading">
             <div><p class="eyebrow">SPEED MINUTES</p><h3>Points by minute</h3></div>
+            <button id="resetPeriodScoresBtn" type="button" class="secondary-btn">Reset table</button>
           </div>
           <div class="period-score-table-wrap">
             <table class="period-score-table">
@@ -892,6 +899,7 @@ textarea { resize: vertical; }
     lastAction: 'Match ready',
     rules: deepCopy(PRESET_RULES),
     audit: [],
+    sectionBaselines: {},
     alternateClockOrder: ['response', 'main']
   });
 
@@ -1058,6 +1066,7 @@ textarea { resize: vertical; }
         B: { ...defaultState().teams.B, ...(saved.state.teams?.B || {}) }
       };
       state.audit = Array.isArray(saved.state.audit) ? saved.state.audit : [];
+      state.sectionBaselines = saved.state.sectionBaselines && typeof saved.state.sectionBaselines === 'object' ? saved.state.sectionBaselines : {};
       mainClock = new CountdownClock(0, onMainClockExpired);
       responseClock = new CountdownClock(0, onResponseClockExpired);
       mainClock.restore(saved.mainClock || { durationMs: timerDurationForRound(state.round) * 1000, remainingMs: timerDurationForRound(state.round) * 1000 }, false);
@@ -1124,6 +1133,72 @@ textarea { resize: vertical; }
     return `${minute}${suffix} Minute`;
   }
 
+
+  function sectionBaselineKey(round = state.round) {
+    return round === 'speed' ? 'speed' : round;
+  }
+
+  function captureSectionBaseline(round = state.round) {
+    return {
+      round,
+      speedPeriod: round === 'speed' ? state.speedPeriod : 1,
+      question: 1,
+      activeTeam: state.activeTeam,
+      scores: { A: state.teams.A.score, B: state.teams.B.score },
+      auditLength: state.audit.length,
+      capturedAt: nowIso()
+    };
+  }
+
+  function ensureSectionBaseline(round = state.round) {
+    const key = sectionBaselineKey(round);
+    state.sectionBaselines ||= {};
+    if (!state.sectionBaselines[key]) state.sectionBaselines[key] = captureSectionBaseline(round);
+    return state.sectionBaselines[key];
+  }
+
+  function resetCurrentSection() {
+    if (state.round === 'complete') return toast('Choose a live section before resetting it.');
+    const baseline = ensureSectionBaseline(state.round);
+    confirmAction('Reset this section?', 'Scores will return to the values from before this section started, and events recorded in this section will be removed.', () => {
+      recordUndo();
+      mainClock.pause();
+      responseClock.pause();
+      state.teams.A.score = Number(baseline.scores?.A) || 0;
+      state.teams.B.score = Number(baseline.scores?.B) || 0;
+      state.question = Number(baseline.question) || 1;
+      state.activeTeam = baseline.activeTeam || 'A';
+      state.buzzerTeam = '';
+      state.buzzerIdentified = false;
+      state.mainWasRunningBeforeBuzz = false;
+      if (state.round === 'speed') state.speedPeriod = clamp(Number(baseline.speedPeriod) || 1, 1, state.rules.speedPeriodCount);
+      if (Number.isFinite(Number(baseline.auditLength))) state.audit = state.audit.slice(0, Number(baseline.auditLength));
+      mainClock.reset(timerDurationForRound(state.round));
+      responseClock.reset(state.round === 'alternate' ? state.rules.alternateResponseSeconds : state.rules.buzzerResponseSeconds);
+      state.status = `${roundTitle()} reset`;
+      logEvent('section_reset', `${roundTitle()} reset to its starting scores`);
+      changed();
+    }, 'Reset section');
+  }
+
+  function resetSpeedPeriodScores() {
+    const baseline = ensureSectionBaseline('speed');
+    confirmAction('Reset the points by minute table?', 'All speed-section scoring events will be cleared and the match score will return to the start of the speed section.', () => {
+      recordUndo();
+      state.teams.A.score = Number(baseline.scores?.A) || 0;
+      state.teams.B.score = Number(baseline.scores?.B) || 0;
+      state.audit = state.audit.filter((event, index) => index < Number(baseline.auditLength || 0) || event.round !== 'speed' || !event.delta);
+      if (state.round === 'speed') {
+        state.question = Number(baseline.question) || 1;
+        state.speedPeriod = clamp(Number(baseline.speedPeriod) || 1, 1, state.rules.speedPeriodCount);
+        mainClock.reset(state.rules.speedPeriodSeconds);
+      }
+      state.status = 'Points by minute reset';
+      logEvent('speed_scores_reset', 'Points by minute table reset to zero');
+      changed();
+    }, 'Reset table');
+  }
+
   function speedPeriodScores() {
     const rows = Array.from({ length: state.rules.speedPeriodCount }, (_, index) => ({ period: index + 1, A: 0, B: 0 }));
     state.audit.forEach(event => {
@@ -1150,17 +1225,20 @@ textarea { resize: vertical; }
 
   function configureRound(round, { record = true, resetPeriod = false } = {}) {
     if (!['alternate', 'speed', 'buzzer', 'complete'].includes(round)) return;
+    if (round === state.round && !resetPeriod) return;
     if (record) recordUndo();
     mainClock.pause();
     responseClock.pause();
     state.round = round;
+    if (round === 'speed' && resetPeriod) state.speedPeriod = 1;
+    state.speedPeriod = clamp(state.speedPeriod, 1, state.rules.speedPeriodCount);
+    state.sectionBaselines ||= {};
+    state.sectionBaselines[sectionBaselineKey(round)] = captureSectionBaseline(round);
     state.buzzerTeam = '';
     state.buzzerIdentified = false;
     state.mainWasRunningBeforeBuzz = false;
     state.complete = round === 'complete';
     state.winner = '';
-    if (round === 'speed' && resetPeriod) state.speedPeriod = 1;
-    state.speedPeriod = clamp(state.speedPeriod, 1, state.rules.speedPeriodCount);
     mainClock.reset(timerDurationForRound(round));
     responseClock.reset(round === 'alternate' ? state.rules.alternateResponseSeconds : state.rules.buzzerResponseSeconds);
     if (round === 'complete') {
@@ -1682,6 +1760,19 @@ textarea { resize: vertical; }
     dialog.showModal();
   }
 
+
+  function resetMatchToDefault() {
+    confirmAction('Reset the whole match?', 'All teams, scores, timers, sections and local match data will return to the default state.', () => {
+      state = defaultState();
+      undoStack = [];
+      mainClock = new CountdownClock(state.rules.alternateRoundSeconds, onMainClockExpired);
+      responseClock = new CountdownClock(state.rules.alternateResponseSeconds, onResponseClockExpired);
+      try { localStorage.removeItem(STORAGE_KEY); localStorage.removeItem(PUBLIC_KEY); } catch {}
+      logEvent('match_reset', 'Match reset to default settings');
+      changed();
+    }, 'Reset match');
+  }
+
   function startNewMatch() {
     confirmAction('Start a new match?', 'Scores, timers and the current audit trail will be cleared. Export a backup first when needed.', () => {
       state = defaultState();
@@ -1732,6 +1823,7 @@ textarea { resize: vertical; }
       if (state.rules.buzzerResponseSeconds === 5) state.rules.buzzerResponseSeconds = PRESET_RULES.buzzerResponseSeconds;
       state.teams = { A: { ...defaultState().teams.A, ...imported.state.teams.A }, B: { ...defaultState().teams.B, ...imported.state.teams.B } };
       state.audit = Array.isArray(imported.state.audit) ? imported.state.audit : [];
+      state.sectionBaselines = imported.state.sectionBaselines && typeof imported.state.sectionBaselines === 'object' ? imported.state.sectionBaselines : {};
       mainClock.restore(imported.mainClock || {}, false);
       responseClock.restore(imported.responseClock || {}, false);
       state.status = 'Backup imported — clocks paused';
@@ -2062,6 +2154,9 @@ textarea { resize: vertical; }
   function bindEvents() {
     $('mainTimerButton').addEventListener('click', toggleMainTimer);
     $('editMainTimerBtn').addEventListener('click', editMainClockTime);
+    $('matchResetBtn').addEventListener('click', resetMatchToDefault);
+    $('sectionResetBtn').addEventListener('click', resetCurrentSection);
+    $('resetPeriodScoresBtn').addEventListener('click', resetSpeedPeriodScores);
     $('resetMainTimerBtn').addEventListener('click', resetMainTimer);
     $('resetResponseTimerBtn').addEventListener('click', resetResponseTimer);
     $('addTenBtn').addEventListener('click', addTenSeconds);
@@ -2083,7 +2178,14 @@ textarea { resize: vertical; }
 
     $$('[data-answer]').forEach(btn => btn.addEventListener('click', () => judgeAnswer(btn.dataset.team, btn.dataset.answer)));
     $$('[data-buzz]').forEach(btn => btn.addEventListener('click', () => buzz(btn.dataset.buzz)));
-    $$('[data-score-team]').forEach(btn => btn.addEventListener('click', () => manualScore(btn.dataset.scoreTeam, Number(btn.dataset.delta))));
+    $$('[data-score-team]').forEach(btn => {
+      const applyNudge = event => {
+        event.preventDefault();
+        event.stopPropagation();
+        manualScore(btn.dataset.scoreTeam, Number(btn.dataset.delta));
+      };
+      btn.addEventListener('click', applyNudge);
+    });
     $$('[data-reset-score]').forEach(btn => btn.addEventListener('click', () => resetScore(btn.dataset.resetScore)));
     $$('[data-speed-minute]').forEach(btn => btn.addEventListener('click', () => setSpeedPeriod(btn.dataset.speedMinute)));
     $$('.round-tab').forEach(btn => btn.addEventListener('click', () => btn.dataset.round === 'complete' ? confirmAction('Finish the match?', 'The winner will be calculated from the current scores.', () => configureRound('complete'), 'Finish match') : configureRound(btn.dataset.round, { resetPeriod: btn.dataset.round === 'speed' })));
@@ -2194,6 +2296,7 @@ textarea { resize: vertical; }
         setTimeout(() => toast('Recovered the previous match. Timers were paused for safety.'), 300);
       }
     }
+    ensureSectionBaseline(state.round);
     bindEvents();
     registerServiceWorker();
     render();
