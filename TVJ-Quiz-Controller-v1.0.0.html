@@ -26,6 +26,11 @@
   --blue: #5ab4ff;
   --shadow: 0 24px 70px rgba(0, 0, 0, 0.35);
   --radius: 22px;
+  --space-xs: 6px;
+  --space-sm: 10px;
+  --space-md: 16px;
+  --space-lg: 20px;
+  --space-xl: 24px;
   --team-a: #1769aa;
   --team-b: #b32035;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -141,21 +146,22 @@ kbd {
 .menu-popover button { width: 100%; text-align: left; padding: 11px 12px; border-radius: 9px; background: transparent; }
 .menu-popover button:hover { background: rgba(255,255,255,.07); }
 
-.operator-view { width: min(1680px, 100%); margin: 0 auto; padding: 20px clamp(12px, 2.5vw, 38px) 38px; }
+.operator-view { width: min(1680px, 100%); margin: 0 auto; padding: var(--space-lg) clamp(12px, 2.5vw, 38px) 38px; }
+.card { min-width: 0; }
 .card {
   background: linear-gradient(145deg, rgba(17, 43, 74, 0.96), rgba(10, 29, 52, 0.96));
   border: 1px solid var(--line);
   border-radius: var(--radius);
   box-shadow: 0 15px 44px rgba(0,0,0,.19);
 }
-.match-meta { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 17px 20px; margin-bottom: 16px; }
+.match-meta { display: flex; justify-content: space-between; align-items: center; gap: var(--space-md); padding: var(--space-lg); margin-bottom: var(--space-md); }
 .match-meta h2 { font-size: clamp(20px, 2.4vw, 31px); }
 .round-tabs { display: flex; gap: 6px; flex-wrap: wrap; }
 .round-tab { padding: 10px 14px; background: rgba(255,255,255,.045); border: 1px solid transparent; border-radius: 10px; font-weight: 800; color: var(--muted); }
 .round-tab.active { color: #0a1527; background: var(--gold); }
 .round-tab:hover:not(.active) { background: rgba(255,255,255,.09); color: var(--text); }
 
-.control-grid { display: grid; grid-template-columns: minmax(260px, .9fr) minmax(390px, 1.25fr) minmax(260px, .9fr); gap: 16px; align-items: start; }
+.control-grid { display: grid; grid-template-columns: minmax(300px, 1fr) minmax(420px, 1fr) minmax(300px, 1fr); gap: var(--space-md); align-items: stretch; }
 .team-card { overflow: hidden; position: relative; min-height: 575px; display: flex; flex-direction: column; }
 .team-card::before { content: ""; position: absolute; inset: 0 0 auto; height: 7px; background: var(--team-color); }
 .team-a-card { --team-color: var(--team-a); }
@@ -181,34 +187,34 @@ kbd {
 .action-btn.warning { background: rgba(255,172,89,.13); border-color: rgba(255,172,89,.30); color: #ffd09e; }
 .action-btn.primary { background: var(--gold); color: #0a1424; }
 
-.timer-column { display: grid; gap: 16px; }
-.timer-card { padding: 20px; }
-.timer-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.timer-column { display: grid; gap: var(--space-md); min-width: 0; }
+.timer-card { padding: var(--space-lg); min-height: 390px; }
+.timer-header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-md); }
 .timer-header span:not(.state-badge) { color: var(--muted); }
 .state-badge.running { background: rgba(69,213,138,.16); color: #7df2b0; }
 .state-badge.paused { background: rgba(255,172,89,.15); color: #ffc481; }
 .state-badge.expired { background: rgba(255,102,120,.16); color: #ff94a3; }
-.timer-button { width: 100%; min-height: 245px; display: flex; flex-direction: column; align-items: center; justify-content: center; background: transparent; border-radius: 20px; }
+.timer-button { width: 100%; min-height: 245px; display: flex; flex-direction: column; align-items: center; justify-content: center; background: transparent; border-radius: 20px; padding: var(--space-md); overflow: hidden; }
 .timer-button:hover { background: rgba(255,255,255,.025); }
-.main-timer { display: block; font-size: clamp(88px, 12vw, 164px); font-weight: 950; letter-spacing: -.08em; line-height: .95; font-variant-numeric: tabular-nums; }
+.main-timer { display: block; min-width: 5ch; max-width: 100%; text-align: center; white-space: nowrap; font-size: clamp(88px, 9vw, 142px); font-weight: 950; letter-spacing: -.06em; line-height: .95; font-variant-numeric: tabular-nums; }
 .main-timer.warning { color: var(--orange); }
 .main-timer.danger { color: var(--red); animation: timeFlash .5s ease-in-out infinite alternate; }
 @keyframes timeFlash { to { opacity: .58; } }
-.timer-hint { margin-top: 16px; color: var(--muted); font-size: .82rem; }
-.timer-actions { display: grid; grid-template-columns: 1fr 1fr 1.25fr; gap: 8px; }
+.timer-hint { margin-top: var(--space-md); color: var(--muted); font-size: .82rem; }
+.timer-actions { display: grid; grid-template-columns: 1fr 1fr 1.25fr; gap: var(--space-sm); }
 
-.buzzer-panel { padding: 19px; display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 15px; }
+.buzzer-panel { padding: var(--space-lg); display: grid; grid-template-columns: 1fr auto; align-items: center; gap: var(--space-md); }
 .buzzer-status-wrap h3 { font-size: 1.45rem; margin-bottom: 6px; }
 .buzzer-status-wrap p:last-child { color: var(--muted); margin-bottom: 0; }
 .response-clock-wrap { width: 116px; height: 116px; display: flex; flex-direction: column; align-items: center; justify-content: center; border-radius: 50%; border: 5px solid rgba(242,201,76,.32); background: rgba(242,201,76,.07); }
 .response-label { color: var(--gold); font-size: .62rem; font-weight: 900; letter-spacing: .14em; }
 .response-timer { font-size: 2.1rem; font-weight: 950; font-variant-numeric: tabular-nums; }
 .buzzer-actions { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
-.question-card { padding: 17px 19px; display: grid; grid-template-columns: repeat(4, auto); align-items: center; justify-content: space-between; gap: 16px; }
+.question-card { padding: var(--space-lg); display: grid; grid-template-columns: repeat(4, auto); align-items: center; justify-content: space-between; gap: var(--space-md); }
 .question-card strong { font-size: 1.3rem; }
 
-.lower-grid { display: grid; grid-template-columns: .92fr 1.08fr; gap: 16px; margin-top: 16px; }
-.quick-actions, .audit-card { padding: 19px; }
+.lower-grid { display: grid; grid-template-columns: .92fr 1.08fr; gap: var(--space-md); margin-top: var(--space-md); }
+.quick-actions, .audit-card { padding: var(--space-lg); }
 .section-heading { display: flex; align-items: center; justify-content: space-between; gap: 15px; margin-bottom: 13px; }
 .quick-action-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
 .last-action { margin-top: 14px; padding: 12px 14px; background: rgba(0,0,0,.14); border: 1px solid var(--line); border-radius: 11px; display: flex; gap: 12px; align-items: baseline; }
@@ -832,14 +838,8 @@ textarea { resize: vertical; }
     return 'Match Complete';
   }
 
-  function formatClock(ms, includeTenths = false) {
+  function formatClock(ms) {
     const safe = Math.max(0, Math.ceil(ms));
-    if (includeTenths && safe < 10000) {
-      const totalTenths = Math.ceil(safe / 100);
-      const seconds = Math.floor(totalTenths / 10);
-      const tenths = totalTenths % 10;
-      return `00:${String(seconds).padStart(2, '0')}.${tenths}`;
-    }
     const totalSeconds = Math.ceil(safe / 1000);
     const minutes = Math.floor(totalSeconds / 60);
     const seconds = totalSeconds % 60;
@@ -1547,7 +1547,7 @@ textarea { resize: vertical; }
 
     $$('.round-tab').forEach(btn => btn.classList.toggle('active', btn.dataset.round === state.round));
     const mainRemaining = mainClock.sync();
-    $('mainTimer').textContent = formatClock(mainRemaining, mainClock.running);
+    $('mainTimer').textContent = formatClock(mainRemaining);
     $('mainTimer').classList.toggle('warning', mainRemaining > 5000 && mainRemaining <= 10000);
     $('mainTimer').classList.toggle('danger', mainRemaining <= 5000);
     $('timerContext').textContent = state.round === 'alternate' ? 'Response time' : state.round === 'speed' ? `Period ${state.speedPeriod} of ${state.rules.speedPeriodCount}` : state.round === 'buzzer' ? 'Buzzer section' : 'Final result';
@@ -1560,7 +1560,7 @@ textarea { resize: vertical; }
     $('speedPeriodBlock').classList.toggle('hidden', state.round !== 'speed');
     $('speedPeriodLabel').textContent = `${state.speedPeriod} / ${state.rules.speedPeriodCount}`;
     $('buzzerPanel').classList.toggle('hidden', state.round !== 'buzzer');
-    $('responseTimer').textContent = formatClock(responseClock.sync(), responseClock.running);
+    $('responseTimer').textContent = formatClock(responseClock.sync());
     $('buzzerStatus').textContent = !state.buzzerTeam ? 'Buzzers armed' : state.buzzerIdentified ? `${teamName(state.buzzerTeam)} identified` : `${teamName(state.buzzerTeam)} buzzed`;
     $('buzzerInstruction').textContent = !state.buzzerTeam ? 'First valid buzz locks out the opposing team.' : state.buzzerIdentified ? 'The five-second response clock is running.' : 'Identify the team before judging its answer.';
     $('identifyBtn').disabled = !state.buzzerTeam || state.buzzerIdentified;
@@ -1606,7 +1606,7 @@ textarea { resize: vertical; }
     $('audienceTeamA').classList.toggle('buzzed', p.buzzerTeam === 'A');
     $('audienceTeamB').classList.toggle('buzzed', p.buzzerTeam === 'B');
     const remaining = audienceRemaining(p.main);
-    $('audienceTimer').textContent = formatClock(remaining, p.main.running);
+    $('audienceTimer').textContent = formatClock(remaining);
     $('audienceStatus').textContent = p.complete ? 'FINAL' : p.buzzerTeam ? `${p.teams[p.buzzerTeam].shortName} BUZZED` : p.main.running ? 'TIME' : p.status.toUpperCase();
     $('audienceQuestion').textContent = p.question;
     const responseRemaining = audienceRemaining(p.response);
@@ -1652,10 +1652,10 @@ textarea { resize: vertical; }
   function renderDynamicOperator() {
     const mainRemaining = mainClock.sync();
     const responseRemaining = responseClock.sync();
-    $('mainTimer').textContent = formatClock(mainRemaining, mainClock.running);
+    $('mainTimer').textContent = formatClock(mainRemaining);
     $('mainTimer').classList.toggle('warning', mainRemaining > 5000 && mainRemaining <= 10000);
     $('mainTimer').classList.toggle('danger', mainRemaining <= 5000);
-    $('responseTimer').textContent = formatClock(responseRemaining, responseClock.running);
+    $('responseTimer').textContent = formatClock(responseRemaining);
     const badge = $('timerStateBadge');
     badge.textContent = mainClock.running ? 'RUNNING' : mainRemaining <= 0 ? 'ENDED' : mainRemaining < mainClock.durationMs ? 'PAUSED' : 'READY';
     badge.className = `state-badge ${mainClock.running ? 'running' : mainRemaining <= 0 ? 'expired' : mainRemaining < mainClock.durationMs ? 'paused' : ''}`;
