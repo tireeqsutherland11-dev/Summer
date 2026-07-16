@@ -161,7 +161,7 @@ kbd {
 .round-tab.active { color: #0a1527; background: var(--gold); }
 .round-tab:hover:not(.active) { background: rgba(255,255,255,.09); color: var(--text); }
 
-.control-grid { display: grid; grid-template-columns: minmax(260px, .86fr) minmax(340px, .9fr) minmax(260px, .86fr); gap: clamp(10px, 1.2vw, var(--space-md)); align-items: stretch; }
+.control-grid { display: grid; grid-template-columns: minmax(240px, 0.82fr) minmax(0, 1fr) minmax(240px, 0.82fr); gap: clamp(10px, 1.2vw, var(--space-md)); align-items: stretch; }
 .team-card { overflow: hidden; position: relative; min-height: 500px; display: flex; flex-direction: column; }
 .team-card::before { content: ""; position: absolute; inset: 0 0 auto; height: 7px; background: var(--team-color); }
 .team-a-card { --team-color: var(--team-a); }
@@ -210,12 +210,12 @@ kbd {
 .timer-tile.response-clock-tile { width: 132px; min-height: 132px; aspect-ratio: 1; border-radius: 50%; gap: 4px; padding: 12px; border: 5px solid rgba(242,201,76,.32); background: rgba(242,201,76,.07); }
 .timer-tile.response-clock-tile .timer-tile-label { color: var(--gold); font-size: .62rem; }
 .timer-tile.response-clock-tile .timer-tile-instruction { display: none; }
-.timer-tile.top .main-timer { font-size: clamp(88px, 9vw, 142px); }
-.timer-tile.bottom .main-timer { font-size: clamp(56px, 6vw, 92px); }
+.timer-tile.top .main-timer { font-size: clamp(72px, min(8vw, 16vh), 118px); }
+.timer-tile.bottom .main-timer { font-size: clamp(44px, min(5vw, 10vh), 76px); }
 .timer-tile.response-clock-tile .main-timer { min-width: 0; font-size: 2.25rem; letter-spacing: -.04em; }
 .timer-tile-label { color: var(--muted); font-size: .75rem; font-weight: 900; letter-spacing: .12em; text-transform: uppercase; }
 .timer-tile-instruction { color: var(--muted); font-size: .78rem; text-align: center; }
-.main-timer { display: block; min-width: 5ch; max-width: 100%; text-align: center; white-space: nowrap; font-size: clamp(88px, 9vw, 142px); font-weight: 950; letter-spacing: -.06em; line-height: .95; font-variant-numeric: tabular-nums; }
+.main-timer { display: block; min-width: 0; max-width: 100%; text-align: center; white-space: nowrap; font-size: clamp(72px, min(8vw, 16vh), 118px); font-weight: 950; letter-spacing: -.06em; line-height: .95; font-variant-numeric: tabular-nums; }
 .main-timer.warning { color: var(--orange); }
 .main-timer.danger { color: var(--red); animation: timeFlash .5s ease-in-out infinite alternate; }
 @keyframes timeFlash { to { opacity: .58; } }
@@ -678,7 +678,7 @@ textarea { resize: vertical; }
     speedCorrectPoints: 1,
     speedIncorrectPoints: 0,
     buzzerRoundSeconds: 240,
-    buzzerResponseSeconds: 5,
+    buzzerResponseSeconds: 10,
     buzzerCorrectPoints: 2,
     buzzerIncorrectPoints: -2,
     buzzerBeforeIdentifiedPoints: -2,
@@ -980,6 +980,7 @@ textarea { resize: vertical; }
       if (!validateImportedState(saved)) return false;
       state = { ...defaultState(), ...saved.state };
       state.rules = { ...deepCopy(PRESET_RULES), ...(saved.state.rules || {}) };
+      if (state.rules.buzzerResponseSeconds === 5) state.rules.buzzerResponseSeconds = PRESET_RULES.buzzerResponseSeconds;
       state.teams = {
         A: { ...defaultState().teams.A, ...(saved.state.teams?.A || {}) },
         B: { ...defaultState().teams.B, ...(saved.state.teams?.B || {}) }
@@ -1364,7 +1365,7 @@ textarea { resize: vertical; }
   }
 
   function onMainClockExpired() {
-    state.status = state.round === 'speed' ? `Speed period ${state.speedPeriod} ended` : state.round === 'buzzer' ? 'Buzzer section time ended' : 'Response time expired';
+    state.status = state.round === 'speed' ? `Speed period ${state.speedPeriod} ended` : state.round === 'buzzer' ? 'Buzzer section time ended' : 'Main clock expired';
     logEvent('main_clock_expired', `${roundTitle()} clock expired`);
     sound('end');
     changed();
@@ -1462,7 +1463,7 @@ textarea { resize: vertical; }
     state.rules = { ...state.rules, ...newRules };
     state.speedPeriod = clamp(state.speedPeriod, 1, state.rules.speedPeriodCount);
     mainClock.reset(timerDurationForRound(state.round));
-    responseClock.reset(state.rules.buzzerResponseSeconds);
+    responseClock.reset(state.round === 'alternate' ? state.rules.alternateResponseSeconds : state.rules.buzzerResponseSeconds);
     state.status = 'Rules updated; clocks reset';
     logEvent('rules_updated', 'Rules and timing updated; current clocks reset');
     $('rulesDialog').close();
@@ -1543,6 +1544,7 @@ textarea { resize: vertical; }
       recordUndo();
       state = { ...defaultState(), ...imported.state };
       state.rules = { ...deepCopy(PRESET_RULES), ...(imported.state.rules || {}) };
+      if (state.rules.buzzerResponseSeconds === 5) state.rules.buzzerResponseSeconds = PRESET_RULES.buzzerResponseSeconds;
       state.teams = { A: { ...defaultState().teams.A, ...imported.state.teams.A }, B: { ...defaultState().teams.B, ...imported.state.teams.B } };
       state.audit = Array.isArray(imported.state.audit) ? imported.state.audit : [];
       mainClock.restore(imported.mainClock || {}, false);
@@ -1686,7 +1688,7 @@ textarea { resize: vertical; }
     if ($('alternateMainClock')) $('alternateMainClock').classList.toggle('hidden', state.round !== 'alternate');
     if ($('alternateMainTimer') && state.round !== 'alternate') $('alternateMainTimer').textContent = formatClock(mainRemaining);
     $('timerEyebrow').textContent = state.round === 'alternate' ? 'RESPONSE CLOCK' : 'MAIN CLOCK';
-    $('timerContext').textContent = state.round === 'alternate' ? '10-second response time' : state.round === 'speed' ? `Period ${state.speedPeriod} of ${state.rules.speedPeriodCount}` : state.round === 'buzzer' ? 'Buzzer section' : 'Final result';
+    $('timerContext').textContent = state.round === 'alternate' ? `${state.rules.alternateResponseSeconds}-second response time` : state.round === 'speed' ? `Period ${state.speedPeriod} of ${state.rules.speedPeriodCount}` : state.round === 'buzzer' ? `${state.rules.buzzerResponseSeconds}-second response time` : 'Final result';
     const badge = $('timerStateBadge');
     const badgeClock = state.round === 'alternate' ? activeDisplayClock() : mainClock;
     badge.textContent = badgeClock.running ? 'RUNNING' : displayRemaining <= 0 ? 'ENDED' : displayRemaining < badgeClock.durationMs ? 'PAUSED' : 'READY';
@@ -1699,7 +1701,7 @@ textarea { resize: vertical; }
     $('buzzerPanel').classList.toggle('hidden', state.round !== 'buzzer');
     $('responseTimer').textContent = formatClock(responseClock.sync());
     $('buzzerStatus').textContent = !state.buzzerTeam ? 'Buzzers armed' : state.buzzerIdentified ? `${teamName(state.buzzerTeam)} identified` : `${teamName(state.buzzerTeam)} buzzed`;
-    $('buzzerInstruction').textContent = !state.buzzerTeam ? 'First valid buzz locks out the opposing team.' : state.buzzerIdentified ? 'The five-second response clock is running.' : 'Identify the team before judging its answer.';
+    $('buzzerInstruction').textContent = !state.buzzerTeam ? 'First valid buzz locks out the opposing team.' : state.buzzerIdentified ? `The ${state.rules.buzzerResponseSeconds}-second response clock is running.` : 'Identify the team before judging its answer.';
     $('identifyBtn').disabled = !state.buzzerTeam || state.buzzerIdentified;
     $('beforeIdBtn').disabled = !state.buzzerTeam || state.buzzerIdentified;
     $$('[data-buzz]').forEach(btn => btn.disabled = state.round !== 'buzzer' || Boolean(state.buzzerTeam) || mainRemaining <= 0);
