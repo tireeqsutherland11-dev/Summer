@@ -178,13 +178,13 @@ kbd {
 .card-reset-btn svg { width: 18px; height: 18px; display: block; }
 .question-card { position: relative; }
 .question-card .card-reset-btn { top: 12px; right: 12px; }
-.score-row { position: relative; display: grid; place-items: center; padding: 2px 68px 15px; }
+.score-row { position: relative; display: grid; place-items: center; flex: 1; min-height: 0; padding: 15px 68px; }
 .score-display { text-align: center; font-variant-numeric: tabular-nums; font-size: clamp(96px, 10.5vw, 154px); line-height: .96; font-weight: 950; letter-spacing: -.06em; text-shadow: 0 10px 28px rgba(0,0,0,.25); }
 .score-nudge { position: absolute; top: 50%; width: 40px; height: 40px; border-radius: 50%; background: rgba(255,255,255,.065); border: 1px solid var(--line); font-size: 1.35rem; transform: translateY(-50%); }
 .score-nudge[data-delta="-1"] { left: 16px; }
 .score-nudge[data-delta="1"] { right: 16px; }
 .score-nudge:hover { background: rgba(255,255,255,.12); }
-.team-actions { padding: 14px; display: grid; gap: 9px; margin-top: auto; background: rgba(0,0,0,.10); border-top: 1px solid var(--line); }
+.team-actions { padding: 14px; display: grid; gap: 9px; background: rgba(0,0,0,.10); border-top: 1px solid var(--line); }
 .action-btn { min-height: 54px; border-radius: 13px; padding: 13px 16px; font-weight: 900; display: flex; align-items: center; justify-content: space-between; gap: 10px; border: 1px solid transparent; }
 .action-btn.correct { background: rgba(69,213,138,.14); border-color: rgba(69,213,138,.34); color: #8ef8bd; }
 .action-btn.incorrect { background: rgba(255,102,120,.13); border-color: rgba(255,102,120,.32); color: #ff9cab; }
