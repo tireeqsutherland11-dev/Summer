@@ -174,11 +174,12 @@ kbd {
 .team-card h2 { font-size: clamp(19px, 2.2vw, 28px); overflow-wrap: anywhere; }
 .team-code { color: var(--muted); font-size: .78rem; font-weight: 900; letter-spacing: .12em; margin-bottom: 5px; }
 .active-badge, .state-badge { border-radius: 999px; padding: 6px 9px; font-size: .65rem; font-weight: 950; letter-spacing: .12em; background: rgba(69,213,138,.14); color: #73f3ad; border: 1px solid rgba(69,213,138,.28); }
-.card-reset-btn { position: absolute; top: 14px; right: 14px; z-index: 2; padding: 7px 10px; font-size: .72rem; }
+.card-reset-btn { position: absolute; top: 14px; right: 14px; z-index: 2; width: 38px; height: 38px; padding: 0; display: grid; place-items: center; font-size: 1rem; line-height: 1; }
+.card-reset-btn svg { width: 18px; height: 18px; display: block; }
 .question-card { position: relative; }
 .question-card .card-reset-btn { top: 12px; right: 12px; }
 .score-row { display: grid; grid-template-columns: 44px 1fr 44px; align-items: center; gap: 6px; padding: 2px 16px 15px; }
-.score-display { text-align: center; font-variant-numeric: tabular-nums; font-size: clamp(76px, 8.7vw, 124px); line-height: .96; font-weight: 950; letter-spacing: -.06em; text-shadow: 0 10px 28px rgba(0,0,0,.25); }
+.score-display { text-align: center; font-variant-numeric: tabular-nums; font-size: clamp(96px, 10.5vw, 154px); line-height: .96; font-weight: 950; letter-spacing: -.06em; text-shadow: 0 10px 28px rgba(0,0,0,.25); }
 .score-nudge { width: 40px; height: 40px; border-radius: 50%; background: rgba(255,255,255,.065); border: 1px solid var(--line); font-size: 1.35rem; }
 .score-nudge:hover { background: rgba(255,255,255,.12); }
 .team-actions { padding: 14px; display: grid; gap: 9px; margin-top: auto; background: rgba(0,0,0,.10); border-top: 1px solid var(--line); }
@@ -445,7 +446,7 @@ textarea { resize: vertical; }
 
       <section class="control-grid">
         <article id="teamACard" class="team-card card team-a-card" data-team="A">
-          <button class="secondary-btn card-reset-btn" type="button" data-reset-score="A">Reset</button>
+          <button class="secondary-btn card-reset-btn" type="button" data-reset-score="A" aria-label="Reset Team A score" title="Reset score"><svg class="reset-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 4v6h6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M5.4 14.2A7 7 0 1 0 6.1 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
           <div class="team-card-header">
             <div class="logo-frame"><img id="teamALogo" alt="" class="team-logo hidden"></div>
             <div>
@@ -507,7 +508,7 @@ textarea { resize: vertical; }
           </article>
 
           <article class="question-card card">
-            <button id="resetQuestionBtn" type="button" class="secondary-btn card-reset-btn">Reset</button>
+            <button id="resetQuestionBtn" type="button" class="secondary-btn card-reset-btn" aria-label="Reset question and active team" title="Reset question and active team"><svg class="reset-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 4v6h6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M5.4 14.2A7 7 0 1 0 6.1 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
             <div>
               <p class="eyebrow">QUESTION</p>
               <strong id="questionNumber">1</strong>
@@ -525,7 +526,7 @@ textarea { resize: vertical; }
         </section>
 
         <article id="teamBCard" class="team-card card team-b-card" data-team="B">
-          <button class="secondary-btn card-reset-btn" type="button" data-reset-score="B">Reset</button>
+          <button class="secondary-btn card-reset-btn" type="button" data-reset-score="B" aria-label="Reset Team B score" title="Reset score"><svg class="reset-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 4v6h6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M5.4 14.2A7 7 0 1 0 6.1 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
           <div class="team-card-header">
             <div class="logo-frame"><img id="teamBLogo" alt="" class="team-logo hidden"></div>
             <div>
