@@ -845,7 +845,6 @@ textarea { resize: vertical; }
   let timeoutApplying = false;
   let storageFailureNotified = false;
   let channel = null;
-  let lastResponseWarningSecond = null;
 
   try { channel = 'BroadcastChannel' in window ? new BroadcastChannel(CHANNEL_NAME) : null; } catch { channel = null; }
 
@@ -990,8 +989,7 @@ textarea { resize: vertical; }
       mainClock = new CountdownClock(0, onMainClockExpired);
       responseClock = new CountdownClock(0, onResponseClockExpired);
       mainClock.restore(saved.mainClock || { durationMs: timerDurationForRound(state.round) * 1000, remainingMs: timerDurationForRound(state.round) * 1000 }, false);
-      responseClock.restore(saved.responseClock || { durationMs: responseDurationForRound(state.round) * 1000, remainingMs: responseDurationForRound(state.round) * 1000 }, false);
-      normalizeResponseClockForRound(state.round);
+      responseClock.restore(saved.responseClock || { durationMs: (state.round === 'alternate' ? state.rules.alternateResponseSeconds : state.rules.buzzerResponseSeconds) * 1000, remainingMs: (state.round === 'alternate' ? state.rules.alternateResponseSeconds : state.rules.buzzerResponseSeconds) * 1000 }, false);
       state.status = saved.mainClock?.wasRunning || saved.responseClock?.wasRunning ? 'Recovered safely — clocks paused' : state.status;
       return true;
     } catch { return false; }
@@ -1042,17 +1040,6 @@ textarea { resize: vertical; }
     } catch {}
   }
 
-  function responseDurationForRound(round = state.round) {
-    return round === 'alternate' ? state.rules.alternateResponseSeconds : state.rules.buzzerResponseSeconds;
-  }
-
-  function normalizeResponseClockForRound(round = state.round) {
-    const expectedSeconds = responseDurationForRound(round);
-    const expectedMs = expectedSeconds * 1000;
-    const responseLooksLikeMainClock = responseClock.durationMs === mainClock.durationMs || responseClock.remainingMs > expectedMs;
-    if (responseClock.durationMs !== expectedMs || responseLooksLikeMainClock) responseClock.reset(expectedSeconds);
-  }
-
   function timerDurationForRound(round) {
     if (round === 'alternate') return state.rules.alternateRoundSeconds;
     if (round === 'speed') return state.rules.speedPeriodSeconds;
@@ -1074,7 +1061,7 @@ textarea { resize: vertical; }
     if (round === 'speed' && resetPeriod) state.speedPeriod = 1;
     state.speedPeriod = clamp(state.speedPeriod, 1, state.rules.speedPeriodCount);
     mainClock.reset(timerDurationForRound(round));
-    responseClock.reset(responseDurationForRound(round));
+    responseClock.reset(round === 'alternate' ? state.rules.alternateResponseSeconds : state.rules.buzzerResponseSeconds);
     if (round === 'complete') {
       const a = state.teams.A.score;
       const b = state.teams.B.score;
@@ -1116,10 +1103,8 @@ textarea { resize: vertical; }
     if (state.round !== 'alternate') return;
     responseClock.sync();
     if (!responseClock.running && responseClock.remainingMs <= 0) return toast('Reset the response time before starting it again.');
-    normalizeResponseClockForRound('alternate');
     ensureAudio();
     const running = responseClock.toggle();
-    lastResponseWarningSecond = null;
     state.status = running ? 'Response time running' : 'Response time paused';
     logEvent(running ? 'timer_started' : 'timer_paused', `Response clock ${running ? 'started' : 'paused'}`);
     changed();
@@ -1160,7 +1145,7 @@ textarea { resize: vertical; }
 
   function resetResponseTimer() {
     recordUndo();
-    responseClock.reset(responseDurationForRound());
+    responseClock.reset(state.round === 'alternate' ? state.rules.alternateResponseSeconds : state.rules.buzzerResponseSeconds);
     state.status = 'Response time reset';
     logEvent('timer_reset', 'Response time reset');
     changed();
@@ -1387,7 +1372,6 @@ textarea { resize: vertical; }
   }
 
   function onResponseClockExpired() {
-    lastResponseWarningSecond = null;
     if (state.rules.autoApplyTimeoutPenalty) applyTimeoutPenalty(true);
     else {
       state.status = `${teamName(state.buzzerTeam)} response time expired`;
@@ -1479,7 +1463,7 @@ textarea { resize: vertical; }
     state.rules = { ...state.rules, ...newRules };
     state.speedPeriod = clamp(state.speedPeriod, 1, state.rules.speedPeriodCount);
     mainClock.reset(timerDurationForRound(state.round));
-    responseClock.reset(responseDurationForRound());
+    responseClock.reset(state.round === 'alternate' ? state.rules.alternateResponseSeconds : state.rules.buzzerResponseSeconds);
     state.status = 'Rules updated; clocks reset';
     logEvent('rules_updated', 'Rules and timing updated; current clocks reset');
     $('rulesDialog').close();
@@ -1518,7 +1502,7 @@ textarea { resize: vertical; }
       state = defaultState();
       undoStack = [];
       mainClock = new CountdownClock(state.rules.alternateRoundSeconds, onMainClockExpired);
-      responseClock = new CountdownClock(responseDurationForRound('alternate'), onResponseClockExpired);
+      responseClock = new CountdownClock(state.rules.alternateResponseSeconds, onResponseClockExpired);
       logEvent('match_created', 'New match created');
       changed();
       openSetup();
@@ -1816,15 +1800,6 @@ textarea { resize: vertical; }
     if ($('alternateMainClock')) $('alternateMainClock').classList.toggle('hidden', state.round !== 'alternate');
     if ($('alternateMainTimer') && state.round !== 'alternate') $('alternateMainTimer').textContent = formatClock(mainRemaining);
     $('responseTimer').textContent = formatClock(responseRemaining);
-    if (responseClock.running && responseRemaining > 0 && responseRemaining <= 3000) {
-      const warningSecond = Math.ceil(responseRemaining / 1000);
-      if (warningSecond !== lastResponseWarningSecond) {
-        lastResponseWarningSecond = warningSecond;
-        sound('warning');
-      }
-    } else if (!responseClock.running || responseRemaining > 3000) {
-      lastResponseWarningSecond = null;
-    }
     const badge = $('timerStateBadge');
     const badgeClock = state.round === 'alternate' ? activeDisplayClock() : mainClock;
     badge.textContent = badgeClock.running ? 'RUNNING' : displayRemaining <= 0 ? 'ENDED' : displayRemaining < badgeClock.durationMs ? 'PAUSED' : 'READY';
