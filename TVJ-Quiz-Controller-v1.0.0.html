@@ -447,9 +447,6 @@ textarea { resize: vertical; }
       <div id="moreMenu" class="menu-popover hidden">
         <button type="button" data-menu-action="setup">Match setup</button>
         <button type="button" data-menu-action="rules">Rules & timing</button>
-        <button type="button" data-menu-action="export-json">Export match backup</button>
-        <button type="button" data-menu-action="export-csv">Export audit CSV</button>
-        <button type="button" data-menu-action="import">Import match backup</button>
         <button type="button" data-menu-action="install" id="installMenuBtn" class="hidden">Install app</button>
         <button type="button" data-menu-action="reset" class="danger-text">Start new match</button>
       </div>
@@ -725,7 +722,6 @@ textarea { resize: vertical; }
     </form>
   </dialog>
 
-  <input id="importFileInput" type="file" accept="application/json,.json" class="hidden">
   <div id="toastRegion" class="toast-region" aria-live="polite" aria-atomic="true"></div>
   <script>
 (() => {
@@ -763,7 +759,6 @@ textarea { resize: vertical; }
     ['Alternate main clock', 'alternateRoundSeconds', 'seconds', 10, 900],
     ['Alternate response', 'alternateResponseSeconds', 'seconds', 1, 120],
     ['Speed minute', 'speedPeriodSeconds', 'seconds', 10, 600],
-    ['Number of speed minutes', 'speedPeriodCount', 'minutes', 1, 10],
     ['Buzzer round', 'buzzerRoundSeconds', 'seconds', 10, 900],
     ['Buzzer response', 'buzzerResponseSeconds', 'seconds', 1, 60]
   ];
@@ -1042,7 +1037,7 @@ textarea { resize: vertical; }
     } catch (error) {
       if (!storageFailureNotified) {
         storageFailureNotified = true;
-        toast('Chrome blocked local recovery for this session. The match still works; export a backup before closing.', true);
+        toast('Chrome blocked local recovery for this session. The match still works, but cannot be restored after closing.', true);
       }
     }
   }
@@ -1789,7 +1784,7 @@ textarea { resize: vertical; }
   }
 
   function startNewMatch() {
-    confirmAction('Start a new match?', 'Scores, timers and the current audit trail will be cleared. Export a backup first when needed.', () => {
+    confirmAction('Start a new match?', 'Scores, timers and the current audit trail will be cleared.', () => {
       state = defaultState();
       undoStack = [];
       mainClock = new CountdownClock(state.rules.alternateRoundSeconds, onMainClockExpired);
@@ -1798,54 +1793,6 @@ textarea { resize: vertical; }
       changed();
       openSetup();
     }, 'Start new match');
-  }
-
-  function exportJson() {
-    const payload = { exportedAt: nowIso(), app: 'Schools Challenge Quiz Controller', state, mainClock: mainClock.serialize(), responseClock: responseClock.serialize() };
-    downloadBlob(JSON.stringify(payload, null, 2), `${safeFilename(state.teams.A.shortName)}-vs-${safeFilename(state.teams.B.shortName)}-match.json`, 'application/json');
-    toast('Match backup exported.');
-  }
-
-  function csvEscape(value) { return `"${String(value ?? '').replaceAll('"', '""')}"`; }
-  function exportCsv() {
-    const rows = [['Timestamp', 'Action', 'Details', 'Team', 'Delta', 'Score A', 'Score B']];
-    state.audit.forEach(e => rows.push([e.timestamp, e.action, e.details, e.team, e.delta, e.scoreA, e.scoreB]));
-    const csv = rows.map(row => row.map(csvEscape).join(',')).join('\r\n');
-    downloadBlob(csv, `${safeFilename(state.teams.A.shortName)}-vs-${safeFilename(state.teams.B.shortName)}-audit.csv`, 'text/csv;charset=utf-8');
-    toast('Audit CSV exported.');
-  }
-
-  function safeFilename(value) { return String(value).replace(/[^a-z0-9_-]+/gi, '-').replace(/^-+|-+$/g, '') || 'team'; }
-  function downloadBlob(content, filename, type) {
-    const blob = new Blob([content], { type });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = filename;
-    document.body.append(link);
-    link.click();
-    link.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-  }
-
-  async function importMatch(file) {
-    try {
-      const imported = JSON.parse(await file.text());
-      if (!validateImportedState(imported)) throw new Error('This is not a valid match backup.');
-      recordUndo();
-      state = { ...defaultState(), ...imported.state };
-      state.rules = { ...deepCopy(PRESET_RULES), ...(imported.state.rules || {}) };
-      if (state.rules.buzzerResponseSeconds === 5) state.rules.buzzerResponseSeconds = PRESET_RULES.buzzerResponseSeconds;
-      state.teams = { A: { ...defaultState().teams.A, ...imported.state.teams.A }, B: { ...defaultState().teams.B, ...imported.state.teams.B } };
-      state.audit = Array.isArray(imported.state.audit) ? imported.state.audit : [];
-      state.sectionBaselines = imported.state.sectionBaselines && typeof imported.state.sectionBaselines === 'object' ? imported.state.sectionBaselines : {};
-      mainClock.restore(imported.mainClock || {}, false);
-      responseClock.restore(imported.responseClock || {}, false);
-      state.status = 'Backup imported — clocks paused';
-      logEvent('backup_imported', 'Match backup imported; clocks restored in paused state');
-      changed();
-      toast('Match backup imported.');
-    } catch (error) { toast(error.message, true); }
   }
 
   function openAudience() {
@@ -2217,9 +2164,6 @@ textarea { resize: vertical; }
       const action = btn.dataset.menuAction;
       if (action === 'setup') openSetup();
       else if (action === 'rules') openRules();
-      else if (action === 'export-json') exportJson();
-      else if (action === 'export-csv') exportCsv();
-      else if (action === 'import') $('importFileInput').click();
       else if (action === 'reset') startNewMatch();
       else if (action === 'install' && deferredInstallPrompt) {
         deferredInstallPrompt.prompt();
@@ -2236,7 +2180,6 @@ textarea { resize: vertical; }
     $('restorePresetBtn').addEventListener('click', () => fillRulesForm(PRESET_RULES));
     $('clearALogoBtn').addEventListener('click', () => { recordUndo(); state.teams.A.logo = ''; changed(); toast('Team A logo removed.'); });
     $('clearBLogoBtn').addEventListener('click', () => { recordUndo(); state.teams.B.logo = ''; changed(); toast('Team B logo removed.'); });
-    $('importFileInput').addEventListener('change', () => { const file = $('importFileInput').files[0]; if (file) importMatch(file); $('importFileInput').value = ''; });
     $('clearLogViewBtn').addEventListener('click', () => { auditCollapsed = !auditCollapsed; $('clearLogViewBtn').textContent = auditCollapsed ? 'Expand' : 'Collapse'; renderAudit(); });
 
     document.addEventListener('keydown', event => {
