@@ -178,7 +178,7 @@ kbd {
 .question-card { position: relative; }
 .question-card .card-reset-btn { top: 12px; right: 12px; }
 .score-row { display: grid; grid-template-columns: 44px 1fr 44px; align-items: center; gap: 6px; padding: 2px 16px 15px; }
-.score-display { text-align: center; font-variant-numeric: tabular-nums; font-size: clamp(68px, 8vw, 112px); line-height: 1; font-weight: 950; letter-spacing: -.07em; text-shadow: 0 10px 28px rgba(0,0,0,.25); }
+.score-display { text-align: center; font-variant-numeric: tabular-nums; font-size: clamp(76px, 8.7vw, 124px); line-height: .96; font-weight: 950; letter-spacing: -.06em; text-shadow: 0 10px 28px rgba(0,0,0,.25); }
 .score-nudge { width: 40px; height: 40px; border-radius: 50%; background: rgba(255,255,255,.065); border: 1px solid var(--line); font-size: 1.35rem; }
 .score-nudge:hover { background: rgba(255,255,255,.12); }
 .team-actions { padding: 14px; display: grid; gap: 9px; margin-top: auto; background: rgba(0,0,0,.10); border-top: 1px solid var(--line); }
@@ -207,12 +207,13 @@ kbd {
 .timer-tile.dragging { opacity: .72; transform: scale(.985); }
 .timer-tile.top { min-height: 230px; }
 .timer-tile.bottom { min-height: 140px; }
-.timer-tile.response-clock-tile { width: 132px; min-height: 132px; aspect-ratio: 1; border-radius: 50%; gap: 4px; padding: 12px; border: 5px solid rgba(242,201,76,.32); background: rgba(242,201,76,.07); }
-.timer-tile.response-clock-tile .timer-tile-label { color: var(--gold); font-size: .62rem; }
+.timer-tile.response-clock-tile { width: 132px; min-height: 132px; aspect-ratio: 1; border-radius: 50%; gap: 4px; padding: 12px; border: 5px solid rgba(242,201,76,.32); background: rgba(242,201,76,.07); text-align: center; }
+.timer-tile.response-clock-tile .timer-tile-label { color: var(--gold); font-size: .62rem; line-height: 1.05; text-align: center; max-width: 78px; }
 .timer-tile.response-clock-tile .timer-tile-instruction { display: none; }
 .timer-tile.top .main-timer { font-size: clamp(72px, min(8vw, 16vh), 118px); }
 .timer-tile.bottom .main-timer { font-size: clamp(44px, min(5vw, 10vh), 76px); }
 .timer-tile.response-clock-tile .main-timer { min-width: 0; font-size: 2.25rem; letter-spacing: -.04em; }
+.timer-tile.response-clock-tile:has(.main-timer.danger) { border-color: var(--red); animation: responseBorderFlash .5s ease-in-out infinite alternate; }
 .timer-tile-label { color: var(--muted); font-size: .75rem; font-weight: 900; letter-spacing: .12em; text-transform: uppercase; }
 .timer-tile-instruction { color: var(--muted); font-size: .78rem; text-align: center; }
 .timer-edit-btn { position: absolute; top: 12px; right: 12px; z-index: 3; width: 38px; height: 38px; display: grid; place-items: center; border-radius: 50%; background: rgba(242,201,76,.14); border: 1px solid rgba(242,201,76,.42); color: var(--gold-2); font-size: 1rem; line-height: 1; }
@@ -222,6 +223,7 @@ kbd {
 .main-timer.warning { color: var(--orange); }
 .main-timer.danger { color: var(--red); animation: timeFlash .5s ease-in-out infinite alternate; }
 @keyframes timeFlash { to { opacity: .58; } }
+@keyframes responseBorderFlash { to { border-color: rgba(255,102,120,.42); box-shadow: 0 0 22px rgba(255,102,120,.34); } }
 .timer-hint { margin-top: var(--space-md); color: var(--muted); font-size: .82rem; }
 .alternate-main-clock { margin-top: var(--space-sm); color: var(--muted); font-size: .78rem; font-weight: 900; letter-spacing: .08em; text-transform: uppercase; text-align: center; }
 .alternate-main-clock output { display: block; color: var(--text); font-size: clamp(34px, 4vw, 58px); line-height: 1; font-variant-numeric: tabular-nums; letter-spacing: -.04em; }
@@ -230,9 +232,11 @@ kbd {
 .buzzer-panel { padding: var(--space-lg); display: grid; grid-template-columns: 1fr auto; align-items: center; gap: var(--space-md); }
 .buzzer-status-wrap h3 { font-size: 1.45rem; margin-bottom: 6px; }
 .buzzer-status-wrap p:last-child { color: var(--muted); margin-bottom: 0; }
-.response-clock-wrap { width: 116px; height: 116px; display: flex; flex-direction: column; align-items: center; justify-content: center; border-radius: 50%; border: 5px solid rgba(242,201,76,.32); background: rgba(242,201,76,.07); }
-.response-label { color: var(--gold); font-size: .62rem; font-weight: 900; letter-spacing: .14em; }
+.response-clock-wrap { width: 116px; height: 116px; display: flex; flex-direction: column; align-items: center; justify-content: center; border-radius: 50%; border: 5px solid rgba(242,201,76,.32); background: rgba(242,201,76,.07); text-align: center; }
+.response-clock-wrap.danger { border-color: var(--red); animation: responseBorderFlash .5s ease-in-out infinite alternate; }
+.response-label { color: var(--gold); font-size: .62rem; font-weight: 900; letter-spacing: .10em; line-height: 1.05; text-align: center; max-width: 74px; }
 .response-timer { font-size: 2.1rem; font-weight: 950; font-variant-numeric: tabular-nums; }
+.response-timer.danger { color: var(--red); animation: timeFlash .5s ease-in-out infinite alternate; }
 .buzzer-actions { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
 .question-card { padding: var(--space-lg); display: grid; grid-template-columns: repeat(4, auto); align-items: center; justify-content: space-between; gap: var(--space-md); }
 .question-card strong { font-size: 1.3rem; }
@@ -323,7 +327,7 @@ textarea { resize: vertical; }
   .timer-column { grid-column: 1 / -1; grid-row: 1; grid-template-columns: 1.25fr .75fr; }
   .timer-card { grid-row: span 2; }
   .team-card { min-height: 450px; }
-  .score-display { font-size: clamp(85px, 18vw, 145px); }
+  .score-display { font-size: clamp(92px, 18vw, 152px); }
   .lower-grid { grid-template-columns: 1fr; }
   .audience-scoreboard { grid-template-columns: 1fr .62fr 1fr; }
 }
@@ -341,7 +345,7 @@ textarea { resize: vertical; }
   .timer-card { grid-row: auto; }
   .team-card { min-height: 390px; }
   .team-card-header { min-height: 95px; }
-  .score-display { font-size: clamp(90px, 31vw, 142px); }
+  .score-display { font-size: clamp(96px, 31vw, 150px); }
   .timer-button { min-height: 190px; }
   .main-timer { font-size: clamp(85px, 26vw, 136px); }
   .timer-actions, .buzzer-actions { grid-template-columns: 1fr; }
@@ -492,7 +496,7 @@ textarea { resize: vertical; }
               <p id="buzzerInstruction">First valid buzz locks out the opposing team.</p>
             </div>
             <div class="response-clock-wrap">
-              <span class="response-label">RESPONSE</span>
+              <span class="response-label">RESPONSE<br>TIME</span>
               <output id="responseTimer" class="response-timer">00:05</output>
             </div>
             <div class="buzzer-actions">
@@ -536,8 +540,8 @@ textarea { resize: vertical; }
             <button class="score-nudge" type="button" data-score-team="B" data-delta="1" aria-label="Add one point to Team B">+</button>
           </div>
           <div class="team-actions">
-            <button class="action-btn correct" data-answer="correct" data-team="B" type="button"><span>Correct</span><kbd>←</kbd></button>
-            <button class="action-btn incorrect" data-answer="incorrect" data-team="B" type="button"><span>Incorrect</span><kbd>→</kbd></button>
+            <button class="action-btn correct" data-answer="correct" data-team="B" type="button"><span>Correct</span><kbd>→</kbd></button>
+            <button class="action-btn incorrect" data-answer="incorrect" data-team="B" type="button"><span>Incorrect</span><kbd>←</kbd></button>
           </div>
         </article>
       </section>
@@ -1674,7 +1678,7 @@ textarea { resize: vertical; }
         const isMain = kind === 'main';
         return `<div class="timer-tile ${index === 0 ? 'top' : 'bottom'} ${isMain ? '' : 'response-clock-tile'}" role="button" tabindex="0" draggable="true" data-clock="${kind}" aria-label="${isMain ? 'Start or pause main clock' : 'Start or pause response time'}">
           ${isMain ? '<button class="timer-edit-btn" type="button" aria-label="Edit main clock time" title="Edit main clock">✎</button>' : ''}
-          <span class="timer-tile-label">${isMain ? 'Main clock' : 'Response time'}</span>
+          <span class="timer-tile-label">${isMain ? 'Main clock' : 'Response<br>time'}</span>
           <span id="${isMain ? 'alternateMainTimer' : 'mainTimer'}" class="main-timer">${formatClock(values[kind])}</span>
           <span class="timer-tile-instruction">${isMain ? 'Press Space to start/stop' : 'Click to start/stop response time'} · drag to rearrange</span>
         </div>`;
@@ -1750,6 +1754,8 @@ textarea { resize: vertical; }
     $('speedPeriodLabel').textContent = `${state.speedPeriod} / ${state.rules.speedPeriodCount}`;
     $('buzzerPanel').classList.toggle('hidden', state.round !== 'buzzer');
     $('responseTimer').textContent = formatClock(responseClock.sync());
+    $('responseTimer').classList.toggle('danger', responseClock.sync() <= 5000);
+    $('responseTimer').closest('.response-clock-wrap')?.classList.toggle('danger', responseClock.sync() <= 5000);
     $('buzzerStatus').textContent = !state.buzzerTeam ? 'Buzzers armed' : state.buzzerIdentified ? `${teamName(state.buzzerTeam)} identified` : `${teamName(state.buzzerTeam)} buzzed`;
     $('buzzerInstruction').textContent = !state.buzzerTeam ? 'First valid buzz locks out the opposing team.' : state.buzzerIdentified ? `The ${state.rules.buzzerResponseSeconds}-second response clock is running.` : 'Identify the team before judging its answer.';
     $('identifyBtn').disabled = !state.buzzerTeam || state.buzzerIdentified;
@@ -1850,6 +1856,8 @@ textarea { resize: vertical; }
     if ($('alternateMainClock')) $('alternateMainClock').classList.toggle('hidden', state.round !== 'alternate');
     if ($('alternateMainTimer') && state.round !== 'alternate') $('alternateMainTimer').textContent = formatClock(mainRemaining);
     $('responseTimer').textContent = formatClock(responseRemaining);
+    $('responseTimer').classList.toggle('danger', responseRemaining <= 5000);
+    $('responseTimer').closest('.response-clock-wrap')?.classList.toggle('danger', responseRemaining <= 5000);
     const badge = $('timerStateBadge');
     const badgeClock = state.round === 'alternate' ? activeDisplayClock() : mainClock;
     badge.textContent = badgeClock.running ? 'RUNNING' : displayRemaining <= 0 ? 'ENDED' : displayRemaining < badgeClock.durationMs ? 'PAUSED' : 'READY';
@@ -1943,8 +1951,8 @@ textarea { resize: vertical; }
       if (key === ' ') { event.preventDefault(); toggleMainTimer(); }
       else if (key === 'arrowup') { event.preventDefault(); judgeAnswer('A', 'correct'); }
       else if (key === 'arrowdown') { event.preventDefault(); judgeAnswer('A', 'incorrect'); }
-      else if (key === 'arrowleft') { event.preventDefault(); judgeAnswer('B', 'correct'); }
-      else if (key === 'arrowright') { event.preventDefault(); judgeAnswer('B', 'incorrect'); }
+      else if (key === 'arrowright') { event.preventDefault(); judgeAnswer('B', 'correct'); }
+      else if (key === 'arrowleft') { event.preventDefault(); judgeAnswer('B', 'incorrect'); }
       else if (key === 'p') passQuestion();
       else if (key === 'u') undo();
       else if (key === 'r') resetBuzzers();
