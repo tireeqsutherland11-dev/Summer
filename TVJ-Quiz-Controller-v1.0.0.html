@@ -199,7 +199,7 @@ kbd {
 
 .timer-column { display: grid; gap: var(--space-md); min-width: 0; }
 .timer-card { padding: clamp(14px, 1.4vw, var(--space-lg)); min-height: 360px; }
-.timer-card.alternate-mode { min-height: 460px; }
+.timer-card.dual-clock-mode { min-height: 460px; }
 .timer-header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-md); }
 .timer-header span:not(.state-badge) { color: var(--muted); }
 .state-badge.running { background: rgba(69,213,138,.16); color: #7df2b0; }
@@ -1258,40 +1258,42 @@ textarea { resize: vertical; }
   }
 
   function activeDisplayClock() {
-    return state.round === 'alternate' ? (state.alternateClockOrder?.[0] === 'main' ? mainClock : responseClock) : mainClock;
+    return roundUsesDualClock() ? (state.alternateClockOrder?.[0] === 'main' ? mainClock : responseClock) : mainClock;
   }
 
   function toggleResponseTimer() {
-    if (state.round !== 'alternate') return;
+    if (!roundUsesDualClock()) return;
+    if (state.round === 'buzzer' && !state.buzzerTeam) return toast('A team must buzz before starting the buzzer response time.');
     responseClock.sync();
     if (!responseClock.running && responseClock.remainingMs <= 0) return toast('Reset the response time before starting it again.');
     ensureAudio();
     const running = responseClock.toggle();
     state.status = running ? 'Response time running' : 'Response time paused';
+    if (state.round === 'buzzer' && running) state.buzzerIdentified = true;
     logEvent(running ? 'timer_started' : 'timer_paused', `Response clock ${running ? 'started' : 'paused'}`);
     changed();
   }
 
-  function toggleAlternateMainTimer() {
-    if (state.round !== 'alternate') return;
+  function toggleSectionMainTimer() {
+    if (!roundUsesDualClock()) return;
     mainClock.sync();
     if (!mainClock.running && mainClock.remainingMs <= 0) return toast('Reset the main clock before starting it again.');
     ensureAudio();
     const running = mainClock.toggle();
     state.status = running ? 'Main clock running' : 'Main clock paused';
-    logEvent(running ? 'timer_started' : 'timer_paused', `Main clock ${running ? 'started' : 'paused'}`);
+    logEvent(running ? 'timer_started' : 'timer_paused', `${state.round === 'buzzer' ? 'Buzzer' : 'Main'} clock ${running ? 'started' : 'paused'}`);
     changed();
   }
 
   function toggleMainTimer() {
     if (state.round === 'complete') return toast('The match is complete.');
-    const clock = state.round === 'alternate' ? mainClock : activeDisplayClock();
+    const clock = roundUsesDualClock() ? mainClock : activeDisplayClock();
     clock.sync();
     if (!clock.running && clock.remainingMs <= 0) return toast('Reset the clock before starting it again.');
     ensureAudio();
     const running = clock.toggle();
     state.status = running ? 'Clock running' : 'Clock paused';
-    logEvent(running ? 'timer_started' : 'timer_paused', `${state.round === 'alternate' ? 'Main' : roundTitle()} clock ${running ? 'started' : 'paused'}`);
+    logEvent(running ? 'timer_started' : 'timer_paused', `${roundUsesDualClock() ? (state.round === 'buzzer' ? 'Buzzer' : 'Main') : roundTitle()} clock ${running ? 'started' : 'paused'}`);
     changed();
   }
 
@@ -1318,7 +1320,7 @@ textarea { resize: vertical; }
     recordUndo();
     activeDisplayClock().addSeconds(seconds);
     state.status = `${seconds} seconds added`;
-    logEvent('timer_adjusted', `Added ${seconds} seconds to the ${state.round === 'alternate' ? 'response' : 'main'} clock`);
+    logEvent('timer_adjusted', `Added ${seconds} seconds to the ${roundUsesDualClock() && activeDisplayClock() === responseClock ? 'response' : 'main'} clock`);
     changed();
   }
 
@@ -1815,17 +1817,22 @@ textarea { resize: vertical; }
 
   function setAlternateClockOrder(order) {
     state.alternateClockOrder = order;
-    renderAlternateTimers();
+    renderSectionTimers();
     scheduleSave();
   }
 
-  function renderAlternateTimers(mainRemaining, responseRemaining) {
+  function roundUsesDualClock(round = state.round) {
+    return round === 'alternate' || round === 'buzzer';
+  }
+
+  function renderSectionTimers(mainRemaining, responseRemaining) {
     const stack = $('timerStack');
     if (!stack) return;
     const order = Array.isArray(state.alternateClockOrder) ? state.alternateClockOrder : ['response', 'main'];
-    stack.classList.toggle('alternate-grid', state.round === 'alternate');
-    $('timerCard')?.classList.toggle('alternate-mode', state.round === 'alternate');
-    if (state.round !== 'alternate') {
+    const usesDualClock = roundUsesDualClock();
+    stack.classList.toggle('alternate-grid', usesDualClock);
+    $('timerCard')?.classList.toggle('dual-clock-mode', usesDualClock);
+    if (!usesDualClock) {
       if (!$('mainTimerButton')) {
         stack.innerHTML = `<button id="mainTimerButton" class="timer-button" type="button" aria-label="Start or pause timer">
           <span id="mainTimer" class="main-timer">00:00</span>
@@ -1840,20 +1847,23 @@ textarea { resize: vertical; }
     }
     const values = { main: mainRemaining ?? mainClock.sync(), response: responseRemaining ?? responseClock.sync() };
     const existingOrder = [...stack.querySelectorAll('.timer-tile')].map(tile => tile.dataset.clock).join(',');
-    if (existingOrder !== order.join(',')) {
+    if (existingOrder !== order.join(',') || stack.dataset.timerRound !== state.round) {
+      stack.dataset.timerRound = state.round;
+      const responseLabel = state.round === 'buzzer' ? 'Buzzer<br>response' : 'Response<br>time';
+      const mainLabel = state.round === 'buzzer' ? 'Buzzer clock' : 'Main clock';
       stack.innerHTML = order.map((kind, index) => {
         const isMain = kind === 'main';
         return `<div class="timer-tile ${index === 0 ? 'top' : 'bottom'} ${isMain ? '' : 'response-clock-tile'}" role="button" tabindex="0" draggable="true" data-clock="${kind}" aria-label="${isMain ? 'Start or pause main clock' : 'Start or pause response time'}">
           ${isMain ? '<button class="timer-edit-btn" type="button" aria-label="Edit main clock time" title="Edit main clock">✎</button>' : ''}
-          <span class="timer-tile-label">${isMain ? 'Main clock' : 'Response<br>time'}</span>
+          <span class="timer-tile-label">${isMain ? mainLabel : responseLabel}</span>
           <span id="${isMain ? 'alternateMainTimer' : 'mainTimer'}" class="main-timer">${isMain ? formatClock(values[kind]) : formatResponseClock(values[kind])}</span>
           <span class="timer-tile-instruction">${isMain ? 'Press Space to start/stop' : 'Click to start/stop response time'} · drag to rearrange</span>
         </div>`;
       }).join('');
       stack.querySelectorAll('.timer-tile').forEach(tile => {
-        tile.addEventListener('click', () => tile.dataset.clock === 'main' ? toggleAlternateMainTimer() : toggleResponseTimer());
+        tile.addEventListener('click', () => tile.dataset.clock === 'main' ? toggleSectionMainTimer() : toggleResponseTimer());
         tile.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); tile.click(); } });
-        tile.querySelector('.timer-edit-btn')?.addEventListener('click', editMainClockTime);
+        tile.querySelector('.timer-edit-btn')?.addEventListener('click', event => { event.stopPropagation(); editMainClockTime(); });
         tile.addEventListener('dragstart', event => { tile.classList.add('dragging'); event.dataTransfer.setData('text/plain', tile.dataset.clock); });
         tile.addEventListener('dragend', () => tile.classList.remove('dragging'));
         tile.addEventListener('dragover', event => event.preventDefault());
@@ -1898,18 +1908,18 @@ textarea { resize: vertical; }
     const mainRemaining = mainClock.sync();
     const responseRemaining = responseClock.sync();
     const displayRemaining = activeDisplayClock() === responseClock ? responseRemaining : mainRemaining;
-    renderAlternateTimers(mainRemaining, responseRemaining);
-    if ($('mainTimer') && state.round !== 'alternate') {
+    renderSectionTimers(mainRemaining, responseRemaining);
+    if ($('mainTimer') && !roundUsesDualClock()) {
       $('mainTimer').textContent = formatClock(displayRemaining);
       $('mainTimer').classList.toggle('warning', displayRemaining > 5000 && displayRemaining <= 10000);
       $('mainTimer').classList.toggle('danger', displayRemaining <= 5000);
     }
-    if ($('alternateMainClock')) $('alternateMainClock').classList.toggle('hidden', state.round !== 'alternate');
-    if ($('alternateMainTimer') && state.round !== 'alternate') $('alternateMainTimer').textContent = formatClock(mainRemaining);
-    $('timerEyebrow').textContent = state.round === 'alternate' ? 'RESPONSE CLOCK' : 'MAIN CLOCK';
-    $('timerContext').textContent = state.round === 'alternate' ? `${state.rules.alternateResponseSeconds}-second response time` : state.round === 'speed' ? `Minute ${state.speedPeriod} of ${state.rules.speedPeriodCount}` : state.round === 'buzzer' ? `${state.rules.buzzerResponseSeconds}-second response time` : 'Final result';
+    if ($('alternateMainClock')) $('alternateMainClock').classList.toggle('hidden', !roundUsesDualClock());
+    if ($('alternateMainTimer') && !roundUsesDualClock()) $('alternateMainTimer').textContent = formatClock(mainRemaining);
+    $('timerEyebrow').textContent = roundUsesDualClock() ? 'RESPONSE CLOCK' : 'MAIN CLOCK';
+    $('timerContext').textContent = state.round === 'alternate' ? `${state.rules.alternateResponseSeconds}-second response time` : state.round === 'speed' ? `Minute ${state.speedPeriod} of ${state.rules.speedPeriodCount}` : state.round === 'buzzer' ? `${state.rules.buzzerResponseSeconds}-second buzzer response time` : 'Final result';
     const badge = $('timerStateBadge');
-    const badgeClock = state.round === 'alternate' ? activeDisplayClock() : mainClock;
+    const badgeClock = roundUsesDualClock() ? activeDisplayClock() : mainClock;
     badge.textContent = badgeClock.running ? 'RUNNING' : displayRemaining <= 0 ? 'ENDED' : displayRemaining < badgeClock.durationMs ? 'PAUSED' : 'READY';
     badge.className = `state-badge ${badgeClock.running ? 'running' : displayRemaining <= 0 ? 'expired' : displayRemaining < badgeClock.durationMs ? 'paused' : ''}`;
     $('resetResponseTimerBtn').classList.toggle('hidden', state.round === 'speed');
@@ -1930,9 +1940,11 @@ textarea { resize: vertical; }
     $('scoringSoundToggle').setAttribute('aria-pressed', String(scoringSoundEnabled));
     $('scoringSoundToggle').textContent = `Scoring sound ${scoringSoundEnabled ? 'on' : 'muted'}`;
     $('buzzerPanel').classList.toggle('hidden', state.round !== 'buzzer');
-    $('responseTimer').textContent = formatResponseClock(responseClock.sync());
-    $('responseTimer').classList.toggle('danger', responseClock.sync() <= 5000);
-    $('responseTimer').closest('.response-clock-wrap')?.classList.toggle('danger', responseClock.sync() <= 5000);
+    if ($('responseTimer')) {
+      $('responseTimer').textContent = formatResponseClock(responseClock.sync());
+      $('responseTimer').classList.toggle('danger', responseClock.sync() <= 5000);
+      $('responseTimer').closest('.response-clock-wrap')?.classList.toggle('danger', responseClock.sync() <= 5000);
+    }
     $('buzzerStatus').textContent = !state.buzzerTeam ? 'Buzzers armed' : state.buzzerIdentified ? `${teamName(state.buzzerTeam)} identified` : `${teamName(state.buzzerTeam)} buzzed`;
     $('buzzerInstruction').textContent = !state.buzzerTeam ? 'First valid buzz locks out the opposing team.' : state.buzzerIdentified ? `The ${state.rules.buzzerResponseSeconds}-second response clock is running.` : 'Identify the team before judging its answer.';
     $('identifyBtn').disabled = !state.buzzerTeam || state.buzzerIdentified;
@@ -2041,19 +2053,21 @@ textarea { resize: vertical; }
     const mainRemaining = mainClock.sync();
     const responseRemaining = responseClock.sync();
     const displayRemaining = activeDisplayClock() === responseClock ? responseRemaining : mainRemaining;
-    renderAlternateTimers(mainRemaining, responseRemaining);
-    if ($('mainTimer') && state.round !== 'alternate') {
+    renderSectionTimers(mainRemaining, responseRemaining);
+    if ($('mainTimer') && !roundUsesDualClock()) {
       $('mainTimer').textContent = formatClock(displayRemaining);
       $('mainTimer').classList.toggle('warning', displayRemaining > 5000 && displayRemaining <= 10000);
       $('mainTimer').classList.toggle('danger', displayRemaining <= 5000);
     }
-    if ($('alternateMainClock')) $('alternateMainClock').classList.toggle('hidden', state.round !== 'alternate');
-    if ($('alternateMainTimer') && state.round !== 'alternate') $('alternateMainTimer').textContent = formatClock(mainRemaining);
-    $('responseTimer').textContent = formatResponseClock(responseRemaining);
-    $('responseTimer').classList.toggle('danger', responseRemaining <= 5000);
-    $('responseTimer').closest('.response-clock-wrap')?.classList.toggle('danger', responseRemaining <= 5000);
+    if ($('alternateMainClock')) $('alternateMainClock').classList.toggle('hidden', !roundUsesDualClock());
+    if ($('alternateMainTimer') && !roundUsesDualClock()) $('alternateMainTimer').textContent = formatClock(mainRemaining);
+    if ($('responseTimer')) {
+      $('responseTimer').textContent = formatResponseClock(responseRemaining);
+      $('responseTimer').classList.toggle('danger', responseRemaining <= 5000);
+      $('responseTimer').closest('.response-clock-wrap')?.classList.toggle('danger', responseRemaining <= 5000);
+    }
     const badge = $('timerStateBadge');
-    const badgeClock = state.round === 'alternate' ? activeDisplayClock() : mainClock;
+    const badgeClock = roundUsesDualClock() ? activeDisplayClock() : mainClock;
     badge.textContent = badgeClock.running ? 'RUNNING' : displayRemaining <= 0 ? 'ENDED' : displayRemaining < badgeClock.durationMs ? 'PAUSED' : 'READY';
     badge.className = `state-badge ${badgeClock.running ? 'running' : displayRemaining <= 0 ? 'expired' : displayRemaining < badgeClock.durationMs ? 'paused' : ''}`;
     $('resetResponseTimerBtn').classList.toggle('hidden', state.round === 'speed');
