@@ -234,6 +234,17 @@ kbd {
 .alternate-main-clock output { display: block; color: var(--text); font-size: clamp(34px, 4vw, 58px); line-height: 1; font-variant-numeric: tabular-nums; letter-spacing: -.04em; }
 .timer-actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-sm); }
 .timer-actions.two-actions { grid-template-columns: repeat(2, 1fr); }
+.speed-minute-selector { margin-top: var(--space-md); display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-sm); }
+.speed-minute-selector button { border-radius: 12px; padding: 11px 8px; background: rgba(255,255,255,.055); border: 1px solid var(--line); color: var(--text); font-weight: 900; }
+.speed-minute-selector button.active { background: var(--gold); border-color: var(--gold); color: #0a1424; }
+.period-score-card { padding: var(--space-lg); }
+.period-score-table-wrap { overflow-x: auto; }
+.period-score-table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.period-score-table th, .period-score-table td { padding: 12px 14px; border-bottom: 1px solid var(--line); text-align: left; }
+.period-score-table th:not(:first-child), .period-score-table td:not(:first-child) { text-align: right; }
+.period-score-table tbody tr.active { background: rgba(242,201,76,.10); }
+.period-score-table tfoot td { font-weight: 950; color: var(--gold); }
+
 
 .buzzer-panel { padding: var(--space-lg); display: grid; grid-template-columns: 1fr auto; align-items: center; gap: var(--space-md); }
 .buzzer-status-wrap h3 { font-size: 1.45rem; margin-bottom: 6px; }
@@ -498,6 +509,11 @@ textarea { resize: vertical; }
               <button id="resetResponseTimerBtn" type="button" class="secondary-btn">Reset time</button>
               <button id="addTenBtn" type="button" class="secondary-btn">+10 sec</button>
             </div>
+            <div id="speedMinuteSelector" class="speed-minute-selector hidden" role="group" aria-label="Select speed minute">
+              <button type="button" data-speed-minute="1">1st Minute</button>
+              <button type="button" data-speed-minute="2">2nd Minute</button>
+              <button type="button" data-speed-minute="3">3rd Minute</button>
+            </div>
           </article>
 
           <article id="buzzerPanel" class="buzzer-panel card hidden">
@@ -524,7 +540,7 @@ textarea { resize: vertical; }
               <strong id="questionNumber">1</strong>
             </div>
             <div id="speedPeriodBlock" class="hidden">
-              <p class="eyebrow">SPEED PERIOD</p>
+              <p class="eyebrow">SPEED MINUTE</p>
               <strong id="speedPeriodLabel">1 / 3</strong>
             </div>
             <div>
@@ -566,6 +582,18 @@ textarea { resize: vertical; }
           <button id="nextRoundBtn" type="button">Next section</button>
           <strong id="lastAction">Match ready</strong>
         </div>
+
+        <article id="periodScoreCard" class="period-score-card card hidden">
+          <div class="section-heading">
+            <div><p class="eyebrow">SPEED MINUTES</p><h3>Points by minute</h3></div>
+          </div>
+          <div class="period-score-table-wrap">
+            <table class="period-score-table">
+              <thead><tr><th>Minute</th><th id="periodTeamAHeading">Team A</th><th id="periodTeamBHeading">Team B</th></tr></thead>
+              <tbody id="periodScoreBody"></tbody>
+            </table>
+          </div>
+        </article>
 
         <article class="audit-card card">
           <div class="section-heading">
@@ -728,8 +756,8 @@ textarea { resize: vertical; }
     ['Alternate response', 'alternateResponseSeconds', 'seconds', 1, 120],
     ['Alternate correct', 'alternateCorrectPoints', 'points', -20, 20],
     ['Alternate incorrect', 'alternateIncorrectPoints', 'points', -20, 20],
-    ['Speed period', 'speedPeriodSeconds', 'seconds', 10, 600],
-    ['Number of speed periods', 'speedPeriodCount', 'periods', 1, 10],
+    ['Speed minute', 'speedPeriodSeconds', 'seconds', 10, 600],
+    ['Number of speed minutes', 'speedPeriodCount', 'minutes', 1, 10],
     ['Speed correct', 'speedCorrectPoints', 'points', -20, 20],
     ['Speed incorrect', 'speedIncorrectPoints', 'points', -20, 20],
     ['Buzzer round', 'buzzerRoundSeconds', 'seconds', 10, 900],
@@ -890,7 +918,7 @@ textarea { resize: vertical; }
   function otherTeam(team) { return team === 'A' ? 'B' : 'A'; }
   function roundTitle(round = state.round) {
     if (round === 'alternate') return 'Alternate Section';
-    if (round === 'speed') return `Speed Section · Period ${state.speedPeriod}/${state.rules.speedPeriodCount}`;
+    if (round === 'speed') return `Speed Section · Minute ${state.speedPeriod}/${state.rules.speedPeriodCount}`;
     if (round === 'buzzer') return 'Buzzer Section';
     return 'Match Complete';
   }
@@ -914,7 +942,7 @@ textarea { resize: vertical; }
   }
 
   function logEvent(action, details, team = '', delta = 0) {
-    state.audit.push({ timestamp: nowIso(), action, details, team, delta, scoreA: state.teams.A.score, scoreB: state.teams.B.score });
+    state.audit.push({ timestamp: nowIso(), action, details, team, delta, scoreA: state.teams.A.score, scoreB: state.teams.B.score, round: state.round, speedPeriod: state.speedPeriod });
     if (state.audit.length > MAX_AUDIT) state.audit.splice(0, state.audit.length - MAX_AUDIT);
     state.lastAction = details;
   }
@@ -1091,6 +1119,35 @@ textarea { resize: vertical; }
     return 0;
   }
 
+  function speedMinuteLabel(minute) {
+    const suffix = minute === 1 ? 'st' : minute === 2 ? 'nd' : minute === 3 ? 'rd' : 'th';
+    return `${minute}${suffix} Minute`;
+  }
+
+  function speedPeriodScores() {
+    const rows = Array.from({ length: state.rules.speedPeriodCount }, (_, index) => ({ period: index + 1, A: 0, B: 0 }));
+    state.audit.forEach(event => {
+      if (event.round !== 'speed' || !event.team || !event.delta) return;
+      const period = clamp(Number(event.speedPeriod) || 1, 1, state.rules.speedPeriodCount);
+      rows[period - 1][event.team] += Number(event.delta) || 0;
+    });
+    return rows;
+  }
+
+  function setSpeedPeriod(period) {
+    const next = clamp(Number(period) || 1, 1, state.rules.speedPeriodCount);
+    if (state.round !== 'speed') configureRound('speed');
+    if (state.speedPeriod === next) return;
+    recordUndo();
+    mainClock.pause();
+    state.speedPeriod = next;
+    state.question = 1;
+    mainClock.reset(state.rules.speedPeriodSeconds);
+    state.status = `${speedMinuteLabel(next)} ready`;
+    logEvent('speed_period_changed', `Speed minute ${state.speedPeriod}/${state.rules.speedPeriodCount}`);
+    changed();
+  }
+
   function configureRound(round, { record = true, resetPeriod = false } = {}) {
     if (!['alternate', 'speed', 'buzzer', 'complete'].includes(round)) return;
     if (record) recordUndo();
@@ -1129,8 +1186,8 @@ textarea { resize: vertical; }
         state.question = 1;
         state.activeTeam = otherTeam(state.activeTeam);
         mainClock.reset(state.rules.speedPeriodSeconds);
-        state.status = `Speed period ${state.speedPeriod} ready`;
-        logEvent('speed_period_changed', `Speed period ${state.speedPeriod}/${state.rules.speedPeriodCount}`);
+        state.status = `Speed minute ${state.speedPeriod} ready`;
+        logEvent('speed_period_changed', `Speed minute ${state.speedPeriod}/${state.rules.speedPeriodCount}`);
         return changed();
       }
       return configureRound('buzzer');
@@ -1493,7 +1550,7 @@ textarea { resize: vertical; }
   }
 
   function onMainClockExpired() {
-    state.status = state.round === 'speed' ? `Speed period ${state.speedPeriod} ended` : state.round === 'buzzer' ? 'Buzzer section time ended' : 'Main clock expired';
+    state.status = state.round === 'speed' ? `Speed minute ${state.speedPeriod} ended` : state.round === 'buzzer' ? 'Buzzer section time ended' : 'Main clock expired';
     logEvent('main_clock_expired', `${roundTitle()} clock expired`);
     sound('end');
     changed();
@@ -1826,7 +1883,7 @@ textarea { resize: vertical; }
     if ($('alternateMainClock')) $('alternateMainClock').classList.toggle('hidden', state.round !== 'alternate');
     if ($('alternateMainTimer') && state.round !== 'alternate') $('alternateMainTimer').textContent = formatClock(mainRemaining);
     $('timerEyebrow').textContent = state.round === 'alternate' ? 'RESPONSE CLOCK' : 'MAIN CLOCK';
-    $('timerContext').textContent = state.round === 'alternate' ? `${state.rules.alternateResponseSeconds}-second response time` : state.round === 'speed' ? `Period ${state.speedPeriod} of ${state.rules.speedPeriodCount}` : state.round === 'buzzer' ? `${state.rules.buzzerResponseSeconds}-second response time` : 'Final result';
+    $('timerContext').textContent = state.round === 'alternate' ? `${state.rules.alternateResponseSeconds}-second response time` : state.round === 'speed' ? `Minute ${state.speedPeriod} of ${state.rules.speedPeriodCount}` : state.round === 'buzzer' ? `${state.rules.buzzerResponseSeconds}-second response time` : 'Final result';
     const badge = $('timerStateBadge');
     const badgeClock = state.round === 'alternate' ? activeDisplayClock() : mainClock;
     badge.textContent = badgeClock.running ? 'RUNNING' : displayRemaining <= 0 ? 'ENDED' : displayRemaining < badgeClock.durationMs ? 'PAUSED' : 'READY';
@@ -1834,6 +1891,13 @@ textarea { resize: vertical; }
     $('resetResponseTimerBtn').classList.toggle('hidden', state.round === 'speed');
     $('resetResponseTimerBtn').disabled = state.round === 'speed' || state.round === 'complete';
     $('resetResponseTimerBtn').closest('.timer-actions')?.classList.toggle('two-actions', state.round === 'speed');
+    $('speedMinuteSelector')?.classList.toggle('hidden', state.round !== 'speed');
+    $$('[data-speed-minute]').forEach(btn => {
+      const minute = Number(btn.dataset.speedMinute);
+      btn.hidden = minute > state.rules.speedPeriodCount;
+      btn.classList.toggle('active', minute === state.speedPeriod);
+      btn.setAttribute('aria-pressed', String(minute === state.speedPeriod));
+    });
 
     $('questionNumber').textContent = state.question;
     $('activeTeamLabel').textContent = teamName(state.activeTeam);
@@ -1862,10 +1926,28 @@ textarea { resize: vertical; }
     $('passBtn').disabled = state.round === 'complete';
     $('timeoutBtn').disabled = state.round === 'complete';
     $('switchTeamBtn').disabled = state.round === 'buzzer' || state.round === 'complete';
-    $('nextRoundBtn').textContent = state.round === 'speed' && state.speedPeriod < state.rules.speedPeriodCount ? 'Next speed period' : state.round === 'buzzer' ? 'Finish match' : state.round === 'complete' ? 'Match complete' : 'Next section';
+    $('nextRoundBtn').textContent = state.round === 'speed' && state.speedPeriod < state.rules.speedPeriodCount ? 'Next speed minute' : state.round === 'buzzer' ? 'Finish match' : state.round === 'complete' ? 'Match complete' : 'Next section';
     $('nextRoundBtn').disabled = state.round === 'complete';
     $('lastAction').textContent = state.lastAction;
+    renderPeriodScores();
     renderAudit();
+  }
+
+  function renderPeriodScores() {
+    const card = $('periodScoreCard');
+    if (!card) return;
+    card.classList.toggle('hidden', state.round !== 'speed');
+    $('periodTeamAHeading').textContent = state.teams.A.shortName;
+    $('periodTeamBHeading').textContent = state.teams.B.shortName;
+    $('periodScoreBody').replaceChildren(...speedPeriodScores().map(row => {
+      const tr = document.createElement('tr');
+      tr.classList.toggle('active', row.period === state.speedPeriod);
+      tr.innerHTML = '<th scope="row"></th><td></td><td></td>';
+      tr.children[0].textContent = speedMinuteLabel(row.period);
+      tr.children[1].textContent = row.A;
+      tr.children[2].textContent = row.B;
+      return tr;
+    }));
   }
 
   function audienceRemaining(clock) {
@@ -2003,6 +2085,7 @@ textarea { resize: vertical; }
     $$('[data-buzz]').forEach(btn => btn.addEventListener('click', () => buzz(btn.dataset.buzz)));
     $$('[data-score-team]').forEach(btn => btn.addEventListener('click', () => manualScore(btn.dataset.scoreTeam, Number(btn.dataset.delta))));
     $$('[data-reset-score]').forEach(btn => btn.addEventListener('click', () => resetScore(btn.dataset.resetScore)));
+    $$('[data-speed-minute]').forEach(btn => btn.addEventListener('click', () => setSpeedPeriod(btn.dataset.speedMinute)));
     $$('.round-tab').forEach(btn => btn.addEventListener('click', () => btn.dataset.round === 'complete' ? confirmAction('Finish the match?', 'The winner will be calculated from the current scores.', () => configureRound('complete'), 'Finish match') : configureRound(btn.dataset.round, { resetPeriod: btn.dataset.round === 'speed' })));
 
     $('moreBtn').addEventListener('click', () => {
