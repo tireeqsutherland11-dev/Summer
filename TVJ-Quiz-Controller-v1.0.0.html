@@ -237,6 +237,16 @@ kbd {
 .speed-minute-selector { margin-top: var(--space-md); display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-sm); }
 .speed-minute-selector button { border-radius: 12px; padding: 11px 8px; background: rgba(255,255,255,.055); border: 1px solid var(--line); color: var(--text); font-weight: 900; }
 .speed-minute-selector button.active { background: var(--gold); border-color: var(--gold); color: #0a1424; }
+.match-marker-card { padding: var(--space-lg); display: grid; gap: var(--space-md); }
+.match-marker-header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-md); }
+.match-marker-header select { width: auto; min-width: 128px; padding-block: 8px; }
+.marker-team-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-md); }
+.marker-team { min-width: 0; padding: 13px; border-radius: 14px; background: rgba(255,255,255,.04); border: 1px solid var(--line); }
+.marker-team h4 { margin: 0 0 10px; overflow-wrap: anywhere; font-size: .9rem; }
+.marker-checks { display: flex; gap: 8px; flex-wrap: wrap; }
+.marker-check { display: grid; place-items: center; width: 42px; height: 42px; border-radius: 11px; background: rgba(0,0,0,.16); border: 1px solid var(--line); cursor: pointer; }
+.marker-check input { width: 22px; height: 22px; margin: 0; accent-color: var(--gold); }
+.marker-card-note { margin: -4px 0 0; color: var(--muted); font-size: .78rem; }
 .period-score-card { padding: var(--space-lg); }
 .period-score-table-wrap { overflow-x: auto; }
 .period-score-table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
@@ -361,6 +371,7 @@ textarea { resize: vertical; }
   .timer-button { min-height: 190px; }
   .main-timer { font-size: clamp(85px, 26vw, 136px); }
   .timer-actions { grid-template-columns: 1fr; }
+  .marker-team-grid { grid-template-columns: 1fr; }
   .quick-action-grid { grid-template-columns: 1fr 1fr; }
   .audit-list li { grid-template-columns: 68px 1fr; }
   .audit-delta { grid-column: 2; }
@@ -502,6 +513,21 @@ textarea { resize: vertical; }
               <button type="button" data-speed-minute="2">2nd Minute</button>
               <button type="button" data-speed-minute="3">3rd Minute</button>
             </div>
+          </article>
+
+          <article id="queryCard" class="match-marker-card card">
+            <div class="match-marker-header"><div><p class="eyebrow">QUERIES</p><h3>Section queries</h3></div></div>
+            <p class="marker-card-note">Tick up to three queries for each team in the current section.</p>
+            <div class="marker-team-grid" id="queryMarkerGrid"></div>
+          </article>
+
+          <article id="seriesCard" class="match-marker-card card">
+            <div class="match-marker-header">
+              <div><p class="eyebrow">SERIES MODE</p><h3>Match wins</h3></div>
+              <label>Best of<select id="seriesBestOf"><option value="1">Off</option><option value="3">3</option><option value="5">5</option><option value="7">7</option><option value="9">9</option></select></label>
+            </div>
+            <p class="marker-card-note" id="seriesNote">Select a best-of series, then tick match wins for each team.</p>
+            <div class="marker-team-grid" id="seriesMarkerGrid"></div>
           </article>
 
         </section>
@@ -844,6 +870,8 @@ textarea { resize: vertical; }
     rules: deepCopy(PRESET_RULES),
     audit: [],
     sectionBaselines: {},
+    queries: {},
+    series: { bestOf: 1, wins: { A: [], B: [] } },
     alternateClockOrder: ['response', 'main']
   });
 
@@ -1008,6 +1036,10 @@ textarea { resize: vertical; }
       };
       state.audit = Array.isArray(saved.state.audit) ? saved.state.audit : [];
       state.sectionBaselines = saved.state.sectionBaselines && typeof saved.state.sectionBaselines === 'object' ? saved.state.sectionBaselines : {};
+      state.queries = saved.state.queries && typeof saved.state.queries === 'object' ? saved.state.queries : {};
+      state.series = saved.state.series && typeof saved.state.series === 'object' ? saved.state.series : defaultState().series;
+      state.series.bestOf = [1, 3, 5, 7, 9].includes(Number(state.series.bestOf)) ? Number(state.series.bestOf) : 1;
+      state.series.wins = { A: Array.isArray(state.series.wins?.A) ? state.series.wins.A : [], B: Array.isArray(state.series.wins?.B) ? state.series.wins.B : [] };
       mainClock = new CountdownClock(0, onMainClockExpired);
       responseClock = new CountdownClock(0, onResponseClockExpired);
       mainClock.restore(saved.mainClock || { durationMs: timerDurationForRound(state.round) * 1000, remainingMs: timerDurationForRound(state.round) * 1000 }, false);
@@ -1740,6 +1772,78 @@ textarea { resize: vertical; }
     });
   }
 
+
+  function queryStateForRound(round = state.round) {
+    state.queries ||= {};
+    if (!state.queries[round]) state.queries[round] = { A: [false, false, false], B: [false, false, false] };
+    for (const team of ['A', 'B']) {
+      if (!Array.isArray(state.queries[round][team])) state.queries[round][team] = [];
+      state.queries[round][team] = Array.from({ length: 3 }, (_, index) => Boolean(state.queries[round][team][index]));
+    }
+    return state.queries[round];
+  }
+
+  function setQueryMarker(team, index, checked) {
+    if (state.round === 'complete') return toast('Choose a live section before recording queries.');
+    recordUndo();
+    queryStateForRound()[team][index] = Boolean(checked);
+    state.status = `${teamName(team)} query ${index + 1} ${checked ? 'recorded' : 'cleared'}`;
+    logEvent('query_marker', `${teamName(team)} query ${index + 1} ${checked ? 'recorded' : 'cleared'} for ${roundTitle()}`, team);
+    changed();
+  }
+
+  function normalizeSeries() {
+    state.series ||= { bestOf: 1, wins: { A: [], B: [] } };
+    state.series.bestOf = [1, 3, 5, 7, 9].includes(Number(state.series.bestOf)) ? Number(state.series.bestOf) : 1;
+    state.series.wins ||= { A: [], B: [] };
+    for (const team of ['A', 'B']) {
+      const wins = Array.isArray(state.series.wins[team]) ? state.series.wins[team] : [];
+      state.series.wins[team] = Array.from({ length: state.series.bestOf }, (_, index) => Boolean(wins[index]));
+    }
+    return state.series;
+  }
+
+  function setSeriesBestOf(bestOf) {
+    recordUndo();
+    state.series ||= { bestOf: 1, wins: { A: [], B: [] } };
+    state.series.bestOf = [1, 3, 5, 7, 9].includes(Number(bestOf)) ? Number(bestOf) : 1;
+    normalizeSeries();
+    state.status = state.series.bestOf === 1 ? 'Series mode off' : `Best of ${state.series.bestOf} series mode`;
+    logEvent('series_mode', state.status);
+    changed();
+  }
+
+  function setSeriesWin(team, index, checked) {
+    recordUndo();
+    normalizeSeries().wins[team][index] = Boolean(checked);
+    state.status = `${teamName(team)} series win ${index + 1} ${checked ? 'recorded' : 'cleared'}`;
+    logEvent('series_win', `${teamName(team)} match win ${index + 1} ${checked ? 'recorded' : 'cleared'}`, team);
+    changed();
+  }
+
+  function escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]);
+  }
+
+  function markerTeamHtml(kind, team, values, disabled = false) {
+    const label = kind === 'query' ? 'Query' : 'Win';
+    const shortName = escapeHtml(state.teams[team].shortName);
+    return `<div class="marker-team"><h4>${shortName}</h4><div class="marker-checks">${values.map((checked, index) => `<label class="marker-check" title="${shortName} ${label.toLowerCase()} ${index + 1}"><input type="checkbox" data-${kind}-team="${team}" data-${kind}-index="${index}" ${checked ? 'checked' : ''} ${disabled ? 'disabled' : ''} aria-label="${shortName} ${label} ${index + 1}"></label>`).join('')}</div></div>`;
+  }
+
+  function renderMatchMarkers() {
+    const queries = queryStateForRound();
+    $('queryMarkerGrid').innerHTML = markerTeamHtml('query', 'A', queries.A, state.round === 'complete') + markerTeamHtml('query', 'B', queries.B, state.round === 'complete');
+    const series = normalizeSeries();
+    $('seriesBestOf').value = String(series.bestOf);
+    const seriesOff = series.bestOf === 1;
+    $('seriesMarkerGrid').innerHTML = markerTeamHtml('series', 'A', series.wins.A, seriesOff) + markerTeamHtml('series', 'B', series.wins.B, seriesOff);
+    const needed = Math.ceil(series.bestOf / 2);
+    const winsA = series.wins.A.filter(Boolean).length;
+    const winsB = series.wins.B.filter(Boolean).length;
+    $('seriesNote').textContent = seriesOff ? 'Select a best-of series, then tick match wins for each team.' : `First to ${needed} wins. Current series: ${winsA}–${winsB}.`;
+  }
+
   function renderOperator() {
     document.documentElement.style.setProperty('--team-a', state.teams.A.color);
     document.documentElement.style.setProperty('--team-b', state.teams.B.color);
@@ -1753,6 +1857,7 @@ textarea { resize: vertical; }
     $('teamBScore').textContent = state.teams.B.score;
     updateLogo($('teamALogo'), state.teams.A.logo, `${state.teams.A.name} logo`);
     updateLogo($('teamBLogo'), state.teams.B.logo, `${state.teams.B.name} logo`);
+    renderMatchMarkers();
 
     $('teamACard').classList.remove('buzzed');
     $('teamBCard').classList.remove('buzzed');
@@ -1938,6 +2043,13 @@ textarea { resize: vertical; }
     $('resetMainTimerBtn').addEventListener('click', resetMainTimer);
     $('resetResponseTimerBtn').addEventListener('click', resetResponseTimer);
     $('addTenBtn').addEventListener('click', addTenSeconds);
+    $('seriesBestOf').addEventListener('change', event => setSeriesBestOf(event.target.value));
+    $('queryMarkerGrid').addEventListener('change', event => {
+      if (event.target.matches('[data-query-team]')) setQueryMarker(event.target.dataset.queryTeam, Number(event.target.dataset.queryIndex), event.target.checked);
+    });
+    $('seriesMarkerGrid').addEventListener('change', event => {
+      if (event.target.matches('[data-series-team]')) setSeriesWin(event.target.dataset.seriesTeam, Number(event.target.dataset.seriesIndex), event.target.checked);
+    });
     $('passBtn').addEventListener('click', passQuestion);
     $('timeoutBtn').addEventListener('click', timeoutAction);
     $('judgeBtn').addEventListener('click', () => $('judgeDialog').showModal());
