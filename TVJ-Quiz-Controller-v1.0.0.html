@@ -221,7 +221,7 @@ body.fullscreen-active .operator-view { padding-top: clamp(44px, 6vh, 72px) !imp
 .scoring-sound-toggle { min-height: 38px; padding: 8px 12px; border-radius: 11px; background: rgba(255,255,255,.065); border: 1px solid var(--line); color: var(--text); font-size: .78rem; font-weight: 900; letter-spacing: .04em; white-space: nowrap; }
 .scoring-sound-toggle[aria-pressed="false"] { background: rgba(255,102,120,.10); border-color: rgba(255,102,120,.28); color: #ffb4bf; }
 .score-row { position: relative; display: grid; place-items: center; flex: 1; min-height: 0; padding: 15px 68px; }
-.score-display { text-align: center; font-variant-numeric: tabular-nums; font-size: clamp(96px, 10.5vw, 154px); line-height: .96; font-weight: 950; letter-spacing: -.06em; text-shadow: 0 10px 28px rgba(0,0,0,.25); }
+.score-display { text-align: center; font-variant-numeric: tabular-nums; font-size: clamp(112px, 12vw, 184px); line-height: .96; font-weight: 950; letter-spacing: -.06em; text-shadow: 0 10px 28px rgba(0,0,0,.25); }
 .score-nudge { position: absolute; z-index: 3; top: 50%; width: 40px; height: 40px; border-radius: 50%; background: rgba(255,255,255,.065); border: 1px solid var(--line); font-size: 1.35rem; transform: translateY(-50%); }
 .score-nudge[data-delta="-1"] { left: 16px; }
 .score-nudge[data-delta="1"] { right: 16px; }
@@ -255,16 +255,16 @@ body.fullscreen-active .operator-view { padding-top: clamp(44px, 6vh, 72px) !imp
 .timer-tile.response-clock-tile { width: 132px; min-height: 132px; aspect-ratio: 1; border-radius: 50%; gap: 4px; padding: 12px; border: 5px solid rgba(242,201,76,.32); background: rgba(242,201,76,.07); text-align: center; }
 .timer-tile.response-clock-tile .timer-tile-label { color: var(--gold); font-size: .62rem; line-height: 1.05; text-align: center; max-width: 78px; }
 .timer-tile.response-clock-tile .timer-tile-instruction { display: none; }
-.timer-tile.top .main-timer { font-size: clamp(96px, min(10vw, 20vh), 152px); }
-.timer-tile.bottom .main-timer { font-size: clamp(58px, min(6vw, 12vh), 92px); }
-.timer-tile.response-clock-tile .main-timer { min-width: 0; font-size: 2.25rem; letter-spacing: -.04em; }
+.timer-tile.top .main-timer { font-size: clamp(112px, min(11.5vw, 22vh), 176px); }
+.timer-tile.bottom .main-timer { font-size: clamp(70px, min(7vw, 13vh), 110px); }
+.timer-tile.response-clock-tile .main-timer { min-width: 0; font-size: 2.8rem; letter-spacing: -.04em; }
 .timer-tile.response-clock-tile:has(.main-timer.danger) { border-color: var(--red); animation: responseBorderFlash .5s ease-in-out infinite alternate; }
 .timer-tile-label { color: var(--muted); font-size: .75rem; font-weight: 900; letter-spacing: .12em; text-transform: uppercase; }
 .timer-tile-instruction { color: var(--muted); font-size: .78rem; text-align: center; }
 .timer-edit-btn { position: absolute; top: 12px; right: 12px; z-index: 3; width: 38px; height: 38px; display: grid; place-items: center; border-radius: 50%; background: rgba(242,201,76,.14); border: 1px solid rgba(242,201,76,.42); color: var(--gold-2); font-size: 1rem; line-height: 1; }
 .timer-edit-btn:hover { background: rgba(242,201,76,.24); }
 .timer-tile.response-clock-tile .timer-edit-btn { display: none; }
-.main-timer { display: block; min-width: 0; max-width: 100%; text-align: center; white-space: nowrap; font-size: clamp(104px, min(11vw, 21vh), 168px); font-weight: 950; letter-spacing: -.06em; line-height: .9; font-variant-numeric: tabular-nums; }
+.main-timer { display: block; min-width: 0; max-width: 100%; text-align: center; white-space: nowrap; font-size: clamp(120px, min(12.5vw, 23vh), 196px); font-weight: 950; letter-spacing: -.06em; line-height: .9; font-variant-numeric: tabular-nums; }
 .main-timer.warning { color: var(--orange); }
 .main-timer.danger { color: var(--red); animation: timeFlash .5s ease-in-out infinite alternate; }
 @keyframes timeFlash { to { opacity: .58; } }
@@ -351,19 +351,18 @@ body.series-mode-active #seriesCard { display: grid; }
 .audience-logo { max-width: 90%; max-height: 90%; object-fit: contain; }
 .audience-team p { color: rgba(255,255,255,.68); font-size: clamp(12px, 1.5vw, 21px); font-weight: 900; letter-spacing: .15em; margin-bottom: 8px; }
 .audience-team h2 { min-height: 2.2em; display: grid; place-items: center; font-size: clamp(23px, 3.2vw, 54px); line-height: 1.08; }
-.audience-team output { margin-top: clamp(8px, 1vw, 18px); font-size: clamp(100px, 14vw, 230px); line-height: .85; font-weight: 950; letter-spacing: -.08em; font-variant-numeric: tabular-nums; text-shadow: 0 15px 35px rgba(0,0,0,.28); }
-.audience-center { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 24px 10px; }
+.audience-team output { margin-top: clamp(8px, 1vw, 18px); font-size: clamp(124px, 16vw, 280px); line-height: .85; font-weight: 950; letter-spacing: -.08em; font-variant-numeric: tabular-nums; text-shadow: 0 15px 35px rgba(0,0,0,.28); }
+.audience-center { display: flex; flex-direction: column; align-items: center; justify-content: center; justify-self: center; text-align: center; padding: 24px 10px; width: 100%; }
 .audience-center > p { margin-bottom: 8px; color: var(--gold); font-weight: 950; letter-spacing: .15em; font-size: clamp(12px, 1.6vw, 23px); }
-.audience-center > output { font-size: clamp(70px, 9.5vw, 158px); line-height: 1; font-weight: 950; letter-spacing: -.08em; font-variant-numeric: tabular-nums; }
+.audience-center > output { display: block; width: 100%; text-align: center; font-size: clamp(92px, 11vw, 190px); line-height: 1; font-weight: 950; letter-spacing: -.08em; font-variant-numeric: tabular-nums; }
 .audience-response { margin-top: 20px; width: clamp(100px, 10vw, 160px); aspect-ratio: 1; border-radius: 50%; display: grid; place-items: center; align-content: center; background: rgba(242,201,76,.09); border: clamp(4px, .5vw, 8px) solid var(--gold); }
 .audience-response span { color: var(--gold); font-weight: 900; font-size: clamp(9px, 1vw, 14px); letter-spacing: .13em; }
 .audience-response strong { font-size: clamp(38px, 5vw, 76px); line-height: 1; }
-.question-pill { margin-top: 22px; padding: 9px 14px; border-radius: 999px; background: rgba(255,255,255,.07); border: 1px solid var(--line); color: var(--muted); font-size: clamp(10px, 1vw, 15px); font-weight: 900; letter-spacing: .1em; }
-.question-pill strong { color: var(--text); }
 .audience-footer { padding: clamp(15px, 1.8vw, 26px); display: flex; justify-content: space-between; align-items: center; gap: 18px; background: rgba(0,0,0,.18); border-top: 1px solid var(--line); font-size: clamp(12px, 1.4vw, 21px); font-weight: 900; letter-spacing: .08em; position: relative; z-index: 1; }
 .audience-footer span:last-child { color: var(--gold); text-align: right; }
-.exit-audience { position: fixed; top: 10px; right: 10px; z-index: 100; border-radius: 9px; background: rgba(0,0,0,.48); padding: 8px 10px; opacity: .08; }
-.exit-audience:hover { opacity: 1; }
+.audience-floating-actions { position: fixed; top: 10px; right: 10px; z-index: 100; display: flex; gap: 8px; opacity: .08; }
+.audience-floating-actions:hover, .audience-floating-actions:focus-within { opacity: 1; }
+.exit-audience, .audience-fullscreen { border-radius: 9px; background: rgba(0,0,0,.48); padding: 8px 10px; }
 body.audience-mode { overflow: hidden; }
 body.audience-mode .operator-only { display: none !important; }
 body:not(.audience-mode) .audience-only { display: none !important; }
@@ -450,7 +449,7 @@ textarea { resize: vertical; }
   .timer-column { grid-column: 1 / -1; grid-row: 1; grid-template-columns: 1.25fr .75fr; }
   .timer-card { grid-row: span 2; }
   .team-card { min-height: 450px; }
-  .score-display { font-size: clamp(92px, 18vw, 152px); }
+  .score-display { font-size: clamp(112px, 20vw, 180px); }
   .lower-grid { grid-template-columns: 1fr; }
   .audience-scoreboard { grid-template-columns: 1fr .62fr 1fr; }
 }
@@ -469,9 +468,9 @@ textarea { resize: vertical; }
   .timer-card { grid-row: auto; }
   .team-card { min-height: 390px; }
   .team-card-header { min-height: 95px; }
-  .score-display { font-size: clamp(96px, 31vw, 150px); }
+  .score-display { font-size: clamp(112px, 34vw, 172px); }
   .timer-button { min-height: 190px; }
-  .main-timer { font-size: clamp(85px, 26vw, 136px); }
+  .main-timer { font-size: clamp(100px, 29vw, 158px); }
   .timer-actions { grid-template-columns: 1fr; }
   .marker-team-grid { grid-template-columns: 1fr; }
   #seriesCard { grid-template-columns: 1fr; }
@@ -489,14 +488,13 @@ textarea { resize: vertical; }
   .audience-brand span:last-child { display: none; }
   .audience-scoreboard { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr auto; }
   .audience-center { grid-column: 1 / -1; grid-row: 2; order: 3; flex-direction: row; gap: 17px; padding: 12px 14px; border-top: 1px solid var(--line); }
-  .audience-center > output { font-size: clamp(57px, 18vw, 90px); }
+  .audience-center > output { font-size: clamp(70px, 20vw, 112px); }
   .audience-response { margin-top: 0; width: 78px; }
-  .question-pill { margin-top: 0; }
   .audience-team { padding: 18px 10px; }
   .audience-team-a { border-right: 1px solid var(--line); }
   .audience-team-b { border-left: 0; }
   .audience-team h2 { font-size: clamp(19px, 6vw, 34px); }
-  .audience-team output { font-size: clamp(86px, 30vw, 145px); }
+  .audience-team output { font-size: clamp(104px, 33vw, 170px); }
   .audience-footer { font-size: 11px; }
 }
 
@@ -505,8 +503,8 @@ textarea { resize: vertical; }
   .audience-logo-frame { display: none; }
   .audience-team { padding: 10px; }
   .audience-team h2 { min-height: 1.2em; }
-  .audience-team output { font-size: clamp(90px, 21vh, 160px); }
-  .audience-center > output { font-size: clamp(70px, 18vh, 128px); }
+  .audience-team output { font-size: clamp(108px, 24vh, 185px); }
+  .audience-center > output { font-size: clamp(84px, 21vh, 150px); }
   .audience-footer { padding: 10px 18px; }
 }
 
@@ -519,8 +517,8 @@ textarea { resize: vertical; }
 }
 
 @media (max-width: 1100px) and (min-width: 761px) {
-  .audience-center > output { font-size: clamp(54px, 7.2vw, 92px); }
-  .audience-team output { font-size: clamp(90px, 12vw, 150px); }
+  .audience-center > output { font-size: clamp(70px, 8.6vw, 116px); }
+  .audience-team output { font-size: clamp(110px, 14vw, 180px); }
   .audience-scoreboard { grid-template-columns: minmax(0, 1fr) minmax(210px, .68fr) minmax(0, 1fr); }
 }
 
@@ -707,7 +705,6 @@ textarea { resize: vertical; }
             <div id="audienceResponseWrap" class="audience-response hidden">
               <span>ANSWER</span><strong id="audienceResponse">5</strong>
             </div>
-            <div class="question-pill">QUESTION <strong id="audienceQuestion">1</strong></div>
           </div>
           <article id="audienceTeamB" class="audience-team audience-team-b">
             <div class="audience-logo-frame"><img id="audienceLogoB" class="audience-logo hidden" alt=""></div>
@@ -718,7 +715,10 @@ textarea { resize: vertical; }
         </section>
         <footer class="audience-footer"><span id="audienceActiveTeam">BOTH TEAMS READY</span><span id="audienceFooterMessage">MATCH READY</span></footer>
       </div>
-      <button id="exitAudienceBtn" class="exit-audience" type="button">Exit audience mode</button>
+      <div class="audience-floating-actions">
+        <button id="audienceFullscreenBtn" class="audience-fullscreen" type="button">Fullscreen</button>
+        <button id="exitAudienceBtn" class="exit-audience" type="button">Exit audience mode</button>
+      </div>
     </main>
   </div>
 
@@ -1088,6 +1088,8 @@ textarea { resize: vertical; }
     else if (kind === 'correct') { tone(620, .11, 'sine', .06); tone(880, .16, 'sine', .07, .10); }
     else if (kind === 'incorrect') { tone(260, .22, 'sawtooth', .05); }
     else if (kind === 'warning') { tone(720, .08, 'square', .045); }
+    else if (kind === 'main-end') { [0, .32, .64].forEach(delay => tone(880, .18, 'sine', .08, delay)); }
+    else if (kind === 'response-end') { tone(880, .22, 'sine', .08); }
     else if (kind === 'end') { tone(420, .3, 'square', .07); tone(320, .38, 'square', .07, .28); }
   }
 
@@ -1598,7 +1600,7 @@ textarea { resize: vertical; }
   function applyTimeoutPenalty(auto = false) {
     state.status = 'Time expired';
     logEvent('timeout', `${roundTitle()} response time expired${auto ? ' automatically' : ''}`);
-    sound('end');
+    sound('response-end');
     changed();
   }
 
@@ -1612,14 +1614,14 @@ textarea { resize: vertical; }
   function onMainClockExpired() {
     state.status = state.round === 'speed' ? `Speed minute ${state.speedPeriod} ended` : state.round === 'buzzer' ? 'Buzzer section time ended' : 'Main clock expired';
     logEvent('main_clock_expired', `${roundTitle()} clock expired`);
-    sound('end');
+    sound('main-end');
     changed();
   }
 
   function onResponseClockExpired() {
     state.status = 'Response time expired';
     logEvent('response_clock_expired', `${roundTitle()} response clock expired`);
-    sound('end');
+    sound('response-end');
     changed();
   }
 
@@ -2061,7 +2063,6 @@ textarea { resize: vertical; }
     const remaining = audienceRemaining(p.main);
     $('audienceTimer').textContent = formatClock(remaining);
     $('audienceStatus').textContent = p.complete ? 'FINAL' : p.main.running ? 'TIME' : p.status.toUpperCase();
-    $('audienceQuestion').textContent = p.question;
     const responseRemaining = audienceRemaining(p.response);
     $('audienceResponseWrap').classList.toggle('hidden', true);
     $('audienceResponse').textContent = formatResponseClock(responseRemaining, false);
@@ -2166,6 +2167,7 @@ textarea { resize: vertical; }
     $('undoBtn').addEventListener('click', undo);
     $('openAudienceBtn').addEventListener('click', openAudience);
     $('fullscreenBtn').addEventListener('click', toggleFullscreen);
+    $('audienceFullscreenBtn').addEventListener('click', toggleFullscreen);
     $('wakeLockBtn').addEventListener('click', toggleWakeLock);
     $('exitAudienceBtn').addEventListener('click', () => { const url = new URL(location.href); url.searchParams.delete('display'); location.href = url.href; });
 
@@ -2284,6 +2286,7 @@ textarea { resize: vertical; }
       try { window.opener?.postMessage({ type: 'tvj-request-state' }, '*'); } catch {}
       setInterval(readPublicState, 750);
       $('exitAudienceBtn').title = 'Return to operator controls';
+      $('audienceFullscreenBtn').title = 'Toggle audience fullscreen';
     } else {
       const recovered = loadSavedState();
       if (!recovered) {
