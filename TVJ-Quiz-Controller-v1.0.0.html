@@ -177,8 +177,6 @@ kbd {
 .active-badge, .state-badge { border-radius: 999px; padding: 6px 9px; font-size: .65rem; font-weight: 950; letter-spacing: .12em; background: rgba(69,213,138,.14); color: #73f3ad; border: 1px solid rgba(69,213,138,.28); }
 .card-reset-btn { position: absolute; top: 14px; right: 14px; z-index: 2; width: 38px; height: 38px; padding: 0; display: grid; place-items: center; font-size: 1rem; line-height: 1; }
 .card-reset-btn svg { width: 18px; height: 18px; display: block; }
-.question-card { position: relative; }
-.question-card .card-reset-btn { top: 12px; right: 12px; }
 .scoring-sound-toggle { min-height: 38px; padding: 8px 12px; border-radius: 11px; background: rgba(255,255,255,.065); border: 1px solid var(--line); color: var(--text); font-size: .78rem; font-weight: 900; letter-spacing: .04em; white-space: nowrap; }
 .scoring-sound-toggle[aria-pressed="false"] { background: rgba(255,102,120,.10); border-color: rgba(255,102,120,.28); color: #ffb4bf; }
 .score-row { position: relative; display: grid; place-items: center; flex: 1; min-height: 0; padding: 15px 68px; }
@@ -248,17 +246,6 @@ kbd {
 .period-score-table tfoot td { font-weight: 950; color: var(--gold); }
 
 
-.buzzer-panel { padding: var(--space-lg); display: grid; grid-template-columns: 1fr auto; align-items: center; gap: var(--space-md); }
-.buzzer-status-wrap h3 { font-size: 1.45rem; margin-bottom: 6px; }
-.buzzer-status-wrap p:last-child { color: var(--muted); margin-bottom: 0; }
-.response-clock-wrap { width: 116px; height: 116px; display: flex; flex-direction: column; align-items: center; justify-content: center; border-radius: 50%; border: 5px solid rgba(242,201,76,.32); background: rgba(242,201,76,.07); text-align: center; }
-.response-clock-wrap.danger { border-color: var(--red); animation: responseBorderFlash .5s ease-in-out infinite alternate; }
-.response-label { color: var(--gold); font-size: .62rem; font-weight: 900; letter-spacing: .10em; line-height: 1.05; text-align: center; max-width: 74px; }
-.response-timer { font-size: 2.1rem; font-weight: 950; font-variant-numeric: tabular-nums; }
-.response-timer.danger { color: var(--red); animation: timeFlash .5s ease-in-out infinite alternate; }
-.buzzer-actions { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
-.question-card { padding: var(--space-lg) 68px; display: grid; grid-template-columns: repeat(2, minmax(120px, auto)); align-items: center; justify-content: center; gap: var(--space-xl); text-align: center; }
-.question-card strong { display: block; font-size: 1.3rem; }
 
 .lower-grid { display: grid; grid-template-columns: 1fr; gap: var(--space-md); margin-top: var(--space-md); }
 .quick-actions, .audit-card { padding: var(--space-lg); }
@@ -373,9 +360,7 @@ textarea { resize: vertical; }
   .score-display { font-size: clamp(96px, 31vw, 150px); }
   .timer-button { min-height: 190px; }
   .main-timer { font-size: clamp(85px, 26vw, 136px); }
-  .timer-actions, .buzzer-actions { grid-template-columns: 1fr; }
-  .buzzer-panel { grid-template-columns: 1fr auto; }
-  .question-card { grid-template-columns: 1fr; padding-inline: 68px; }
+  .timer-actions { grid-template-columns: 1fr; }
   .quick-action-grid { grid-template-columns: 1fr 1fr; }
   .audit-list li { grid-template-columns: 68px 1fr; }
   .audit-delta { grid-column: 2; }
@@ -519,34 +504,6 @@ textarea { resize: vertical; }
             </div>
           </article>
 
-          <article id="buzzerPanel" class="buzzer-panel card hidden">
-            <div class="buzzer-status-wrap">
-              <p class="eyebrow">BUZZER CONTROL</p>
-              <h3 id="buzzerStatus">Buzzers armed</h3>
-              <p id="buzzerInstruction">First valid buzz locks out the opposing team.</p>
-            </div>
-            <div class="response-clock-wrap">
-              <span class="response-label">RESPONSE<br>TIME</span>
-              <output id="responseTimer" class="response-timer">00:05</output>
-            </div>
-            <div class="buzzer-actions">
-              <button id="identifyBtn" type="button" class="primary-btn" disabled>Identify team</button>
-              <button id="beforeIdBtn" type="button" class="warning-btn" disabled>Answered before ID</button>
-              <button id="resetBuzzersBtn" type="button" class="secondary-btn">Reset buzzers <kbd>R</kbd></button>
-            </div>
-          </article>
-
-          <article class="question-card card">
-            <button id="resetQuestionBtn" type="button" class="secondary-btn card-reset-btn" aria-label="Reset question" title="Reset question"><svg class="reset-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 4v6h6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M5.4 14.2A7 7 0 1 0 6.1 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
-            <div>
-              <p class="eyebrow">QUESTION</p>
-              <strong id="questionNumber">1</strong>
-            </div>
-            <div id="speedPeriodBlock" class="hidden">
-              <p class="eyebrow">SPEED MINUTE</p>
-              <strong id="speedPeriodLabel">1 / 3</strong>
-            </div>
-          </article>
         </section>
 
         <article id="teamBCard" class="team-card card team-b-card" data-team="B">
@@ -1263,13 +1220,11 @@ textarea { resize: vertical; }
 
   function toggleResponseTimer() {
     if (!roundUsesDualClock()) return;
-    if (state.round === 'buzzer' && !state.buzzerTeam) return toast('A team must buzz before starting the buzzer response time.');
     responseClock.sync();
     if (!responseClock.running && responseClock.remainingMs <= 0) return toast('Reset the response time before starting it again.');
     ensureAudio();
     const running = responseClock.toggle();
     state.status = running ? 'Response time running' : 'Response time paused';
-    if (state.round === 'buzzer' && running) state.buzzerIdentified = true;
     logEvent(running ? 'timer_started' : 'timer_paused', `Response clock ${running ? 'started' : 'paused'}`);
     changed();
   }
@@ -1401,7 +1356,7 @@ textarea { resize: vertical; }
   function scorePointsFor(outcome) {
     if (state.round === 'alternate') return outcome === 'correct' ? state.rules.alternateCorrectPoints : state.rules.alternateIncorrectPoints;
     if (state.round === 'speed') return outcome === 'correct' ? 1 : -1;
-    if (state.round === 'buzzer') return outcome === 'correct' ? state.rules.buzzerCorrectPoints : state.rules.buzzerIncorrectPoints;
+    if (state.round === 'buzzer') return outcome === 'correct' ? state.rules.alternateCorrectPoints : state.rules.alternateIncorrectPoints;
     return 0;
   }
 
@@ -1416,14 +1371,8 @@ textarea { resize: vertical; }
   }
 
   function canJudgeAnswer(team) {
-    if (state.round === 'alternate' || state.round === 'speed') {
+    if (state.round === 'alternate' || state.round === 'speed' || state.round === 'buzzer') {
       return ['A', 'B'].includes(team);
-    }
-    if (state.round === 'buzzer') {
-      if (!state.buzzerTeam) { toast('No team has buzzed.'); return false; }
-      if (state.buzzerTeam !== team) { toast(`${teamName(state.buzzerTeam)} has control.`); return false; }
-      if (!state.buzzerIdentified) { toast('Identify the team before judging the answer.'); return false; }
-      return true;
     }
     toast('The match is complete.');
     return false;
@@ -1439,13 +1388,11 @@ textarea { resize: vertical; }
     logEvent(outcome, `${teamName(team)}: ${label}${delta ? ` (${delta > 0 ? '+' : ''}${delta})` : ''}`, team, delta);
     sound(outcome);
 
-    if (state.round === 'alternate') {
-      responseClock.reset(state.rules.alternateResponseSeconds);
+    if (state.round === 'alternate' || state.round === 'buzzer') {
+      responseClock.reset(state.round === 'alternate' ? state.rules.alternateResponseSeconds : state.rules.buzzerResponseSeconds);
       state.question += 1;
     } else if (state.round === 'speed') {
       state.question += 1;
-    } else {
-      finishBuzzerQuestion();
     }
     changed();
   }
@@ -1481,13 +1428,11 @@ textarea { resize: vertical; }
   function passQuestion() {
     if (state.round === 'complete') return;
     recordUndo();
-    if (state.round === 'alternate') {
+    if (state.round === 'alternate' || state.round === 'buzzer') {
       state.question += 1;
-      responseClock.reset(state.rules.alternateResponseSeconds);
+      responseClock.reset(state.round === 'alternate' ? state.rules.alternateResponseSeconds : state.rules.buzzerResponseSeconds);
     } else if (state.round === 'speed') {
       state.question += 1;
-    } else if (state.round === 'buzzer') {
-      finishBuzzerQuestion();
     }
     state.status = 'Question passed';
     logEvent('pass', `Question ${state.question - 1 || 1} passed`);
@@ -1495,107 +1440,18 @@ textarea { resize: vertical; }
   }
 
   function nextQuestion() {
-    if (state.round === 'buzzer') {
-      recordUndo();
-      finishBuzzerQuestion();
-      state.status = 'Next question';
-      logEvent('next_question', `Advanced to question ${state.question}`);
-      return changed();
-    }
     passQuestion();
   }
 
-  function buzz(team) {
-    if (state.round !== 'buzzer') return toast('Buzzers are available only in the buzzer section.');
-    if (mainClock.remainingMs <= 0) return toast('The buzzer clock has ended.');
-    if (state.buzzerTeam) return;
-    ensureAudio();
-    recordUndo();
-    mainClock.sync();
-    state.mainWasRunningBeforeBuzz = mainClock.running;
-    if (state.rules.pauseMainClockOnBuzz) mainClock.pause();
-    state.buzzerTeam = team;
-    state.buzzerIdentified = false;
-    responseClock.reset(state.rules.buzzerResponseSeconds);
-    state.status = `${teamName(team)} buzzed`;
-    logEvent('buzz', `${teamName(team)} buzzed first`, team);
-    sound('buzz');
-    changed();
-  }
-
-  function identifyBuzzerTeam() {
-    if (!state.buzzerTeam || state.buzzerIdentified) return;
-    recordUndo();
-    state.buzzerIdentified = true;
-    responseClock.reset(state.rules.buzzerResponseSeconds);
-    responseClock.start();
-    state.status = `${teamName(state.buzzerTeam)} identified — answer now`;
-    logEvent('identified', `${teamName(state.buzzerTeam)} identified; response clock started`, state.buzzerTeam);
-    changed();
-  }
-
-  function finishBuzzerQuestion() {
-    const shouldResume = state.mainWasRunningBeforeBuzz && state.rules.pauseMainClockOnBuzz && mainClock.remainingMs > 0;
-    responseClock.pause();
-    responseClock.reset(state.rules.buzzerResponseSeconds);
-    state.buzzerTeam = '';
-    state.buzzerIdentified = false;
-    state.mainWasRunningBeforeBuzz = false;
-    state.question += 1;
-    if (shouldResume) mainClock.start();
-  }
-
-  function resetBuzzers() {
-    if (!state.buzzerTeam && !state.buzzerIdentified) return;
-    recordUndo();
-    const team = state.buzzerTeam;
-    const shouldResume = state.mainWasRunningBeforeBuzz && state.rules.pauseMainClockOnBuzz && mainClock.remainingMs > 0;
-    responseClock.reset(state.rules.buzzerResponseSeconds);
-    state.buzzerTeam = '';
-    state.buzzerIdentified = false;
-    state.mainWasRunningBeforeBuzz = false;
-    if (shouldResume) mainClock.start();
-    state.status = 'Buzzers reset';
-    logEvent('buzzers_reset', `${team ? teamName(team) : 'Team'} buzzer cleared`);
-    changed();
-  }
-
-  function beforeIdentificationPenalty() {
-    if (!state.buzzerTeam || state.buzzerIdentified) return;
-    recordUndo();
-    const team = state.buzzerTeam;
-    const delta = state.rules.buzzerBeforeIdentifiedPoints;
-    state.teams[team].score += delta;
-    state.status = `${teamName(team)} answered before identification`;
-    logEvent('before_identification', `${teamName(team)} answered before identification (${delta > 0 ? '+' : ''}${delta})`, team, delta);
-    sound('incorrect');
-    finishBuzzerQuestion();
-    changed();
-  }
-
   function applyTimeoutPenalty(auto = false) {
-    if (timeoutApplying) return;
-    if (state.round !== 'buzzer' || !state.buzzerTeam) {
-      state.status = 'Time expired';
-      logEvent('timeout', `${roundTitle()} time expired`);
-      return changed();
-    }
-    timeoutApplying = true;
-    recordUndo();
-    const team = state.buzzerTeam;
-    const delta = state.rules.buzzerTimeoutPoints;
-    state.teams[team].score += delta;
-    state.status = `${teamName(team)} response time expired`;
-    logEvent('response_timeout', `${teamName(team)} response time expired${auto ? ' automatically' : ''} (${delta > 0 ? '+' : ''}${delta})`, team, delta);
-    sound('incorrect');
-    finishBuzzerQuestion();
-    timeoutApplying = false;
+    state.status = 'Time expired';
+    logEvent('timeout', `${roundTitle()} response time expired${auto ? ' automatically' : ''}`);
+    sound('end');
     changed();
   }
 
   function timeoutAction() {
-    if (state.round === 'buzzer' && state.buzzerTeam) return applyTimeoutPenalty(false);
-    if (state.round === 'alternate' || state.round === 'speed') {
+    if (state.round === 'alternate' || state.round === 'speed' || state.round === 'buzzer') {
       const team = state.activeTeam;
       judgeAnswer(team, 'incorrect');
     }
@@ -1609,13 +1465,10 @@ textarea { resize: vertical; }
   }
 
   function onResponseClockExpired() {
-    if (state.rules.autoApplyTimeoutPenalty) applyTimeoutPenalty(true);
-    else {
-      state.status = `${teamName(state.buzzerTeam)} response time expired`;
-      logEvent('response_clock_expired', `${teamName(state.buzzerTeam)} response clock expired; awaiting operator ruling`, state.buzzerTeam);
-      sound('end');
-      changed();
-    }
+    state.status = 'Response time expired';
+    logEvent('response_clock_expired', `${roundTitle()} response clock expired`);
+    sound('end');
+    changed();
   }
 
   function openSetup() {
@@ -1849,8 +1702,8 @@ textarea { resize: vertical; }
     const existingOrder = [...stack.querySelectorAll('.timer-tile')].map(tile => tile.dataset.clock).join(',');
     if (existingOrder !== order.join(',') || stack.dataset.timerRound !== state.round) {
       stack.dataset.timerRound = state.round;
-      const responseLabel = state.round === 'buzzer' ? 'Buzzer<br>response' : 'Response<br>time';
-      const mainLabel = state.round === 'buzzer' ? 'Buzzer clock' : 'Main clock';
+      const responseLabel = 'Response<br>time';
+      const mainLabel = 'Main clock';
       stack.innerHTML = order.map((kind, index) => {
         const isMain = kind === 'main';
         return `<div class="timer-tile ${index === 0 ? 'top' : 'bottom'} ${isMain ? '' : 'response-clock-tile'}" role="button" tabindex="0" draggable="true" data-clock="${kind}" aria-label="${isMain ? 'Start or pause main clock' : 'Start or pause response time'}">
@@ -1901,8 +1754,8 @@ textarea { resize: vertical; }
     updateLogo($('teamALogo'), state.teams.A.logo, `${state.teams.A.name} logo`);
     updateLogo($('teamBLogo'), state.teams.B.logo, `${state.teams.B.name} logo`);
 
-    $('teamACard').classList.toggle('buzzed', state.buzzerTeam === 'A');
-    $('teamBCard').classList.toggle('buzzed', state.buzzerTeam === 'B');
+    $('teamACard').classList.remove('buzzed');
+    $('teamBCard').classList.remove('buzzed');
 
     $$('.round-tab').forEach(btn => btn.classList.toggle('active', btn.dataset.round === state.round));
     const mainRemaining = mainClock.sync();
@@ -1917,7 +1770,7 @@ textarea { resize: vertical; }
     if ($('alternateMainClock')) $('alternateMainClock').classList.toggle('hidden', !roundUsesDualClock());
     if ($('alternateMainTimer') && !roundUsesDualClock()) $('alternateMainTimer').textContent = formatClock(mainRemaining);
     $('timerEyebrow').textContent = roundUsesDualClock() ? 'RESPONSE CLOCK' : 'MAIN CLOCK';
-    $('timerContext').textContent = state.round === 'alternate' ? `${state.rules.alternateResponseSeconds}-second response time` : state.round === 'speed' ? `Minute ${state.speedPeriod} of ${state.rules.speedPeriodCount}` : state.round === 'buzzer' ? `${state.rules.buzzerResponseSeconds}-second buzzer response time` : 'Final result';
+    $('timerContext').textContent = state.round === 'alternate' ? `${state.rules.alternateResponseSeconds}-second response time` : state.round === 'speed' ? `Minute ${state.speedPeriod} of ${state.rules.speedPeriodCount}` : state.round === 'buzzer' ? `${state.rules.buzzerResponseSeconds}-second response time` : 'Final result';
     const badge = $('timerStateBadge');
     const badgeClock = roundUsesDualClock() ? activeDisplayClock() : mainClock;
     badge.textContent = badgeClock.running ? 'RUNNING' : displayRemaining <= 0 ? 'ENDED' : displayRemaining < badgeClock.durationMs ? 'PAUSED' : 'READY';
@@ -1933,28 +1786,15 @@ textarea { resize: vertical; }
       btn.setAttribute('aria-pressed', String(minute === state.speedPeriod));
     });
 
-    $('questionNumber').textContent = state.question;
-    $('speedPeriodBlock').classList.toggle('hidden', state.round !== 'speed');
-    $('speedPeriodLabel').textContent = `${state.speedPeriod} / ${state.rules.speedPeriodCount}`;
+    if ($('questionNumber')) $('questionNumber').textContent = state.question;
+    if ($('speedPeriodBlock')) $('speedPeriodBlock').classList.toggle('hidden', state.round !== 'speed');
+    if ($('speedPeriodLabel')) $('speedPeriodLabel').textContent = `${state.speedPeriod} / ${state.rules.speedPeriodCount}`;
     const scoringSoundEnabled = Boolean(state.rules.correctSoundEnabled && state.rules.incorrectSoundEnabled);
     $('scoringSoundToggle').setAttribute('aria-pressed', String(scoringSoundEnabled));
     $('scoringSoundToggle').textContent = `Scoring sound ${scoringSoundEnabled ? 'on' : 'muted'}`;
-    $('buzzerPanel').classList.toggle('hidden', state.round !== 'buzzer');
-    if ($('responseTimer')) {
-      $('responseTimer').textContent = formatResponseClock(responseClock.sync());
-      $('responseTimer').classList.toggle('danger', responseClock.sync() <= 5000);
-      $('responseTimer').closest('.response-clock-wrap')?.classList.toggle('danger', responseClock.sync() <= 5000);
-    }
-    $('buzzerStatus').textContent = !state.buzzerTeam ? 'Buzzers armed' : state.buzzerIdentified ? `${teamName(state.buzzerTeam)} identified` : `${teamName(state.buzzerTeam)} buzzed`;
-    $('buzzerInstruction').textContent = !state.buzzerTeam ? 'First valid buzz locks out the opposing team.' : state.buzzerIdentified ? `The ${state.rules.buzzerResponseSeconds}-second response clock is running.` : 'Identify the team before judging its answer.';
-    $('identifyBtn').disabled = !state.buzzerTeam || state.buzzerIdentified;
-    $('beforeIdBtn').disabled = !state.buzzerTeam || state.buzzerIdentified;
-    $$('[data-buzz]').forEach(btn => btn.disabled = state.round !== 'buzzer' || Boolean(state.buzzerTeam) || mainRemaining <= 0);
-
     $$('[data-answer]').forEach(btn => {
       const team = btn.dataset.team;
-      if (state.round === 'buzzer') btn.disabled = !state.buzzerTeam || state.buzzerTeam !== team || !state.buzzerIdentified;
-      else btn.disabled = state.round === 'complete';
+      btn.disabled = state.round === 'complete';
     });
     $('undoBtn').disabled = !undoStack.length;
     $('passBtn').disabled = state.round === 'complete';
@@ -2003,16 +1843,16 @@ textarea { resize: vertical; }
     $('audienceScoreB').textContent = p.teams.B.score;
     updateLogo($('audienceLogoA'), p.teams.A.logo, `${p.teams.A.name} logo`);
     updateLogo($('audienceLogoB'), p.teams.B.logo, `${p.teams.B.name} logo`);
-    $('audienceTeamA').classList.toggle('buzzed', p.buzzerTeam === 'A');
-    $('audienceTeamB').classList.toggle('buzzed', p.buzzerTeam === 'B');
+    $('audienceTeamA').classList.remove('buzzed');
+    $('audienceTeamB').classList.remove('buzzed');
     const remaining = audienceRemaining(p.main);
     $('audienceTimer').textContent = formatClock(remaining);
-    $('audienceStatus').textContent = p.complete ? 'FINAL' : p.buzzerTeam ? `${p.teams[p.buzzerTeam].shortName} BUZZED` : p.main.running ? 'TIME' : p.status.toUpperCase();
+    $('audienceStatus').textContent = p.complete ? 'FINAL' : p.main.running ? 'TIME' : p.status.toUpperCase();
     $('audienceQuestion').textContent = p.question;
     const responseRemaining = audienceRemaining(p.response);
-    $('audienceResponseWrap').classList.toggle('hidden', !(p.round === 'buzzer' && p.buzzerIdentified));
+    $('audienceResponseWrap').classList.toggle('hidden', true);
     $('audienceResponse').textContent = formatResponseClock(responseRemaining, false);
-    $('audienceActiveTeam').textContent = p.round === 'buzzer' ? (p.buzzerTeam ? `${p.teams[p.buzzerTeam].shortName} TO ANSWER` : 'BUZZERS ARMED') : 'BOTH TEAMS READY';
+    $('audienceActiveTeam').textContent = 'BOTH TEAMS READY';
     $('audienceFooterMessage').textContent = p.complete ? p.winner.toUpperCase() : p.lastAction.toUpperCase();
   }
 
@@ -2061,11 +1901,6 @@ textarea { resize: vertical; }
     }
     if ($('alternateMainClock')) $('alternateMainClock').classList.toggle('hidden', !roundUsesDualClock());
     if ($('alternateMainTimer') && !roundUsesDualClock()) $('alternateMainTimer').textContent = formatClock(mainRemaining);
-    if ($('responseTimer')) {
-      $('responseTimer').textContent = formatResponseClock(responseRemaining);
-      $('responseTimer').classList.toggle('danger', responseRemaining <= 5000);
-      $('responseTimer').closest('.response-clock-wrap')?.classList.toggle('danger', responseRemaining <= 5000);
-    }
     const badge = $('timerStateBadge');
     const badgeClock = roundUsesDualClock() ? activeDisplayClock() : mainClock;
     badge.textContent = badgeClock.running ? 'RUNNING' : displayRemaining <= 0 ? 'ENDED' : displayRemaining < badgeClock.durationMs ? 'PAUSED' : 'READY';
@@ -2103,10 +1938,6 @@ textarea { resize: vertical; }
     $('resetMainTimerBtn').addEventListener('click', resetMainTimer);
     $('resetResponseTimerBtn').addEventListener('click', resetResponseTimer);
     $('addTenBtn').addEventListener('click', addTenSeconds);
-    $('resetQuestionBtn').addEventListener('click', resetQuestionCard);
-    $('identifyBtn').addEventListener('click', identifyBuzzerTeam);
-    $('beforeIdBtn').addEventListener('click', beforeIdentificationPenalty);
-    $('resetBuzzersBtn').addEventListener('click', resetBuzzers);
     $('passBtn').addEventListener('click', passQuestion);
     $('timeoutBtn').addEventListener('click', timeoutAction);
     $('judgeBtn').addEventListener('click', () => $('judgeDialog').showModal());
@@ -2119,7 +1950,6 @@ textarea { resize: vertical; }
     $('exitAudienceBtn').addEventListener('click', () => { const url = new URL(location.href); url.searchParams.delete('display'); location.href = url.href; });
 
     $$('[data-answer]').forEach(btn => btn.addEventListener('click', () => judgeAnswer(btn.dataset.team, btn.dataset.answer)));
-    $$('[data-buzz]').forEach(btn => btn.addEventListener('click', () => buzz(btn.dataset.buzz)));
     $$('[data-score-team]').forEach(btn => {
       const applyNudge = event => {
         event.preventDefault();
@@ -2173,9 +2003,6 @@ textarea { resize: vertical; }
       else if (key === 'arrowleft') { event.preventDefault(); judgeAnswer('B', 'incorrect'); }
       else if (key === 'p') passQuestion();
       else if (key === 'u') undo();
-      else if (key === 'r') resetBuzzers();
-      else if (key === '1') buzz('A');
-      else if (key === '2') buzz('B');
       else if (key === 'enter') nextQuestion();
     });
 
