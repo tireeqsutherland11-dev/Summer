@@ -185,7 +185,7 @@ body.fullscreen-active .topbar:focus-within {
   opacity: 1;
   pointer-events: auto;
 }
-body.fullscreen-active .operator-view { padding-top: 24px !important; }
+body.fullscreen-active .operator-view { padding-top: clamp(44px, 6vh, 72px) !important; }
 
 .operator-view { width: min(1680px, 100%); margin: 0 auto; padding: var(--space-lg) clamp(12px, 2.5vw, 38px) 38px; }
 .card { min-width: 0; }
@@ -248,16 +248,15 @@ body.fullscreen-active .operator-view { padding-top: 24px !important; }
 .timer-stack.alternate-grid { grid-template-rows: auto auto; justify-items: center; }
 .timer-button { position: relative; width: 100%; min-height: 245px; display: flex; flex-direction: column; align-items: center; justify-content: center; background: transparent; border-radius: 20px; padding: var(--space-md); overflow: hidden; }
 .timer-button:hover { background: rgba(255,255,255,.025); }
-.timer-tile { position: relative; width: 100%; min-height: 118px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; background: rgba(255,255,255,.035); border: 1px solid var(--line); border-radius: 18px; padding: var(--space-md); cursor: pointer; touch-action: none; transition: transform .18s ease, min-height .18s ease, background .18s ease; }
+.timer-tile { position: relative; width: 100%; min-height: 118px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; background: rgba(255,255,255,.035); border: 1px solid var(--line); border-radius: 18px; padding: var(--space-md); cursor: pointer; transition: min-height .18s ease, background .18s ease; }
 .timer-tile:hover { background: rgba(255,255,255,.06); }
-.timer-tile.dragging { opacity: .72; transform: scale(.985); }
 .timer-tile.top { min-height: 230px; }
 .timer-tile.bottom { min-height: 140px; }
 .timer-tile.response-clock-tile { width: 132px; min-height: 132px; aspect-ratio: 1; border-radius: 50%; gap: 4px; padding: 12px; border: 5px solid rgba(242,201,76,.32); background: rgba(242,201,76,.07); text-align: center; }
 .timer-tile.response-clock-tile .timer-tile-label { color: var(--gold); font-size: .62rem; line-height: 1.05; text-align: center; max-width: 78px; }
 .timer-tile.response-clock-tile .timer-tile-instruction { display: none; }
-.timer-tile.top .main-timer { font-size: clamp(72px, min(8vw, 16vh), 118px); }
-.timer-tile.bottom .main-timer { font-size: clamp(44px, min(5vw, 10vh), 76px); }
+.timer-tile.top .main-timer { font-size: clamp(96px, min(10vw, 20vh), 152px); }
+.timer-tile.bottom .main-timer { font-size: clamp(58px, min(6vw, 12vh), 92px); }
 .timer-tile.response-clock-tile .main-timer { min-width: 0; font-size: 2.25rem; letter-spacing: -.04em; }
 .timer-tile.response-clock-tile:has(.main-timer.danger) { border-color: var(--red); animation: responseBorderFlash .5s ease-in-out infinite alternate; }
 .timer-tile-label { color: var(--muted); font-size: .75rem; font-weight: 900; letter-spacing: .12em; text-transform: uppercase; }
@@ -265,7 +264,7 @@ body.fullscreen-active .operator-view { padding-top: 24px !important; }
 .timer-edit-btn { position: absolute; top: 12px; right: 12px; z-index: 3; width: 38px; height: 38px; display: grid; place-items: center; border-radius: 50%; background: rgba(242,201,76,.14); border: 1px solid rgba(242,201,76,.42); color: var(--gold-2); font-size: 1rem; line-height: 1; }
 .timer-edit-btn:hover { background: rgba(242,201,76,.24); }
 .timer-tile.response-clock-tile .timer-edit-btn { display: none; }
-.main-timer { display: block; min-width: 0; max-width: 100%; text-align: center; white-space: nowrap; font-size: clamp(72px, min(8vw, 16vh), 118px); font-weight: 950; letter-spacing: -.06em; line-height: .95; font-variant-numeric: tabular-nums; }
+.main-timer { display: block; min-width: 0; max-width: 100%; text-align: center; white-space: nowrap; font-size: clamp(104px, min(11vw, 21vh), 168px); font-weight: 950; letter-spacing: -.06em; line-height: .9; font-variant-numeric: tabular-nums; }
 .main-timer.warning { color: var(--orange); }
 .main-timer.danger { color: var(--red); animation: timeFlash .5s ease-in-out infinite alternate; }
 @keyframes timeFlash { to { opacity: .58; } }
@@ -280,8 +279,8 @@ body.fullscreen-active .operator-view { padding-top: 24px !important; }
 .speed-minute-selector button.active { background: var(--gold); border-color: var(--gold); color: #0a1424; }
 .match-marker-card { padding: var(--space-lg); display: grid; gap: var(--space-md); }
 .series-mode-field { min-width: 126px; margin: 0; display: grid; grid-template-columns: auto minmax(112px, 1fr); align-items: center; gap: 8px; color: var(--muted); }
-.series-mode-field select { min-width: 112px; padding-block: 8px; transition: background 120ms ease, border-color 120ms ease, box-shadow 120ms ease; }
-.series-mode-field select:hover { box-shadow: inset 0 1px 0 rgba(255,255,255,.06), 0 0 0 1px rgba(242,201,76,.16), 0 8px 24px rgba(0,0,0,.16); }
+.series-mode-field select { min-width: 112px; padding-block: 8px; transition: box-shadow 120ms ease, border-color 120ms ease; }
+.series-mode-field select:hover { border-color: rgba(242,201,76,.55); box-shadow: 0 0 0 1px rgba(242,201,76,.24), 0 0 22px rgba(242,201,76,.34); }
 #seriesCard { display: none; margin-bottom: var(--space-md); padding: 12px var(--space-lg); grid-template-columns: minmax(180px, .8fr) minmax(0, 1.2fr) auto; align-items: center; gap: var(--space-md); }
 body.series-mode-active #seriesCard { display: grid; }
 #seriesCard .match-marker-header { justify-content: flex-start; }
@@ -612,7 +611,6 @@ textarea { resize: vertical; }
               <button id="mainTimerButton" class="timer-button" type="button" aria-label="Start or pause timer">
                 <span id="mainTimer" class="main-timer">00:10</span>
                 <span id="alternateMainClock" class="alternate-main-clock hidden">Main clock<output id="alternateMainTimer">04:00</output></span>
-                <span class="timer-hint">Tap or press Space to start/pause</span>
               </button>
               <button id="editMainTimerBtn" class="timer-edit-btn" type="button" aria-label="Edit main clock time" title="Edit main clock">✎</button>
             </div>
@@ -682,7 +680,7 @@ textarea { resize: vertical; }
 
         <article class="audit-card card">
           <div class="section-heading">
-            <div><p class="eyebrow">RECENT EVENTS</p><h3>Recent events</h3></div>
+            <div><p class="eyebrow">EVENT HISTORY</p><h3>Event History</h3></div>
             <button id="clearLogViewBtn" type="button" class="text-btn">Collapse</button>
           </div>
           <ol id="auditList" class="audit-list" aria-live="polite"></ol>
@@ -1409,9 +1407,9 @@ textarea { resize: vertical; }
   function addTenSeconds() {
     const seconds = 10;
     recordUndo();
-    activeDisplayClock().addSeconds(seconds);
-    state.status = `${seconds} seconds added`;
-    logEvent('timer_adjusted', `Added ${seconds} seconds to the ${roundUsesDualClock() && activeDisplayClock() === responseClock ? 'response' : 'main'} clock`);
+    mainClock.addSeconds(seconds);
+    state.status = `${seconds} seconds added to main clock`;
+    logEvent('timer_adjusted', `Added ${seconds} seconds to the main clock`);
     changed();
   }
 
@@ -1576,7 +1574,7 @@ textarea { resize: vertical; }
 
   function keyboardScore(team, direction) {
     if (!canJudgeAnswer(team)) return;
-    manualScore(team, keyboardScoreDelta(direction));
+    judgeAnswer(team, direction > 0 ? 'correct' : 'incorrect');
   }
 
   function passQuestion() {
@@ -1844,7 +1842,6 @@ textarea { resize: vertical; }
         stack.innerHTML = `<button id="mainTimerButton" class="timer-button" type="button" aria-label="Start or pause timer">
           <span id="mainTimer" class="main-timer">00:00</span>
           <span id="alternateMainClock" class="alternate-main-clock hidden">Main clock<output id="alternateMainTimer">00:00</output></span>
-          <span class="timer-hint">Tap or press Space to start/pause</span>
         </button>
         <button id="editMainTimerBtn" class="timer-edit-btn" type="button" aria-label="Edit main clock time" title="Edit main clock">✎</button>`;
         $('mainTimerButton')?.addEventListener('click', toggleMainTimer);
@@ -1856,29 +1853,17 @@ textarea { resize: vertical; }
     const existingOrder = [...stack.querySelectorAll('.timer-tile')].map(tile => tile.dataset.clock).join(',');
     if (existingOrder !== order.join(',') || stack.dataset.timerRound !== state.round) {
       stack.dataset.timerRound = state.round;
-      const responseLabel = 'Response<br>time';
-      const mainLabel = 'Main clock';
-      stack.innerHTML = order.map((kind, index) => {
+        stack.innerHTML = order.map((kind, index) => {
         const isMain = kind === 'main';
-        return `<div class="timer-tile ${index === 0 ? 'top' : 'bottom'} ${isMain ? '' : 'response-clock-tile'}" role="button" tabindex="0" draggable="true" data-clock="${kind}" aria-label="${isMain ? 'Start or pause main clock' : 'Start or pause response time'}">
+        return `<div class="timer-tile ${index === 0 ? 'top' : 'bottom'} ${isMain ? '' : 'response-clock-tile'}" role="button" tabindex="0" data-clock="${kind}" aria-label="${isMain ? 'Start or pause main clock' : 'Start or pause response time'}">
           ${isMain ? '<button class="timer-edit-btn" type="button" aria-label="Edit main clock time" title="Edit main clock">✎</button>' : ''}
-          <span class="timer-tile-label">${isMain ? mainLabel : responseLabel}</span>
           <span id="${isMain ? 'alternateMainTimer' : 'mainTimer'}" class="main-timer">${isMain ? formatClock(values[kind]) : formatResponseClock(values[kind])}</span>
-          <span class="timer-tile-instruction">${isMain ? 'Press Space to start/stop' : 'Click to start/stop response time'} · drag to rearrange</span>
         </div>`;
       }).join('');
       stack.querySelectorAll('.timer-tile').forEach(tile => {
         tile.addEventListener('click', () => tile.dataset.clock === 'main' ? toggleSectionMainTimer() : toggleResponseTimer());
         tile.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); tile.click(); } });
         tile.querySelector('.timer-edit-btn')?.addEventListener('click', event => { event.stopPropagation(); editMainClockTime(); });
-        tile.addEventListener('dragstart', event => { tile.classList.add('dragging'); event.dataTransfer.setData('text/plain', tile.dataset.clock); });
-        tile.addEventListener('dragend', () => tile.classList.remove('dragging'));
-        tile.addEventListener('dragover', event => event.preventDefault());
-        tile.addEventListener('drop', event => {
-          event.preventDefault();
-          const dragged = event.dataTransfer.getData('text/plain');
-          if (dragged && dragged !== tile.dataset.clock) setAlternateClockOrder([tile.dataset.clock, dragged]);
-        });
       });
     }
     stack.querySelectorAll('.timer-tile').forEach((tile, index) => {
