@@ -211,10 +211,14 @@ body.fullscreen-active .operator-view { padding-top: clamp(44px, 6vh, 72px) !imp
 .team-card.buzzed { box-shadow: 0 0 0 3px var(--gold), 0 0 70px color-mix(in srgb, var(--team-color), transparent 48%); animation: buzzPulse .75s ease-in-out infinite alternate; }
 @keyframes buzzPulse { from { box-shadow: 0 0 0 3px var(--gold), 0 0 30px color-mix(in srgb, var(--team-color), transparent 62%); } to { box-shadow: 0 0 0 5px var(--gold), 0 0 78px color-mix(in srgb, var(--team-color), transparent 38%); } }
 .team-card-header { min-height: 104px; display: grid; grid-template-columns: 58px minmax(0, 1fr) auto; gap: 11px; align-items: center; padding: 21px 72px 12px 18px; }
+.team-title-block { min-width: 0; display: grid; gap: 4px; }
+.team-name-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.team-edit-btn { width: 32px; height: 32px; min-width: 32px; display: grid; place-items: center; border-radius: 50%; padding: 0; background: rgba(242,201,76,.14); border: 1px solid rgba(242,201,76,.38); color: var(--gold-2); font-size: .95rem; line-height: 1; }
+.team-edit-btn:hover { background: rgba(242,201,76,.24); }
 .logo-frame { width: 54px; height: 54px; display: grid; place-items: center; background: rgba(255,255,255,.06); border-radius: 14px; border: 1px solid var(--line); }
 .team-logo { max-width: 90%; max-height: 90%; object-fit: contain; }
-.team-card h2 { font-size: clamp(19px, 2.2vw, 28px); overflow-wrap: anywhere; }
-.team-code { color: var(--muted); font-size: .78rem; font-weight: 900; letter-spacing: .12em; margin-bottom: 5px; }
+.team-card h2 { flex: 1; min-width: 0; font-size: clamp(20px, 2.35vw, 31px); overflow-wrap: anywhere; }
+.team-code { color: var(--muted); font-size: clamp(1rem, 1.35vw, 1.45rem); font-weight: 950; letter-spacing: .12em; margin-bottom: 0; line-height: 1; }
 .active-badge, .state-badge { border-radius: 999px; padding: 6px 9px; font-size: .65rem; font-weight: 950; letter-spacing: .12em; background: rgba(69,213,138,.14); color: #73f3ad; border: 1px solid rgba(69,213,138,.28); }
 .card-reset-btn { position: absolute; top: 14px; right: 14px; z-index: 2; width: 38px; height: 38px; padding: 0; display: grid; place-items: center; font-size: 1rem; line-height: 1; }
 .card-reset-btn svg { width: 18px; height: 18px; display: block; }
@@ -255,23 +259,23 @@ body.fullscreen-active .operator-view { padding-top: clamp(44px, 6vh, 72px) !imp
 .timer-tile.response-clock-tile { width: 132px; min-height: 132px; aspect-ratio: 1; border-radius: 50%; gap: 4px; padding: 12px; border: 5px solid rgba(242,201,76,.32); background: rgba(242,201,76,.07); text-align: center; }
 .timer-tile.response-clock-tile .timer-tile-label { color: var(--gold); font-size: .62rem; line-height: 1.05; text-align: center; max-width: 78px; }
 .timer-tile.response-clock-tile .timer-tile-instruction { display: none; }
-.timer-tile.top .main-timer { font-size: clamp(96px, min(10vw, 20vh), 152px); }
-.timer-tile.bottom .main-timer { font-size: clamp(58px, min(6vw, 12vh), 92px); }
-.timer-tile.response-clock-tile .main-timer { min-width: 0; font-size: 2.25rem; letter-spacing: -.04em; }
+.timer-tile.top .main-timer { font-size: clamp(128px, min(13vw, 25vh), 206px); }
+.timer-tile.bottom .main-timer { font-size: clamp(76px, min(7.8vw, 15vh), 122px); }
+.timer-tile.response-clock-tile .main-timer { min-width: 0; font-size: clamp(2.9rem, 4.8vw, 4.7rem); letter-spacing: -.04em; }
 .timer-tile.response-clock-tile:has(.main-timer.danger) { border-color: var(--red); animation: responseBorderFlash .5s ease-in-out infinite alternate; }
 .timer-tile-label { color: var(--muted); font-size: .75rem; font-weight: 900; letter-spacing: .12em; text-transform: uppercase; }
 .timer-tile-instruction { color: var(--muted); font-size: .78rem; text-align: center; }
 .timer-edit-btn { position: absolute; top: 12px; right: 12px; z-index: 3; width: 38px; height: 38px; display: grid; place-items: center; border-radius: 50%; background: rgba(242,201,76,.14); border: 1px solid rgba(242,201,76,.42); color: var(--gold-2); font-size: 1rem; line-height: 1; }
 .timer-edit-btn:hover { background: rgba(242,201,76,.24); }
 .timer-tile.response-clock-tile .timer-edit-btn { display: none; }
-.main-timer { display: block; min-width: 0; max-width: 100%; text-align: center; white-space: nowrap; font-size: clamp(104px, min(11vw, 21vh), 168px); font-weight: 950; letter-spacing: -.06em; line-height: .9; font-variant-numeric: tabular-nums; }
+.main-timer { display: block; min-width: 0; max-width: 100%; text-align: center; white-space: nowrap; font-size: clamp(120px, min(12.5vw, 24vh), 196px); font-weight: 950; letter-spacing: -.06em; line-height: .9; font-variant-numeric: tabular-nums; }
 .main-timer.warning { color: var(--orange); }
 .main-timer.danger { color: var(--red); animation: timeFlash .5s ease-in-out infinite alternate; }
 @keyframes timeFlash { to { opacity: .58; } }
 @keyframes responseBorderFlash { to { border-color: rgba(255,102,120,.42); box-shadow: 0 0 22px rgba(255,102,120,.34); } }
 .timer-hint { margin-top: var(--space-md); color: var(--muted); font-size: .82rem; }
 .alternate-main-clock { margin-top: var(--space-sm); color: var(--muted); font-size: .78rem; font-weight: 900; letter-spacing: .08em; text-transform: uppercase; text-align: center; }
-.alternate-main-clock output { display: block; color: var(--text); font-size: clamp(34px, 4vw, 58px); line-height: 1; font-variant-numeric: tabular-nums; letter-spacing: -.04em; }
+.alternate-main-clock output { display: block; color: var(--text); font-size: clamp(48px, 5.6vw, 84px); line-height: 1; font-variant-numeric: tabular-nums; letter-spacing: -.04em; }
 .timer-actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-sm); }
 .timer-actions.two-actions { grid-template-columns: repeat(2, 1fr); }
 .speed-minute-selector { margin-top: var(--space-md); display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-sm); }
@@ -349,17 +353,16 @@ body.series-mode-active #seriesCard { display: grid; }
 .audience-team.buzzed { box-shadow: inset 0 0 0 8px var(--gold); }
 .audience-logo-frame { width: clamp(60px, 8vw, 125px); height: clamp(60px, 8vw, 125px); display: grid; place-items: center; margin-bottom: clamp(12px, 2vw, 24px); border-radius: 22px; background: rgba(255,255,255,.08); border: 1px solid var(--line); }
 .audience-logo { max-width: 90%; max-height: 90%; object-fit: contain; }
-.audience-team p { color: rgba(255,255,255,.68); font-size: clamp(12px, 1.5vw, 21px); font-weight: 900; letter-spacing: .15em; margin-bottom: 8px; }
+.audience-team p { color: rgba(255,255,255,.78); font-size: clamp(22px, 3.3vw, 58px); font-weight: 950; letter-spacing: .12em; margin-bottom: 10px; line-height: 1; }
 .audience-team h2 { min-height: 2.2em; display: grid; place-items: center; font-size: clamp(23px, 3.2vw, 54px); line-height: 1.08; }
 .audience-team output { margin-top: clamp(8px, 1vw, 18px); font-size: clamp(100px, 14vw, 230px); line-height: .85; font-weight: 950; letter-spacing: -.08em; font-variant-numeric: tabular-nums; text-shadow: 0 15px 35px rgba(0,0,0,.28); }
 .audience-center { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 24px 10px; }
 .audience-center > p { margin-bottom: 8px; color: var(--gold); font-weight: 950; letter-spacing: .15em; font-size: clamp(12px, 1.6vw, 23px); }
-.audience-center > output { font-size: clamp(70px, 9.5vw, 158px); line-height: 1; font-weight: 950; letter-spacing: -.08em; font-variant-numeric: tabular-nums; }
+.audience-center > output { display: block; width: 100%; text-align: center; font-size: clamp(96px, 13vw, 230px); line-height: .9; font-weight: 950; letter-spacing: -.08em; font-variant-numeric: tabular-nums; }
 .audience-response { margin-top: 20px; width: clamp(100px, 10vw, 160px); aspect-ratio: 1; border-radius: 50%; display: grid; place-items: center; align-content: center; background: rgba(242,201,76,.09); border: clamp(4px, .5vw, 8px) solid var(--gold); }
 .audience-response span { color: var(--gold); font-weight: 900; font-size: clamp(9px, 1vw, 14px); letter-spacing: .13em; }
 .audience-response strong { font-size: clamp(38px, 5vw, 76px); line-height: 1; }
-.question-pill { margin-top: 22px; padding: 9px 14px; border-radius: 999px; background: rgba(255,255,255,.07); border: 1px solid var(--line); color: var(--muted); font-size: clamp(10px, 1vw, 15px); font-weight: 900; letter-spacing: .1em; }
-.question-pill strong { color: var(--text); }
+.question-pill { display: none; }
 .audience-footer { padding: clamp(15px, 1.8vw, 26px); display: flex; justify-content: space-between; align-items: center; gap: 18px; background: rgba(0,0,0,.18); border-top: 1px solid var(--line); font-size: clamp(12px, 1.4vw, 21px); font-weight: 900; letter-spacing: .08em; position: relative; z-index: 1; }
 .audience-footer span:last-child { color: var(--gold); text-align: right; }
 .exit-audience { position: fixed; top: 10px; right: 10px; z-index: 100; border-radius: 9px; background: rgba(0,0,0,.48); padding: 8px 10px; opacity: .08; }
@@ -471,7 +474,9 @@ textarea { resize: vertical; }
   .team-card-header { min-height: 95px; }
   .score-display { font-size: clamp(96px, 31vw, 150px); }
   .timer-button { min-height: 190px; }
-  .main-timer { font-size: clamp(85px, 26vw, 136px); }
+  .team-card h2 { font-size: clamp(20px, 6vw, 35px); }
+  .team-code { font-size: clamp(1.05rem, 5vw, 1.6rem); }
+  .main-timer { font-size: clamp(96px, 29vw, 158px); }
   .timer-actions { grid-template-columns: 1fr; }
   .marker-team-grid { grid-template-columns: 1fr; }
   #seriesCard { grid-template-columns: 1fr; }
@@ -489,12 +494,13 @@ textarea { resize: vertical; }
   .audience-brand span:last-child { display: none; }
   .audience-scoreboard { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr auto; }
   .audience-center { grid-column: 1 / -1; grid-row: 2; order: 3; flex-direction: row; gap: 17px; padding: 12px 14px; border-top: 1px solid var(--line); }
-  .audience-center > output { font-size: clamp(57px, 18vw, 90px); }
+  .audience-center > output { font-size: clamp(72px, 22vw, 118px); }
   .audience-response { margin-top: 0; width: 78px; }
-  .question-pill { margin-top: 0; }
+
   .audience-team { padding: 18px 10px; }
   .audience-team-a { border-right: 1px solid var(--line); }
   .audience-team-b { border-left: 0; }
+  .audience-team p { font-size: clamp(20px, 7vw, 42px); }
   .audience-team h2 { font-size: clamp(19px, 6vw, 34px); }
   .audience-team output { font-size: clamp(86px, 30vw, 145px); }
   .audience-footer { font-size: 11px; }
@@ -519,7 +525,7 @@ textarea { resize: vertical; }
 }
 
 @media (max-width: 1100px) and (min-width: 761px) {
-  .audience-center > output { font-size: clamp(54px, 7.2vw, 92px); }
+  .audience-center > output { font-size: clamp(72px, 9vw, 130px); }
   .audience-team output { font-size: clamp(90px, 12vw, 150px); }
   .audience-scoreboard { grid-template-columns: minmax(0, 1fr) minmax(210px, .68fr) minmax(0, 1fr); }
 }
@@ -582,9 +588,9 @@ textarea { resize: vertical; }
           <button class="secondary-btn card-reset-btn" type="button" data-reset-score="A" aria-label="Reset Team A score" title="Reset score"><svg class="reset-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 4v6h6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M5.4 14.2A7 7 0 1 0 6.1 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
           <div class="team-card-header">
             <div class="logo-frame"><img id="teamALogo" alt="" class="team-logo hidden"></div>
-            <div>
+            <div class="team-title-block">
               <p class="team-code" id="teamAShort">TEAM A</p>
-              <h2 id="teamAName">Team A</h2>
+              <div class="team-name-row"><h2 id="teamAName">Team A</h2><button class="team-edit-btn" type="button" data-edit-team="A" aria-label="Edit Team A details" title="Edit Team A details">✎</button></div>
             </div>
           </div>
           <div class="score-row">
@@ -638,9 +644,9 @@ textarea { resize: vertical; }
           <button class="secondary-btn card-reset-btn" type="button" data-reset-score="B" aria-label="Reset Team B score" title="Reset score"><svg class="reset-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 4v6h6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M5.4 14.2A7 7 0 1 0 6.1 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
           <div class="team-card-header">
             <div class="logo-frame"><img id="teamBLogo" alt="" class="team-logo hidden"></div>
-            <div>
+            <div class="team-title-block">
               <p class="team-code" id="teamBShort">TEAM B</p>
-              <h2 id="teamBName">Team B</h2>
+              <div class="team-name-row"><h2 id="teamBName">Team B</h2><button class="team-edit-btn" type="button" data-edit-team="B" aria-label="Edit Team B details" title="Edit Team B details">✎</button></div>
             </div>
           </div>
           <div class="score-row">
@@ -1623,7 +1629,7 @@ textarea { resize: vertical; }
     changed();
   }
 
-  function openSetup() {
+  function openSetup(focusTeam = '') {
     $('setupAName').value = state.teams.A.name;
     $('setupAShort').value = state.teams.A.shortName;
     $('setupAColor').value = state.teams.A.color;
@@ -1632,6 +1638,8 @@ textarea { resize: vertical; }
     $('setupBColor').value = state.teams.B.color;
     $('setupStage').value = state.stage;
     $('setupDialog').showModal();
+    const focusInput = focusTeam === 'B' ? $('setupBName') : focusTeam === 'A' ? $('setupAName') : null;
+    if (focusInput) { focusInput.focus(); focusInput.select(); }
   }
 
   async function fileToDataUrl(file) {
@@ -2179,6 +2187,7 @@ textarea { resize: vertical; }
       btn.addEventListener('click', applyNudge);
     });
     $$('[data-reset-score]').forEach(btn => btn.addEventListener('click', () => resetScore(btn.dataset.resetScore)));
+    $$('[data-edit-team]').forEach(btn => btn.addEventListener('click', () => openSetup(btn.dataset.editTeam)));
     $$('[data-speed-minute]').forEach(btn => btn.addEventListener('click', () => setSpeedPeriod(btn.dataset.speedMinute)));
     $$('.round-tab').forEach(btn => btn.addEventListener('click', () => btn.dataset.round === 'complete' ? confirmAction('Finish the match?', 'The winner will be calculated from the current scores.', () => configureRound('complete'), 'Finish match') : configureRound(btn.dataset.round, { resetPeriod: btn.dataset.round === 'speed' })));
 
