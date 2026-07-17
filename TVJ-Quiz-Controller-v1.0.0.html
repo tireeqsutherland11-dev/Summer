@@ -146,6 +146,21 @@ kbd {
 .menu-popover button { width: 100%; text-align: left; padding: 11px 12px; border-radius: 9px; background: transparent; }
 .menu-popover button:hover { background: rgba(255,255,255,.07); }
 
+body.fullscreen-active .topbar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  transform: translateY(calc(-100% + 10px));
+  opacity: .12;
+  transition: transform 180ms ease, opacity 180ms ease;
+}
+body.fullscreen-active .topbar:hover,
+body.fullscreen-active .topbar:focus-within {
+  transform: translateY(0);
+  opacity: 1;
+}
+body.fullscreen-active .operator-view { padding-top: 24px !important; }
+
 .operator-view { width: min(1680px, 100%); margin: 0 auto; padding: var(--space-lg) clamp(12px, 2.5vw, 38px) 38px; }
 .card { min-width: 0; }
 .card {
@@ -238,6 +253,27 @@ kbd {
 .speed-minute-selector button { border-radius: 12px; padding: 11px 8px; background: rgba(255,255,255,.055); border: 1px solid var(--line); color: var(--text); font-weight: 900; }
 .speed-minute-selector button.active { background: var(--gold); border-color: var(--gold); color: #0a1424; }
 .match-marker-card { padding: var(--space-lg); display: grid; gap: var(--space-md); }
+.series-mode-field { min-width: 126px; margin: 0; grid-template-columns: auto minmax(84px, 1fr); align-items: center; color: var(--muted); }
+.series-mode-field select { min-width: 84px; padding-block: 8px; }
+#seriesCard { display: none; margin-bottom: var(--space-md); padding: 12px var(--space-lg); grid-template-columns: minmax(180px, .8fr) minmax(0, 1.2fr) auto; align-items: center; gap: var(--space-md); }
+body.series-mode-active #seriesCard { display: grid; }
+#seriesCard .match-marker-header { justify-content: flex-start; }
+#seriesCard .marker-card-note { margin: 0; }
+#seriesCard .marker-team-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+#seriesCard .marker-team { padding: 10px 12px; }
+#seriesCard .marker-team h4 { margin-bottom: 7px; font-size: .82rem; }
+#seriesCard .marker-check { width: 34px; height: 34px; border-radius: 9px; }
+#seriesCard .marker-check input { width: 18px; height: 18px; }
+#queryCard { padding: 12px 14px; gap: 9px; }
+#queryCard .match-marker-header { gap: 8px; }
+#queryCard .match-marker-header h3 { font-size: 1rem; }
+#queryCard .marker-card-note { font-size: .72rem; }
+#queryCard .marker-team-grid { gap: 8px; }
+#queryCard .marker-team { padding: 9px; border-radius: 12px; }
+#queryCard .marker-team h4 { margin-bottom: 7px; font-size: .78rem; }
+#queryCard .marker-checks { gap: 6px; }
+#queryCard .marker-check { width: 32px; height: 32px; border-radius: 8px; }
+#queryCard .marker-check input { width: 17px; height: 17px; }
 .match-marker-header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-md); }
 .match-marker-header select { width: auto; min-width: 128px; padding-block: 8px; }
 .marker-team-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-md); }
@@ -356,6 +392,7 @@ textarea { resize: vertical; }
 
 @media (max-width: 760px) {
   .topbar { position: static; align-items: flex-start; }
+  body.fullscreen-active .topbar { position: fixed; }
   .brand-mark { width: 41px; font-size: 23px; }
   .topbar-actions { max-width: 55%; }
   .save-status, #wakeLockBtn, #fullscreenBtn { display: none; }
@@ -372,6 +409,8 @@ textarea { resize: vertical; }
   .main-timer { font-size: clamp(85px, 26vw, 136px); }
   .timer-actions { grid-template-columns: 1fr; }
   .marker-team-grid { grid-template-columns: 1fr; }
+  #seriesCard { grid-template-columns: 1fr; }
+  #seriesCard .marker-team-grid { grid-template-columns: 1fr; }
   .quick-action-grid { grid-template-columns: 1fr 1fr; }
   .audit-list li { grid-template-columns: 68px 1fr; }
   .audit-delta { grid-column: 2; }
@@ -455,6 +494,7 @@ textarea { resize: vertical; }
           <h2 id="roundLabel">Alternate Section</h2>
         </div>
         <div class="section-selector-actions">
+          <label class="series-mode-field">Series<select id="seriesBestOf"><option value="1">Off</option><option value="3">Best of 3</option><option value="5">Best of 5</option><option value="7">Best of 7</option><option value="9">Best of 9</option></select></label>
           <button id="sectionResetBtn" class="secondary-btn" type="button">Reset section</button>
           <div class="round-tabs" role="tablist" aria-label="Match sections">
           <button class="round-tab active" data-round="alternate" type="button">Alternate</button>
@@ -464,6 +504,14 @@ textarea { resize: vertical; }
           </div>
         </div>
       </section>
+
+      <article id="seriesCard" class="match-marker-card card">
+        <div class="match-marker-header">
+          <div><p class="eyebrow">SERIES MODE</p><h3>Match wins</h3></div>
+        </div>
+        <p class="marker-card-note" id="seriesNote">Select a best-of series, then tick match wins for each team.</p>
+        <div class="marker-team-grid" id="seriesMarkerGrid"></div>
+      </article>
 
       <section class="control-grid">
         <article id="teamACard" class="team-card card team-a-card" data-team="A">
@@ -519,15 +567,6 @@ textarea { resize: vertical; }
             <div class="match-marker-header"><div><p class="eyebrow">QUERIES</p><h3>Section queries</h3></div></div>
             <p class="marker-card-note">Tick up to three queries for each team in the current section.</p>
             <div class="marker-team-grid" id="queryMarkerGrid"></div>
-          </article>
-
-          <article id="seriesCard" class="match-marker-card card">
-            <div class="match-marker-header">
-              <div><p class="eyebrow">SERIES MODE</p><h3>Match wins</h3></div>
-              <label>Best of<select id="seriesBestOf"><option value="1">Off</option><option value="3">3</option><option value="5">5</option><option value="7">7</option><option value="9">9</option></select></label>
-            </div>
-            <p class="marker-card-note" id="seriesNote">Select a best-of series, then tick match wins for each team.</p>
-            <div class="marker-team-grid" id="seriesMarkerGrid"></div>
           </article>
 
         </section>
@@ -1836,6 +1875,7 @@ textarea { resize: vertical; }
     $('queryMarkerGrid').innerHTML = markerTeamHtml('query', 'A', queries.A, state.round === 'complete') + markerTeamHtml('query', 'B', queries.B, state.round === 'complete');
     const series = normalizeSeries();
     $('seriesBestOf').value = String(series.bestOf);
+    document.body.classList.toggle('series-mode-active', series.bestOf !== 1);
     const seriesOff = series.bestOf === 1;
     $('seriesMarkerGrid').innerHTML = markerTeamHtml('series', 'A', series.wins.A, seriesOff) + markerTeamHtml('series', 'B', series.wins.B, seriesOff);
     const needed = Math.ceil(series.bestOf / 2);
@@ -2139,6 +2179,9 @@ textarea { resize: vertical; }
       if (audienceMode && event.key === PUBLIC_KEY && event.newValue) {
         try { lastAudienceState = JSON.parse(event.newValue); } catch {}
       }
+    });
+    document.addEventListener('fullscreenchange', () => {
+      document.body.classList.toggle('fullscreen-active', Boolean(document.fullscreenElement));
     });
     document.addEventListener('visibilitychange', async () => {
       if (document.visibilityState === 'visible' && wakeLock === null && $('wakeLockBtn')?.textContent === 'Screen awake') {
