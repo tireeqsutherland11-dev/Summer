@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#07182f">
-  <meta name="description" content="Offline Teams' Challenge Quiz timer, buzzer and scorekeeping controller.">
+  <meta name="description" content="Offline Schools' Challenge Quiz timer, buzzer and scorekeeping controller.">
   <title>SCQ Match Control</title>
   <style>
 :root {
@@ -408,7 +408,7 @@ select {
 }
 select:hover {
   background-image:
-    linear-gradient(45deg, transparent 50%, var(--gold-2) 50%),
+    linear-gradient(45deg, transparent 50%, var() 50%),
     linear-gradient(135deg, var(--gold-2) 50%, transparent 50%),
     linear-gradient(145deg, rgba(23, 57, 96, .98), rgba(10, 29, 52, .98));
 }
@@ -728,18 +728,18 @@ textarea { resize: vertical; }
       <div class="dialog-body setup-grid">
         <fieldset class="team-setup team-a-setup">
           <legend>Team A</legend>
-          <label>Team name<input id="setupAName" required maxlength="60" value="Team A"></label>
+          <label>School name<input id="setupAName" required maxlength="60" value="Team A"></label>
           <label>Short name<input id="setupAShort" maxlength="16" value="TEAM A"></label>
           <label>Team colour<input id="setupAColor" type="color" value="#1769aa"></label>
-          <label>Team logo<input id="setupALogo" type="file" accept="image/*"></label>
+          <label>School logo<input id="setupALogo" type="file" accept="image/*"></label>
           <button id="clearALogoBtn" type="button" class="text-btn">Remove logo</button>
         </fieldset>
         <fieldset class="team-setup team-b-setup">
           <legend>Team B</legend>
-          <label>Team name<input id="setupBName" required maxlength="60" value="Team B"></label>
+          <label>School name<input id="setupBName" required maxlength="60" value="Team B"></label>
           <label>Short name<input id="setupBShort" maxlength="16" value="TEAM B"></label>
           <label>Team colour<input id="setupBColor" type="color" value="#b32035"></label>
-          <label>Team logo<input id="setupBLogo" type="file" accept="image/*"></label>
+          <label>School logo<input id="setupBLogo" type="file" accept="image/*"></label>
           <button id="clearBLogoBtn" type="button" class="text-btn">Remove logo</button>
         </fieldset>
         <fieldset class="match-setup-wide">
@@ -831,20 +831,20 @@ textarea { resize: vertical; }
   });
 
   const TIME_RULE_FIELDS = [
-    ['Alternate main clock', 'alternateRoundSeconds', 'seconds', 10, 900],
-    ['Alternate response', 'alternateResponseSeconds', 'seconds', 1, 120],
-    ['Speed minute', 'speedPeriodSeconds', 'seconds', 10, 600],
-    ['Buzzer round', 'buzzerRoundSeconds', 'seconds', 10, 900],
-    ['Buzzer response', 'buzzerResponseSeconds', 'seconds', 1, 60]
+    ['Alternate main clock', 'alternateRoundSeconds', 'Seconds', 10, 900],
+    ['Alternate response', 'alternateResponseSeconds', 'Seconds', 1, 120],
+    ['Speed minute', 'speedPeriodSeconds', 'Seconds', 10, 600],
+    ['Buzzer round', 'buzzerRoundSeconds', 'Seconds', 10, 900],
+    ['Buzzer response', 'buzzerResponseSeconds', 'Seconds', 1, 60]
   ];
 
   const POINT_RULE_FIELDS = [
-    ['Alternate correct', 'alternateCorrectPoints', 'points', -20, 20],
-    ['Alternate incorrect', 'alternateIncorrectPoints', 'points', -20, 20],
-    ['Speed correct', 'speedCorrectPoints', 'points', -20, 20],
-    ['Speed incorrect', 'speedIncorrectPoints', 'points', -20, 20],
-    ['Buzzer correct', 'buzzerCorrectPoints', 'points', -20, 20],
-    ['Buzzer incorrect', 'buzzerIncorrectPoints', 'points', -20, 20]
+    ['Alternate Correct', 'alternateCorrectPoints', 'Points', -20, 20],
+    ['Alternate Incorrect', 'alternateIncorrectPoints', 'Points', -20, 20],
+    ['Speed Correct', 'speedCorrectPoints', 'Points', -20, 20],
+    ['Speed Incorrect', 'speedIncorrectPoints', 'Points', -20, 20],
+    ['Buzzer Correct', 'buzzerCorrectPoints', 'Points', -20, 20],
+    ['Buzzer Incorrect', 'buzzerIncorrectPoints', 'Points', -20, 20]
   ];
 
   const RULE_FIELDS = [...TIME_RULE_FIELDS, ...POINT_RULE_FIELDS];
@@ -862,8 +862,8 @@ textarea { resize: vertical; }
   const audienceMode = new URLSearchParams(location.search).get('display') === 'audience' || location.hash === '#audience';
 
   class CountdownClock {
-    constructor(seconds, onExpire) {
-      this.durationMs = Math.max(0, Math.round(seconds * 1000));
+    constructor(Seconds, onExpire) {
+      this.durationMs = Math.max(0, Math.round(Seconds * 1000));
       this.remainingMs = this.durationMs;
       this.running = false;
       this.startedAt = 0;
@@ -907,8 +907,8 @@ textarea { resize: vertical; }
       return this.running ? (this.pause(), false) : this.start();
     }
 
-    reset(seconds = null) {
-      if (seconds !== null) this.durationMs = Math.max(0, Math.round(Number(seconds) * 1000));
+    reset(Seconds = null) {
+      if (Seconds !== null) this.durationMs = Math.max(0, Math.round(Number(Seconds) * 1000));
       this.remainingMs = this.durationMs;
       this.running = false;
       this.startedAt = 0;
@@ -925,9 +925,9 @@ textarea { resize: vertical; }
       if (running && this.remainingMs > 0) this.start();
     }
 
-    addSeconds(seconds) {
+    addSeconds(Seconds) {
       this.sync();
-      this.remainingMs = Math.max(0, this.remainingMs + seconds * 1000);
+      this.remainingMs = Math.max(0, this.remainingMs + Seconds * 1000);
       if (this.running) {
         this.startedAt = performance.now();
         this.remainingAtStart = this.remainingMs;
@@ -1009,13 +1009,13 @@ textarea { resize: vertical; }
     const safe = Math.max(0, Math.ceil(ms));
     const totalSeconds = Math.ceil(safe / 1000);
     const minutes = Math.floor(totalSeconds / 60);
-    const seconds = totalSeconds % 60;
-    return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+    const Seconds = totalSeconds % 60;
+    return `${String(minutes).padStart(2, '0')}:${String(Seconds).padStart(2, '0')}`;
   }
 
   function formatResponseClock(ms, padded = true) {
-    const seconds = Math.max(0, Math.ceil(Math.max(0, Math.ceil(ms)) / 1000));
-    return padded ? String(seconds).padStart(2, '0') : String(seconds);
+    const Seconds = Math.max(0, Math.ceil(Math.max(0, Math.ceil(ms)) / 1000));
+    return padded ? String(Seconds).padStart(2, '0') : String(Seconds);
   }
 
   function timeOnly(iso) {
@@ -1258,7 +1258,7 @@ textarea { resize: vertical; }
 
   function resetSpeedPeriodScores() {
     const baseline = ensureSectionBaseline('speed');
-    confirmAction('Reset the points by minute table?', 'All speed-section scoring events will be cleared and the match score will return to the start of the speed section.', () => {
+    confirmAction('Reset the Points by minute table?', 'All speed-section scoring events will be cleared and the match score will return to the start of the speed section.', () => {
       recordUndo();
       state.teams.A.score = Number(baseline.scores?.A) || 0;
       state.teams.B.score = Number(baseline.scores?.B) || 0;
@@ -1319,7 +1319,7 @@ textarea { resize: vertical; }
     if (round === 'complete') {
       const a = state.teams.A.score;
       const b = state.teams.B.score;
-      state.winner = a === b ? `Match tied at ${a} points` : `${state.teams[a > b ? 'A' : 'B'].name} wins ${Math.max(a, b)}–${Math.min(a, b)}`;
+      state.winner = a === b ? `Match tied at ${a} Points` : `${state.teams[a > b ? 'A' : 'B'].name} wins ${Math.max(a, b)}–${Math.min(a, b)}`;
       state.status = 'Match complete';
       logEvent('match_complete', state.winner);
       sound('end');
@@ -1405,11 +1405,11 @@ textarea { resize: vertical; }
   }
 
   function addTenSeconds() {
-    const seconds = 10;
+    const Seconds = 10;
     recordUndo();
-    mainClock.addSeconds(seconds);
-    state.status = `${seconds} seconds added to main clock`;
-    logEvent('timer_adjusted', `Added ${seconds} seconds to the main clock`);
+    mainClock.addSeconds(Seconds);
+    state.status = `${Seconds} Seconds added to main clock`;
+    logEvent('timer_adjusted', `Added ${Seconds} Seconds to the main clock`);
     changed();
   }
 
@@ -1434,11 +1434,11 @@ textarea { resize: vertical; }
     const dialog = $('timeEditDialog');
     const form = $('timeEditForm');
     const minutesInput = $('timeEditMinutes');
-    const secondsInput = $('timeEditSeconds');
-    if (!dialog || !form || !minutesInput || !secondsInput) return Promise.resolve(null);
+    const SecondsInput = $('timeEditSeconds');
+    if (!dialog || !form || !minutesInput || !SecondsInput) return Promise.resolve(null);
     const current = Math.max(0, Math.floor(currentSeconds));
     minutesInput.value = String(Math.floor(current / 60));
-    secondsInput.value = String(current % 60);
+    SecondsInput.value = String(current % 60);
     return new Promise(resolve => {
       let submitted = false;
       const cleanup = () => {
@@ -1449,10 +1449,10 @@ textarea { resize: vertical; }
         event.preventDefault();
         submitted = true;
         const minutes = Number(minutesInput.value || 0);
-        const seconds = Number(secondsInput.value || 0);
+        const Seconds = Number(SecondsInput.value || 0);
         cleanup();
         dialog.close();
-        resolve({ minutes, seconds });
+        resolve({ minutes, Seconds });
       };
       const handleClose = () => {
         if (!submitted) {
@@ -1463,8 +1463,8 @@ textarea { resize: vertical; }
       form.addEventListener('submit', handleSubmit);
       dialog.addEventListener('close', handleClose);
       dialog.showModal();
-      secondsInput.focus();
-      secondsInput.select();
+      SecondsInput.focus();
+      SecondsInput.select();
     });
   }
 
@@ -1475,14 +1475,14 @@ textarea { resize: vertical; }
     const current = Math.max(0, Math.round(mainClock.remainingMs / 1000));
     const value = await showTimeEditDialog(current);
     if (!value) return;
-    const seconds = (value.minutes * 60) + value.seconds;
-    if (!Number.isFinite(seconds) || seconds < 0 || value.minutes < 0 || value.minutes > 59 || value.seconds < 0 || value.seconds > 59) return toast('Enter a valid time from 00:00 to 59:59.', true);
+    const Seconds = (value.minutes * 60) + value.Seconds;
+    if (!Number.isFinite(Seconds) || Seconds < 0 || value.minutes < 0 || value.minutes > 59 || value.Seconds < 0 || value.Seconds > 59) return toast('Enter a valid time from 00:00 to 59:59.', true);
     recordUndo();
-    mainClock.reset(seconds);
+    mainClock.reset(Seconds);
     const field = mainRuleFieldForRound();
-    if (field) state.rules[field] = seconds;
-    state.status = `Main clock set to ${formatClock(seconds * 1000)}`;
-    logEvent('timer_adjusted', `${roundTitle()} main clock set to ${formatClock(seconds * 1000)}`);
+    if (field) state.rules[field] = Seconds;
+    state.status = `Main clock set to ${formatClock(Seconds * 1000)}`;
+    logEvent('timer_adjusted', `${roundTitle()} main clock set to ${formatClock(Seconds * 1000)}`);
     changed();
   }
 
@@ -1539,7 +1539,7 @@ textarea { resize: vertical; }
     state.teams[team].score = 0;
     state.status = `${teamName(team)} score reset`;
     if (speedMinuteTotal) {
-      logEvent('speed_minute_score_reset', `${teamName(team)} points for ${speedMinuteLabel(state.speedPeriod)} reset to zero`, team, -speedMinuteTotal);
+      logEvent('speed_minute_score_reset', `${teamName(team)} Points for ${speedMinuteLabel(state.speedPeriod)} reset to zero`, team, -speedMinuteTotal);
     }
     logEvent('score_reset', `${teamName(team)} score reset`, team);
     changed();
@@ -1648,7 +1648,7 @@ textarea { resize: vertical; }
   async function saveSetup() {
     const aName = $('setupAName').value.trim();
     const bName = $('setupBName').value.trim();
-    if (!aName || !bName) return toast('Enter both Team names.', true);
+    if (!aName || !bName) return toast('Enter both school names.', true);
     try {
       recordUndo();
       const aLogoFile = $('setupALogo').files[0];
@@ -1694,9 +1694,9 @@ textarea { resize: vertical; }
     };
 
     grid.replaceChildren(
-      buildSection('Time configurations', TIME_RULE_FIELDS, buildNumberRow),
-      buildSection('Points configurations', POINT_RULE_FIELDS, buildNumberRow),
-      buildSection('Audio configurations', BOOLEAN_RULE_FIELDS, buildCheckRow, 'rules-section-full')
+      buildSection('Time Configurations', TIME_RULE_FIELDS, buildNumberRow),
+      buildSection('Points Configurations', POINT_RULE_FIELDS, buildNumberRow),
+      buildSection('Audio Configurations', BOOLEAN_RULE_FIELDS, buildCheckRow, 'rules-section-full')
     );
   }
 
