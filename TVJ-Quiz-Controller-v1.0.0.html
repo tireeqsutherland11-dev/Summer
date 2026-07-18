@@ -251,12 +251,12 @@ body.fullscreen-active .operator-view { padding-top: clamp(44px, 6vh, 72px) !imp
 .timer-tile { position: relative; width: 100%; min-height: 118px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; background: rgba(255,255,255,.035); border: 1px solid var(--line); border-radius: 18px; padding: var(--space-md); cursor: pointer; transition: min-height .18s ease, background .18s ease; }
 .timer-tile:hover { background: rgba(255,255,255,.06); }
 .timer-tile.top { min-height: 230px; }
-.timer-tile.bottom { min-height: 140px; }
+.timer-tile.bottom { min-height: 172px; }
 .timer-tile.response-clock-tile { width: 132px; min-height: 132px; aspect-ratio: 1; border-radius: 50%; gap: 4px; padding: 12px; border: 5px solid rgba(242,201,76,.32); background: rgba(242,201,76,.07); text-align: center; }
 .timer-tile.response-clock-tile .timer-tile-label { color: var(--gold); font-size: .62rem; line-height: 1.05; text-align: center; max-width: 78px; }
 .timer-tile.response-clock-tile .timer-tile-instruction { display: none; }
 .timer-tile.top .main-timer { font-size: clamp(112px, min(11.5vw, 22vh), 176px); }
-.timer-tile.bottom .main-timer { font-size: clamp(70px, min(7vw, 13vh), 110px); }
+.timer-tile.bottom .main-timer { font-size: clamp(94px, min(9.4vw, 17vh), 150px); }
 .timer-tile.response-clock-tile .main-timer { min-width: 0; font-size: 2.8rem; letter-spacing: -.04em; }
 .timer-tile.response-clock-tile:has(.main-timer.danger) { border-color: var(--red); animation: responseBorderFlash .5s ease-in-out infinite alternate; }
 .timer-tile-label { color: var(--muted); font-size: .75rem; font-weight: 900; letter-spacing: .12em; text-transform: uppercase; }
@@ -354,7 +354,7 @@ body.series-mode-active #seriesCard { display: grid; }
 .audience-team output { margin-top: clamp(8px, 1vw, 18px); font-size: clamp(124px, 16vw, 280px); line-height: .85; font-weight: 950; letter-spacing: -.08em; font-variant-numeric: tabular-nums; text-shadow: 0 15px 35px rgba(0,0,0,.28); }
 .audience-center { display: flex; flex-direction: column; align-items: center; justify-content: center; justify-self: center; text-align: center; padding: 24px 10px; width: 100%; }
 .audience-center > p { margin-bottom: 8px; color: var(--gold); font-weight: 950; letter-spacing: .15em; font-size: clamp(12px, 1.6vw, 23px); }
-.audience-center > output { display: block; width: 100%; text-align: center; font-size: clamp(92px, 11vw, 190px); line-height: 1; font-weight: 950; letter-spacing: -.08em; font-variant-numeric: tabular-nums; }
+.audience-center > output { display: grid; place-items: center; justify-self: center; width: 100%; margin-inline: auto; text-align: center; text-indent: .05em; font-size: clamp(92px, 11vw, 190px); line-height: 1; font-weight: 950; letter-spacing: -.05em; font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1; }
 .audience-response { margin-top: 20px; width: clamp(100px, 10vw, 160px); aspect-ratio: 1; border-radius: 50%; display: grid; place-items: center; align-content: center; background: rgba(242,201,76,.09); border: clamp(4px, .5vw, 8px) solid var(--gold); }
 .audience-response span { color: var(--gold); font-weight: 900; font-size: clamp(9px, 1vw, 14px); letter-spacing: .13em; }
 .audience-response strong { font-size: clamp(38px, 5vw, 76px); line-height: 1; }
