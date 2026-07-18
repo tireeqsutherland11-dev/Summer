@@ -1081,6 +1081,12 @@ textarea { resize: vertical; }
     oscillator.stop(start + duration + 0.02);
   }
 
+  function bellDing(delay = 0) {
+    tone(660, .42, 'sine', .075, delay);
+    tone(990, .32, 'sine', .028, delay + .006);
+    tone(1320, .22, 'sine', .018, delay + .012);
+  }
+
   function sound(kind) {
     if (kind === 'correct' && !state.rules.correctSoundEnabled) return;
     if (kind === 'incorrect' && !state.rules.incorrectSoundEnabled) return;
@@ -1088,8 +1094,8 @@ textarea { resize: vertical; }
     else if (kind === 'correct') { tone(620, .11, 'sine', .06); tone(880, .16, 'sine', .07, .10); }
     else if (kind === 'incorrect') { tone(260, .22, 'sawtooth', .05); }
     else if (kind === 'warning') { tone(720, .08, 'square', .045); }
-    else if (kind === 'main-end') { [0, .32, .64].forEach(delay => tone(880, .18, 'sine', .08, delay)); }
-    else if (kind === 'response-end') { tone(880, .22, 'sine', .08); }
+    else if (kind === 'main-end') { [0, .42, .84].forEach(delay => bellDing(delay)); }
+    else if (kind === 'response-end') { bellDing(); }
     else if (kind === 'end') { tone(420, .3, 'square', .07); tone(320, .38, 'square', .07, .28); }
   }
 
