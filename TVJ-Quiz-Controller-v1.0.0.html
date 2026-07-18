@@ -340,7 +340,7 @@ body.series-mode-active #seriesCard { display: grid; }
 .audience-meta { text-align: right; display: grid; gap: 4px; }
 .audience-meta strong { color: var(--gold); letter-spacing: .12em; font-size: clamp(10px, 1.3vw, 18px); }
 .audience-meta span { font-size: clamp(13px, 1.6vw, 22px); font-weight: 900; }
-.audience-scoreboard { display: grid; grid-template-columns: minmax(0, 1fr) minmax(360px, .86fr) minmax(0, 1fr); align-items: stretch; position: relative; z-index: 1; }
+.audience-scoreboard { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) minmax(0, 1fr); align-items: stretch; position: relative; z-index: 1; }
 .audience-team { padding: clamp(20px, 3vw, 48px); display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; position: relative; overflow: hidden; }
 .audience-team::before { content: ""; position: absolute; inset: 0; opacity: .22; background: linear-gradient(160deg, var(--team-color), transparent 68%); }
 .audience-team > * { position: relative; z-index: 1; }
@@ -451,7 +451,7 @@ textarea { resize: vertical; }
   .team-card { min-height: 450px; }
   .score-display { font-size: clamp(112px, 20vw, 180px); }
   .lower-grid { grid-template-columns: 1fr; }
-  .audience-scoreboard { grid-template-columns: 1fr .62fr 1fr; }
+  .audience-scoreboard { grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) minmax(0, 1fr); }
 }
 
 @media (max-width: 760px) {
