@@ -434,9 +434,6 @@ textarea { resize: vertical; }
 .rules-section { display: grid; gap: 4px; align-content: start; }
 .rules-section-full { grid-column: 1 / -1; }
 .rule-row { display: grid; grid-template-columns: 1fr 105px; gap: 12px; align-items: center; padding: 10px 0; border-bottom: 1px solid rgba(255,255,255,.07); }
-.inline-control { display: flex; align-items: center; gap: 8px; }
-.inline-control select { min-width: 0; }
-.inline-control .secondary-btn { flex: 0 0 auto; padding: 9px 11px; white-space: nowrap; }
 .rule-row label { margin: 0; color: var(--text); }
 .rule-row small { display: block; color: var(--muted); font-weight: 500; margin-top: 3px; }
 .rule-check { grid-template-columns: 1fr auto; }
@@ -764,7 +761,7 @@ textarea { resize: vertical; }
   </dialog>
 
   <dialog id="rulesDialog" class="app-dialog rules-dialog">
-    <form id="rulesForm" method="dialog" novalidate>
+    <form id="rulesForm" method="dialog">
       <header class="dialog-header"><div><p class="eyebrow">TVJ-STYLE PRESET</p><h2>Rules and timing</h2><p>All values remain editable pending confirmation against the current official rules.</p></div><button type="button" class="icon-btn close-dialog" aria-label="Close">×</button></header>
       <div class="dialog-body rules-grid" id="rulesGrid"></div>
       <footer class="dialog-footer"><button id="restorePresetBtn" type="button" class="secondary-btn">Restore preset</button><span class="dialog-spacer"></span><button type="button" class="secondary-btn close-dialog">Cancel</button><button type="submit" class="primary-btn">Apply rules</button></footer>
@@ -869,14 +866,9 @@ textarea { resize: vertical; }
 
   const MAIN_CLOCK_SOUND_OPTIONS = Object.freeze([
     ['stadium-horn', 'Stadium horn'],
-    ['long-stadium-horn', 'Long stadium horn'],
     ['triple-bell', 'Triple bell'],
-    ['school-bell-roll', 'School bell roll'],
     ['siren-burst', 'Siren burst'],
-    ['air-raid-siren', 'Air-raid siren'],
-    ['alarm-chime', 'Alarm chime'],
-    ['victory-fanfare', 'Victory fanfare'],
-    ['deep-gong', 'Deep gong']
+    ['alarm-chime', 'Alarm chime']
   ]);
 
   const $ = (id) => document.getElementById(id);
@@ -999,7 +991,7 @@ textarea { resize: vertical; }
     sectionBaselines: {},
     queries: {},
     series: { bestOf: 1, wins: { A: [], B: [] } },
-    alternateClockOrder: ['main', 'response']
+    alternateClockOrder: ['response', 'main']
   });
 
   let state = defaultState();
@@ -1134,33 +1126,15 @@ textarea { resize: vertical; }
     tone(1175, .18, 'sine', .05, delay + .012);
   }
 
-  function playMainClockSound(soundName = state.rules.mainClockSound) {
-    const selected = soundName || PRESET_RULES.mainClockSound;
+  function playMainClockSound() {
+    const selected = state.rules.mainClockSound || PRESET_RULES.mainClockSound;
     if (selected === 'triple-bell') {
       [0, .2, .4].forEach(delay => bellDing(delay));
-    } else if (selected === 'school-bell-roll') {
-      [0, .18, .36, .68, .86, 1.04].forEach(delay => fallbackBellDing(delay));
-      tone(1320, 1.15, 'triangle', .045, .08);
     } else if (selected === 'siren-burst') {
       [0, .16, .32, .48, .64].forEach((delay, index) => tone(index % 2 ? 940 : 520, .2, 'sawtooth', .14, delay));
       tone(260, .78, 'square', .07, .03);
-    } else if (selected === 'air-raid-siren') {
-      [0, .28, .56, .84, 1.12, 1.4].forEach((delay, index) => tone(index % 2 ? 980 : 420, .38, 'sawtooth', .17, delay));
-      tone(140, 1.85, 'square', .08, .02);
     } else if (selected === 'alarm-chime') {
       [0, .15, .3, .55, .7, .85].forEach((delay, index) => tone(index % 2 ? 1240 : 740, .13, 'square', .13, delay));
-    } else if (selected === 'victory-fanfare') {
-      [523, 659, 784, 1047, 784, 1047].forEach((frequency, index) => tone(frequency, .22, 'triangle', .15, index * .16));
-      tone(262, 1.05, 'sawtooth', .07, .05);
-    } else if (selected === 'deep-gong') {
-      tone(98, 1.75, 'sine', .18);
-      tone(196, 1.45, 'triangle', .11, .04);
-      tone(392, .95, 'sine', .06, .08);
-    } else if (selected === 'long-stadium-horn') {
-      tone(165, 1.8, 'sawtooth', .18);
-      tone(82, 1.8, 'square', .12);
-      tone(330, 1.15, 'square', .10, .18);
-      tone(495, .7, 'sawtooth', .08, .42);
     } else {
       tone(180, .9, 'sawtooth', .16);
       tone(90, .9, 'square', .10);
@@ -1809,7 +1783,7 @@ textarea { resize: vertical; }
     const buildNumberRow = ([label, key, suffix, min, max]) => {
       const row = document.createElement('div');
       row.className = 'rule-row';
-      row.innerHTML = `<label for="rule_${key}">${label}<small>${suffix}</small></label><input id="rule_${key}" name="${key}" type="number" step="1" inputmode="numeric">`;
+      row.innerHTML = `<label for="rule_${key}">${label}<small>${suffix}</small></label><input id="rule_${key}" name="${key}" type="number" min="${min}" max="${max}" step="1">`;
       return row;
     };
     const buildCheckRow = ([label, key]) => {
@@ -1822,7 +1796,7 @@ textarea { resize: vertical; }
       const row = document.createElement('div');
       row.className = 'rule-row';
       const options = MAIN_CLOCK_SOUND_OPTIONS.map(([value, label]) => `<option value="${value}">${label}</option>`).join('');
-      row.innerHTML = `<label for="rule_mainClockSound">Main clock sound<small>Loud, distinct end signal</small></label><div class="inline-control"><select id="rule_mainClockSound" name="mainClockSound">${options}</select><button id="previewMainClockSoundBtn" type="button" class="secondary-btn">Play sound</button></div>`;
+      row.innerHTML = `<label for="rule_mainClockSound">Main clock sound<small>Loud, distinct end signal</small></label><select id="rule_mainClockSound" name="mainClockSound">${options}</select>`;
       return row;
     };
     const buildSection = (legend, rows, rowBuilder, className = '') => {
@@ -1848,28 +1822,14 @@ textarea { resize: vertical; }
 
   function openRules() { fillRulesForm(); $('rulesDialog').showModal(); }
 
-  function previewMainClockSound() {
-    const selectedSound = $('rule_mainClockSound')?.value || PRESET_RULES.mainClockSound;
-    const soundsWereEnabled = state.rules.soundEnabled;
-    state.rules.soundEnabled = true;
-    ensureAudio();
-    playMainClockSound(selectedSound);
-    state.rules.soundEnabled = soundsWereEnabled;
-    toast('Previewing selected main clock sound.');
-  }
-
   function saveRules() {
     const newRules = {};
-    for (const [, key, , min, max] of RULE_FIELDS) {
-      const numericValue = Math.round(Number($(`rule_${key}`).value));
-      newRules[key] = Number.isFinite(numericValue) ? clamp(numericValue, min, max) : PRESET_RULES[key];
-    }
+    for (const [, key, , min, max] of RULE_FIELDS) newRules[key] = clamp(Math.round(Number($(`rule_${key}`).value)), min, max);
     for (const [, key] of BOOLEAN_RULE_FIELDS) newRules[key] = $(`rule_${key}`).checked;
     newRules.mainClockSound = MAIN_CLOCK_SOUND_OPTIONS.some(([value]) => value === $('rule_mainClockSound').value) ? $('rule_mainClockSound').value : PRESET_RULES.mainClockSound;
     recordUndo();
     state.rules = { ...state.rules, ...newRules };
     state.speedPeriod = clamp(state.speedPeriod, 1, state.rules.speedPeriodCount);
-    if (roundUsesDualClock()) state.alternateClockOrder = ['main', 'response'];
     mainClock.reset(timerDurationForRound(state.round));
     responseClock.reset(responseDurationForRound());
     state.status = 'Rules updated; clocks reset';
@@ -1989,7 +1949,7 @@ textarea { resize: vertical; }
   function renderSectionTimers(mainRemaining, responseRemaining) {
     const stack = $('timerStack');
     if (!stack) return;
-    const order = Array.isArray(state.alternateClockOrder) ? state.alternateClockOrder : ['main', 'response'];
+    const order = Array.isArray(state.alternateClockOrder) ? state.alternateClockOrder : ['response', 'main'];
     const usesDualClock = roundUsesDualClock();
     stack.classList.toggle('alternate-grid', usesDualClock);
     $('timerCard')?.classList.toggle('dual-clock-mode', usesDualClock);
@@ -2363,7 +2323,6 @@ textarea { resize: vertical; }
 
     $('setupForm').addEventListener('submit', event => { event.preventDefault(); saveSetup(); });
     $('rulesForm').addEventListener('submit', event => { event.preventDefault(); saveRules(); });
-    $('previewMainClockSoundBtn').addEventListener('click', previewMainClockSound);
     $('judgeForm').addEventListener('submit', event => { event.preventDefault(); recordJudgeDecision(); });
     $$('.close-dialog').forEach(btn => btn.addEventListener('click', () => btn.closest('dialog').close()));
     $('restorePresetBtn').addEventListener('click', () => fillRulesForm(PRESET_RULES));
