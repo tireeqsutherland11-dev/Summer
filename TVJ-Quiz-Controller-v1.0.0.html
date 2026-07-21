@@ -214,6 +214,11 @@ body.fullscreen-active .operator-view { padding-top: clamp(44px, 6vh, 72px) !imp
 .logo-frame { width: 54px; height: 54px; display: grid; place-items: center; background: rgba(255,255,255,.06); border-radius: 14px; border: 1px solid var(--line); }
 .team-logo { max-width: 90%; max-height: 90%; object-fit: contain; }
 .team-card h2 { font-size: clamp(19px, 2.2vw, 28px); overflow-wrap: anywhere; }
+.team-name-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.team-name-row h2 { min-width: 0; }
+.team-edit-btn { flex: 0 0 auto; width: 30px; height: 30px; display: grid; place-items: center; border-radius: 9px; padding: 0; background: rgba(242,201,76,.13); border: 1px solid rgba(242,201,76,.34); color: var(--gold-2); line-height: 1; }
+.team-edit-btn:hover { background: rgba(242,201,76,.24); border-color: rgba(242,201,76,.58); }
+.team-edit-btn svg { width: 15px; height: 15px; display: block; }
 .team-code { color: var(--muted); font-size: .78rem; font-weight: 900; letter-spacing: .12em; margin-bottom: 5px; }
 .active-badge, .state-badge { border-radius: 999px; padding: 6px 9px; font-size: .65rem; font-weight: 950; letter-spacing: .12em; background: rgba(69,213,138,.14); color: #73f3ad; border: 1px solid rgba(69,213,138,.28); }
 .card-reset-btn { position: absolute; top: 14px; right: 14px; z-index: 2; width: 38px; height: 38px; padding: 0; display: grid; place-items: center; font-size: 1rem; line-height: 1; }
@@ -582,7 +587,7 @@ textarea { resize: vertical; }
             <div class="logo-frame"><img id="teamALogo" alt="" class="team-logo hidden"></div>
             <div>
               <p class="team-code" id="teamAShort">TEAM A</p>
-              <h2 id="teamAName">Team A</h2>
+              <div class="team-name-row"><h2 id="teamAName">Team A</h2><button class="team-edit-btn" type="button" data-edit-team="A" aria-label="Edit Team A details" title="Edit Team A"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 20h4.8L19.1 9.7a2.1 2.1 0 0 0 0-3l-1.8-1.8a2.1 2.1 0 0 0-3 0L4 15.2V20Z" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"/><path d="m13.5 5.7 4.8 4.8" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></button></div>
             </div>
           </div>
           <div class="score-row">
@@ -638,7 +643,7 @@ textarea { resize: vertical; }
             <div class="logo-frame"><img id="teamBLogo" alt="" class="team-logo hidden"></div>
             <div>
               <p class="team-code" id="teamBShort">TEAM B</p>
-              <h2 id="teamBName">Team B</h2>
+              <div class="team-name-row"><h2 id="teamBName">Team B</h2><button class="team-edit-btn" type="button" data-edit-team="B" aria-label="Edit Team B details" title="Edit Team B"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 20h4.8L19.1 9.7a2.1 2.1 0 0 0 0-3l-1.8-1.8a2.1 2.1 0 0 0-3 0L4 15.2V20Z" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"/><path d="m13.5 5.7 4.8 4.8" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></button></div>
             </div>
           </div>
           <div class="score-row">
@@ -1697,7 +1702,7 @@ textarea { resize: vertical; }
     }, RESPONSE_BELL_RESET_DELAY_MS);
   }
 
-  function openSetup() {
+  function openSetup(teamToFocus = '') {
     $('setupAName').value = state.teams.A.name;
     $('setupAShort').value = state.teams.A.shortName;
     $('setupAColor').value = state.teams.A.color;
@@ -1706,6 +1711,10 @@ textarea { resize: vertical; }
     $('setupBColor').value = state.teams.B.color;
     $('setupStage').value = state.stage;
     $('setupDialog').showModal();
+    if (teamToFocus === 'A' || teamToFocus === 'B') {
+      const input = teamToFocus === 'A' ? $('setupAName') : $('setupBName');
+      setTimeout(() => { input?.focus(); input?.select(); }, 0);
+    }
   }
 
   async function fileToDataUrl(file) {
@@ -2253,6 +2262,7 @@ textarea { resize: vertical; }
       btn.addEventListener('click', applyNudge);
     });
     $$('[data-reset-score]').forEach(btn => btn.addEventListener('click', () => resetScore(btn.dataset.resetScore)));
+    $$('[data-edit-team]').forEach(btn => btn.addEventListener('click', () => openSetup(btn.dataset.editTeam)));
     $$('[data-speed-minute]').forEach(btn => btn.addEventListener('click', () => setSpeedPeriod(btn.dataset.speedMinute)));
     $$('.round-tab').forEach(btn => btn.addEventListener('click', () => btn.dataset.round === 'complete' ? confirmAction('Finish the match?', 'The winner will be calculated from the current scores.', () => configureRound('complete'), 'Finish match') : configureRound(btn.dataset.round, { resetPeriod: btn.dataset.round === 'speed' })));
 
