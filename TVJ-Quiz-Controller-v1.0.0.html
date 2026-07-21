@@ -213,7 +213,7 @@ body.fullscreen-active .operator-view { padding-top: clamp(44px, 6vh, 72px) !imp
 .team-card-header { min-height: 104px; display: grid; grid-template-columns: 58px minmax(0, 1fr) auto; gap: 11px; align-items: center; padding: 21px 72px 12px 18px; }
 .logo-frame { width: 54px; height: 54px; display: grid; place-items: center; background: rgba(255,255,255,.06); border-radius: 14px; border: 1px solid var(--line); }
 .team-logo { max-width: 90%; max-height: 90%; object-fit: contain; }
-.team-card h2 { font-size: clamp(19px, 2.2vw, 28px); overflow-wrap: anywhere; }
+.team-card h2 { font-size: clamp(25px, 3vw, 42px); line-height: 1.02; overflow-wrap: anywhere; }
 .team-name-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .team-name-row h2 { min-width: 0; }
 .team-edit-btn { flex: 0 0 auto; width: 30px; height: 30px; display: grid; place-items: center; border-radius: 9px; padding: 0; background: rgba(242,201,76,.13); border: 1px solid rgba(242,201,76,.34); color: var(--gold-2); line-height: 1; }
@@ -355,7 +355,7 @@ body.series-mode-active #seriesCard { display: grid; }
 .audience-logo-frame { width: clamp(60px, 8vw, 125px); height: clamp(60px, 8vw, 125px); display: grid; place-items: center; margin-bottom: clamp(12px, 2vw, 24px); border-radius: 22px; background: rgba(255,255,255,.08); border: 1px solid var(--line); }
 .audience-logo { max-width: 90%; max-height: 90%; object-fit: contain; }
 .audience-team p { color: rgba(255,255,255,.68); font-size: clamp(12px, 1.5vw, 21px); font-weight: 900; letter-spacing: .15em; margin-bottom: 8px; }
-.audience-team h2 { min-height: 2.2em; display: grid; place-items: center; font-size: clamp(23px, 3.2vw, 54px); line-height: 1.08; }
+.audience-team h2 { min-height: 2.2em; display: grid; place-items: center; font-size: clamp(32px, 4.4vw, 76px); line-height: 1.02; }
 .audience-team output { margin-top: clamp(8px, 1vw, 18px); font-size: clamp(124px, 16vw, 280px); line-height: .85; font-weight: 950; letter-spacing: -.08em; font-variant-numeric: tabular-nums; text-shadow: 0 15px 35px rgba(0,0,0,.28); }
 .audience-center { display: flex; flex-direction: column; align-items: center; justify-content: center; justify-self: center; text-align: center; padding: 24px 10px; width: 100%; min-width: 0; overflow: hidden; }
 .audience-center > p { margin-bottom: 8px; color: var(--gold); font-weight: 950; letter-spacing: .15em; font-size: clamp(12px, 1.6vw, 23px); }
@@ -498,7 +498,7 @@ textarea { resize: vertical; }
   .audience-team { padding: 18px 10px; }
   .audience-team-a { border-right: 1px solid var(--line); }
   .audience-team-b { border-left: 0; }
-  .audience-team h2 { font-size: clamp(19px, 6vw, 34px); }
+  .audience-team h2 { font-size: clamp(24px, 7.4vw, 44px); }
   .audience-team output { font-size: clamp(104px, 33vw, 170px); }
   .audience-footer { font-size: 11px; }
 }
@@ -835,7 +835,8 @@ textarea { resize: vertical; }
     autoApplyTimeoutPenalty: false,
     soundEnabled: true,
     correctSoundEnabled: true,
-    incorrectSoundEnabled: true
+    incorrectSoundEnabled: true,
+    mainClockSound: 'stadium-horn'
   });
 
   const TIME_RULE_FIELDS = [
@@ -862,6 +863,13 @@ textarea { resize: vertical; }
     ['Play correct-answer sound', 'correctSoundEnabled'],
     ['Play incorrect-answer sound', 'incorrectSoundEnabled']
   ];
+
+  const MAIN_CLOCK_SOUND_OPTIONS = Object.freeze([
+    ['stadium-horn', 'Stadium horn'],
+    ['triple-bell', 'Triple bell'],
+    ['siren-burst', 'Siren burst'],
+    ['alarm-chime', 'Alarm chime']
+  ]);
 
   const $ = (id) => document.getElementById(id);
   const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -1113,9 +1121,25 @@ textarea { resize: vertical; }
   }
 
   function fallbackBellDing(delay = 0) {
-    tone(587, .34, 'sine', .075, delay);
-    tone(880, .26, 'sine', .03, delay + .006);
-    tone(1175, .18, 'sine', .018, delay + .012);
+    tone(587, .34, 'sine', .14, delay);
+    tone(880, .26, 'sine', .08, delay + .006);
+    tone(1175, .18, 'sine', .05, delay + .012);
+  }
+
+  function playMainClockSound() {
+    const selected = state.rules.mainClockSound || PRESET_RULES.mainClockSound;
+    if (selected === 'triple-bell') {
+      [0, .2, .4].forEach(delay => bellDing(delay));
+    } else if (selected === 'siren-burst') {
+      [0, .16, .32, .48, .64].forEach((delay, index) => tone(index % 2 ? 940 : 520, .2, 'sawtooth', .14, delay));
+      tone(260, .78, 'square', .07, .03);
+    } else if (selected === 'alarm-chime') {
+      [0, .15, .3, .55, .7, .85].forEach((delay, index) => tone(index % 2 ? 1240 : 740, .13, 'square', .13, delay));
+    } else {
+      tone(180, .9, 'sawtooth', .16);
+      tone(90, .9, 'square', .10);
+      tone(360, .45, 'square', .09, .12);
+    }
   }
 
   function onlineBellDing(delay = 0) {
@@ -1153,7 +1177,7 @@ textarea { resize: vertical; }
     else if (kind === 'correct') { tone(620, .11, 'sine', .06); tone(880, .16, 'sine', .07, .10); }
     else if (kind === 'incorrect') { tone(260, .22, 'sawtooth', .05); }
     else if (kind === 'warning') { tone(720, .08, 'square', .045); }
-    else if (kind === 'main-end') { [0, .18, .36, .54].forEach(delay => bellDing(delay)); }
+    else if (kind === 'main-end') { playMainClockSound(); }
     else if (kind === 'response-end') { bellDing(); }
     else if (kind === 'end') { tone(420, .3, 'square', .07); tone(320, .38, 'square', .07, .28); }
   }
@@ -1768,6 +1792,13 @@ textarea { resize: vertical; }
       row.innerHTML = `<label for="rule_${key}">${label}</label><input id="rule_${key}" name="${key}" type="checkbox">`;
       return row;
     };
+    const buildMainClockSoundRow = () => {
+      const row = document.createElement('div');
+      row.className = 'rule-row';
+      const options = MAIN_CLOCK_SOUND_OPTIONS.map(([value, label]) => `<option value="${value}">${label}</option>`).join('');
+      row.innerHTML = `<label for="rule_mainClockSound">Main clock sound<small>Loud, distinct end signal</small></label><select id="rule_mainClockSound" name="mainClockSound">${options}</select>`;
+      return row;
+    };
     const buildSection = (legend, rows, rowBuilder, className = '') => {
       const section = document.createElement('fieldset');
       section.className = `rules-section ${className}`.trim();
@@ -1779,13 +1810,14 @@ textarea { resize: vertical; }
     grid.replaceChildren(
       buildSection('Time Configurations', TIME_RULE_FIELDS, buildNumberRow),
       buildSection('Points Configurations', POINT_RULE_FIELDS, buildNumberRow),
-      buildSection('Audio Configurations', BOOLEAN_RULE_FIELDS, buildCheckRow, 'rules-section-full')
+      buildSection('Audio Configurations', [...BOOLEAN_RULE_FIELDS, ['Main clock sound', 'mainClockSound']], row => row[1] === 'mainClockSound' ? buildMainClockSoundRow() : buildCheckRow(row), 'rules-section-full')
     );
   }
 
   function fillRulesForm(rules = state.rules) {
     for (const [, key] of RULE_FIELDS) $(`rule_${key}`).value = rules[key];
     for (const [, key] of BOOLEAN_RULE_FIELDS) $(`rule_${key}`).checked = Boolean(rules[key]);
+    $('rule_mainClockSound').value = rules.mainClockSound || PRESET_RULES.mainClockSound;
   }
 
   function openRules() { fillRulesForm(); $('rulesDialog').showModal(); }
@@ -1794,6 +1826,7 @@ textarea { resize: vertical; }
     const newRules = {};
     for (const [, key, , min, max] of RULE_FIELDS) newRules[key] = clamp(Math.round(Number($(`rule_${key}`).value)), min, max);
     for (const [, key] of BOOLEAN_RULE_FIELDS) newRules[key] = $(`rule_${key}`).checked;
+    newRules.mainClockSound = MAIN_CLOCK_SOUND_OPTIONS.some(([value]) => value === $('rule_mainClockSound').value) ? $('rule_mainClockSound').value : PRESET_RULES.mainClockSound;
     recordUndo();
     state.rules = { ...state.rules, ...newRules };
     state.speedPeriod = clamp(state.speedPeriod, 1, state.rules.speedPeriodCount);
