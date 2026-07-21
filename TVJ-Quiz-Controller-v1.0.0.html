@@ -761,7 +761,7 @@ textarea { resize: vertical; }
   </dialog>
 
   <dialog id="rulesDialog" class="app-dialog rules-dialog">
-    <form id="rulesForm" method="dialog">
+    <form id="rulesForm" method="dialog" novalidate>
       <header class="dialog-header"><div><p class="eyebrow">TVJ-STYLE PRESET</p><h2>Rules and timing</h2><p>All values remain editable pending confirmation against the current official rules.</p></div><button type="button" class="icon-btn close-dialog" aria-label="Close">×</button></header>
       <div class="dialog-body rules-grid" id="rulesGrid"></div>
       <footer class="dialog-footer"><button id="restorePresetBtn" type="button" class="secondary-btn">Restore preset</button><span class="dialog-spacer"></span><button type="button" class="secondary-btn close-dialog">Cancel</button><button type="submit" class="primary-btn">Apply rules</button></footer>
@@ -866,9 +866,14 @@ textarea { resize: vertical; }
 
   const MAIN_CLOCK_SOUND_OPTIONS = Object.freeze([
     ['stadium-horn', 'Stadium horn'],
+    ['long-stadium-horn', 'Long stadium horn'],
     ['triple-bell', 'Triple bell'],
+    ['school-bell-roll', 'School bell roll'],
     ['siren-burst', 'Siren burst'],
-    ['alarm-chime', 'Alarm chime']
+    ['air-raid-siren', 'Air-raid siren'],
+    ['alarm-chime', 'Alarm chime'],
+    ['victory-fanfare', 'Victory fanfare'],
+    ['deep-gong', 'Deep gong']
   ]);
 
   const $ = (id) => document.getElementById(id);
@@ -1130,11 +1135,29 @@ textarea { resize: vertical; }
     const selected = state.rules.mainClockSound || PRESET_RULES.mainClockSound;
     if (selected === 'triple-bell') {
       [0, .2, .4].forEach(delay => bellDing(delay));
+    } else if (selected === 'school-bell-roll') {
+      [0, .18, .36, .68, .86, 1.04].forEach(delay => fallbackBellDing(delay));
+      tone(1320, 1.15, 'triangle', .045, .08);
     } else if (selected === 'siren-burst') {
       [0, .16, .32, .48, .64].forEach((delay, index) => tone(index % 2 ? 940 : 520, .2, 'sawtooth', .14, delay));
       tone(260, .78, 'square', .07, .03);
+    } else if (selected === 'air-raid-siren') {
+      [0, .28, .56, .84, 1.12, 1.4].forEach((delay, index) => tone(index % 2 ? 980 : 420, .38, 'sawtooth', .17, delay));
+      tone(140, 1.85, 'square', .08, .02);
     } else if (selected === 'alarm-chime') {
       [0, .15, .3, .55, .7, .85].forEach((delay, index) => tone(index % 2 ? 1240 : 740, .13, 'square', .13, delay));
+    } else if (selected === 'victory-fanfare') {
+      [523, 659, 784, 1047, 784, 1047].forEach((frequency, index) => tone(frequency, .22, 'triangle', .15, index * .16));
+      tone(262, 1.05, 'sawtooth', .07, .05);
+    } else if (selected === 'deep-gong') {
+      tone(98, 1.75, 'sine', .18);
+      tone(196, 1.45, 'triangle', .11, .04);
+      tone(392, .95, 'sine', .06, .08);
+    } else if (selected === 'long-stadium-horn') {
+      tone(165, 1.8, 'sawtooth', .18);
+      tone(82, 1.8, 'square', .12);
+      tone(330, 1.15, 'square', .10, .18);
+      tone(495, .7, 'sawtooth', .08, .42);
     } else {
       tone(180, .9, 'sawtooth', .16);
       tone(90, .9, 'square', .10);
@@ -1783,7 +1806,7 @@ textarea { resize: vertical; }
     const buildNumberRow = ([label, key, suffix, min, max]) => {
       const row = document.createElement('div');
       row.className = 'rule-row';
-      row.innerHTML = `<label for="rule_${key}">${label}<small>${suffix}</small></label><input id="rule_${key}" name="${key}" type="number" min="${min}" max="${max}" step="1">`;
+      row.innerHTML = `<label for="rule_${key}">${label}<small>${suffix}</small></label><input id="rule_${key}" name="${key}" type="number" step="1" inputmode="numeric">`;
       return row;
     };
     const buildCheckRow = ([label, key]) => {
@@ -1824,7 +1847,10 @@ textarea { resize: vertical; }
 
   function saveRules() {
     const newRules = {};
-    for (const [, key, , min, max] of RULE_FIELDS) newRules[key] = clamp(Math.round(Number($(`rule_${key}`).value)), min, max);
+    for (const [, key, , min, max] of RULE_FIELDS) {
+      const numericValue = Math.round(Number($(`rule_${key}`).value));
+      newRules[key] = Number.isFinite(numericValue) ? clamp(numericValue, min, max) : PRESET_RULES[key];
+    }
     for (const [, key] of BOOLEAN_RULE_FIELDS) newRules[key] = $(`rule_${key}`).checked;
     newRules.mainClockSound = MAIN_CLOCK_SOUND_OPTIONS.some(([value]) => value === $('rule_mainClockSound').value) ? $('rule_mainClockSound').value : PRESET_RULES.mainClockSound;
     recordUndo();
