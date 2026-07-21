@@ -809,6 +809,7 @@ textarea { resize: vertical; }
   const CHANNEL_NAME = 'tvj-quiz-controller-v1';
   const MAX_UNDO = 100;
   const MAX_AUDIT = 1500;
+  const STATE_VERSION = 2;
 
   const PRESET_RULES = Object.freeze({
     alternateRoundSeconds: 240,
@@ -954,7 +955,7 @@ textarea { resize: vertical; }
   }
 
   const defaultState = () => ({
-    version: 1,
+    version: STATE_VERSION,
     teams: {
       A: { name: 'Team A', shortName: 'TEAM A', color: '#1769aa', logo: '', score: 0 },
       B: { name: 'Team B', shortName: 'TEAM B', color: '#b32035', logo: '', score: 0 }
@@ -995,6 +996,7 @@ textarea { resize: vertical; }
   let bellAudioIndex = 0;
   let timeoutApplying = false;
   let storageFailureNotified = false;
+  let audioUnlocked = false;
   let channel = null;
 
   try { channel = 'BroadcastChannel' in window ? new BroadcastChannel(CHANNEL_NAME) : null; } catch { channel = null; }
@@ -1065,7 +1067,19 @@ textarea { resize: vertical; }
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
       if (AudioCtx) audioContext = new AudioCtx();
     }
-    if (audioContext?.state === 'suspended') audioContext.resume().catch(() => {});
+    if (audioContext?.state === 'suspended') {
+      const resumed = audioContext.resume();
+      if (resumed?.catch) resumed.catch(() => {});
+    }
+  }
+
+  function unlockAudio() {
+    ensureAudio();
+    if (audioUnlocked) return;
+    audioUnlocked = true;
+    for (const bellAudio of [$('onlineBellPrimary'), $('onlineBellBackup')].filter(Boolean)) {
+      bellAudio.load();
+    }
   }
 
   function tone(frequency = 660, duration = 0.12, type = 'sine', volume = 0.08, delay = 0) {
@@ -1118,6 +1132,7 @@ textarea { resize: vertical; }
   }
 
   function sound(kind) {
+    ensureAudio();
     if (kind === 'correct' && !state.rules.correctSoundEnabled) return;
     if (kind === 'incorrect' && !state.rules.incorrectSoundEnabled) return;
     if (kind === 'buzz') { tone(510, .11, 'square', .07); tone(760, .13, 'square', .06, .10); }
@@ -1167,8 +1182,10 @@ textarea { resize: vertical; }
       if (!raw) return false;
       const saved = JSON.parse(raw);
       if (!validateImportedState(saved)) return false;
-      state = { ...defaultState(), ...saved.state };
+      const savedVersion = Number(saved.state.version) || 1;
+      state = { ...defaultState(), ...saved.state, version: STATE_VERSION };
       state.rules = { ...deepCopy(PRESET_RULES), ...(saved.state.rules || {}) };
+      if (savedVersion < STATE_VERSION && Number(saved.state.rules?.buzzerResponseSeconds) === 10) state.rules.buzzerResponseSeconds = PRESET_RULES.buzzerResponseSeconds;
       state.teams = {
         A: { ...defaultState().teams.A, ...(saved.state.teams?.A || {}) },
         B: { ...defaultState().teams.B, ...(saved.state.teams?.B || {}) }
@@ -2259,18 +2276,28 @@ textarea { resize: vertical; }
     $('clearBLogoBtn').addEventListener('click', () => { recordUndo(); state.teams.B.logo = ''; changed(); toast('Team B logo removed.'); });
     $('clearLogViewBtn').addEventListener('click', () => { auditCollapsed = !auditCollapsed; $('clearLogViewBtn').textContent = auditCollapsed ? 'Expand' : 'Collapse'; renderAudit(); });
 
+    document.addEventListener('pointerdown', unlockAudio, { capture: true });
+    document.addEventListener('keydown', unlockAudio, { capture: true });
+
     document.addEventListener('keydown', event => {
-      if (audienceMode || event.repeat || event.target.matches('input, textarea, select') || document.querySelector('dialog[open]')) return;
+      const target = event.target;
+      const editingText = target?.isContentEditable || target?.matches?.('input, textarea, select');
+      if (audienceMode || event.repeat || editingText || document.querySelector('dialog[open]')) return;
       const key = event.key.toLowerCase();
-      if (key === ' ') { event.preventDefault(); toggleMainTimer(); }
-      else if (key === 'arrowup') { event.preventDefault(); keyboardScore('A', 1); }
-      else if (key === 'arrowdown') { event.preventDefault(); keyboardScore('A', -1); }
-      else if (key === 'arrowright') { event.preventDefault(); keyboardScore('B', 1); }
-      else if (key === 'arrowleft') { event.preventDefault(); keyboardScore('B', -1); }
+      const code = event.code;
+      const handled = key === ' ' || code === 'Space' || ['ArrowUp', 'ArrowDown', 'ArrowRight', 'ArrowLeft'].includes(code) || ['p', 'u', 'enter'].includes(key);
+      if (!handled) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (key === ' ' || code === 'Space') toggleMainTimer();
+      else if (code === 'ArrowUp') keyboardScore('A', 1);
+      else if (code === 'ArrowDown') keyboardScore('A', -1);
+      else if (code === 'ArrowRight') keyboardScore('B', 1);
+      else if (code === 'ArrowLeft') keyboardScore('B', -1);
       else if (key === 'p') passQuestion();
       else if (key === 'u') undo();
       else if (key === 'enter') nextQuestion();
-    });
+    }, { capture: true });
 
     window.addEventListener('beforeinstallprompt', event => {
       event.preventDefault();
