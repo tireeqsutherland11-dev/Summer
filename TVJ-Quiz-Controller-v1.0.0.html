@@ -1063,6 +1063,7 @@ textarea { resize: vertical; }
   }
 
   function ensureAudio() {
+    if (!state.rules.soundEnabled) return null;
     if (!audioContext) {
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
       if (AudioCtx) audioContext = new AudioCtx();
@@ -1071,11 +1072,18 @@ textarea { resize: vertical; }
       const resumed = audioContext.resume();
       if (resumed?.catch) resumed.catch(() => {});
     }
+    return audioContext;
   }
 
   function unlockAudio() {
-    ensureAudio();
-    if (audioUnlocked) return;
+    const context = ensureAudio();
+    if (!audioUnlocked && context) {
+      const silent = context.createBufferSource();
+      const gain = context.createGain();
+      gain.gain.value = 0.0001;
+      silent.connect(gain).connect(context.destination);
+      try { silent.start(0); } catch {}
+    }
     audioUnlocked = true;
     for (const bellAudio of [$('onlineBellPrimary'), $('onlineBellBackup')].filter(Boolean)) {
       bellAudio.load();
@@ -1084,17 +1092,17 @@ textarea { resize: vertical; }
 
   function tone(frequency = 660, duration = 0.12, type = 'sine', volume = 0.08, delay = 0) {
     if (!state.rules.soundEnabled) return;
-    ensureAudio();
-    if (!audioContext) return;
-    const start = audioContext.currentTime + delay;
-    const oscillator = audioContext.createOscillator();
-    const gain = audioContext.createGain();
+    const context = ensureAudio();
+    if (!context) return;
+    const start = context.currentTime + delay;
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
     oscillator.type = type;
     oscillator.frequency.setValueAtTime(frequency, start);
     gain.gain.setValueAtTime(0.0001, start);
     gain.gain.exponentialRampToValueAtTime(volume, start + 0.012);
     gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
-    oscillator.connect(gain).connect(audioContext.destination);
+    oscillator.connect(gain).connect(context.destination);
     oscillator.start(start);
     oscillator.stop(start + duration + 0.02);
   }
@@ -1132,9 +1140,10 @@ textarea { resize: vertical; }
   }
 
   function sound(kind) {
-    ensureAudio();
+    if (!state.rules.soundEnabled) return;
     if (kind === 'correct' && !state.rules.correctSoundEnabled) return;
     if (kind === 'incorrect' && !state.rules.incorrectSoundEnabled) return;
+    ensureAudio();
     if (kind === 'buzz') { tone(510, .11, 'square', .07); tone(760, .13, 'square', .06, .10); }
     else if (kind === 'correct') { tone(620, .11, 'sine', .06); tone(880, .16, 'sine', .07, .10); }
     else if (kind === 'incorrect') { tone(260, .22, 'sawtooth', .05); }
@@ -1610,10 +1619,12 @@ textarea { resize: vertical; }
   }
 
   function manualScore(team, delta) {
+    const points = Number(delta);
     recordUndo();
-    state.teams[team].score += Number(delta);
+    state.teams[team].score += points;
     state.status = `${teamName(team)} score adjusted`;
-    logEvent('manual_score', `${teamName(team)} manual score adjustment ${delta > 0 ? '+' : ''}${delta}`, team, Number(delta));
+    logEvent('manual_score', `${teamName(team)} manual score adjustment ${points > 0 ? '+' : ''}${points}`, team, points);
+    sound(points >= 0 ? 'correct' : 'incorrect');
     changed();
   }
 
