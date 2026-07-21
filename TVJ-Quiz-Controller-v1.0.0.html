@@ -433,6 +433,9 @@ textarea { resize: vertical; }
 .rules-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
 .rules-section { display: grid; gap: 4px; align-content: start; }
 .rules-section-full { grid-column: 1 / -1; }
+.rule-inline-control { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.rule-inline-control select { flex: 1 1 220px; }
+.rule-sound-preview { grid-column: 1 / -1; display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; padding-top: 4px; }
 .rule-row { display: grid; grid-template-columns: 1fr 105px; gap: 12px; align-items: center; padding: 10px 0; border-bottom: 1px solid rgba(255,255,255,.07); }
 .rule-row label { margin: 0; color: var(--text); }
 .rule-row small { display: block; color: var(--muted); font-weight: 500; margin-top: 3px; }
@@ -868,7 +871,12 @@ textarea { resize: vertical; }
     ['stadium-horn', 'Stadium horn'],
     ['triple-bell', 'Triple bell'],
     ['siren-burst', 'Siren burst'],
-    ['alarm-chime', 'Alarm chime']
+    ['alarm-chime', 'Alarm chime'],
+    ['arena-buzzer', 'Arena buzzer'],
+    ['long-air-horn', 'Long air horn'],
+    ['fog-horn', 'Deep fog horn'],
+    ['factory-siren', 'Factory siren'],
+    ['victory-fanfare', 'Victory fanfare']
   ]);
 
   const $ = (id) => document.getElementById(id);
@@ -1135,6 +1143,25 @@ textarea { resize: vertical; }
       tone(260, .78, 'square', .07, .03);
     } else if (selected === 'alarm-chime') {
       [0, .15, .3, .55, .7, .85].forEach((delay, index) => tone(index % 2 ? 1240 : 740, .13, 'square', .13, delay));
+    } else if (selected === 'arena-buzzer') {
+      [0, .36, .72].forEach(delay => {
+        tone(155, .34, 'sawtooth', .18, delay);
+        tone(310, .34, 'square', .12, delay);
+      });
+    } else if (selected === 'long-air-horn') {
+      tone(185, 1.65, 'sawtooth', .20);
+      tone(92, 1.65, 'square', .12);
+      tone(277, 1.15, 'sawtooth', .10, .18);
+    } else if (selected === 'fog-horn') {
+      tone(110, 1.75, 'sawtooth', .18);
+      tone(55, 1.75, 'square', .10);
+      tone(165, 1.35, 'sine', .12, .08);
+    } else if (selected === 'factory-siren') {
+      [0, .28, .56, .84, 1.12].forEach((delay, index) => tone(index % 2 ? 980 : 420, .32, 'sawtooth', .16, delay));
+      tone(210, 1.55, 'square', .09, .02);
+    } else if (selected === 'victory-fanfare') {
+      [0, .18, .36, .7, .88, 1.06].forEach((delay, index) => tone([523, 659, 784, 1047, 784, 1047][index], .22, 'square', .14, delay));
+      tone(262, 1.35, 'sawtooth', .08);
     } else {
       tone(180, .9, 'sawtooth', .16);
       tone(90, .9, 'square', .10);
@@ -1778,6 +1805,30 @@ textarea { resize: vertical; }
     } catch (error) { toast(error.message, true); }
   }
 
+  function withTemporaryRules(overrides, callback) {
+    const previousRules = state.rules;
+    state.rules = { ...state.rules, soundEnabled: true, ...overrides };
+    try { callback(); }
+    finally { state.rules = previousRules; }
+  }
+
+  function previewRulesSound(kind) {
+    unlockAudio();
+    const mainClockSound = $('rule_mainClockSound')?.value || PRESET_RULES.mainClockSound;
+    withTemporaryRules({
+      mainClockSound,
+      correctSoundEnabled: true,
+      incorrectSoundEnabled: true
+    }, () => sound(kind));
+  }
+
+  function bindRulesSoundPreviews() {
+    $('previewMainClockSoundBtn')?.addEventListener('click', () => previewRulesSound('main-end'));
+    $('previewCorrectSoundBtn')?.addEventListener('click', () => previewRulesSound('correct'));
+    $('previewIncorrectSoundBtn')?.addEventListener('click', () => previewRulesSound('incorrect'));
+    $('previewResponseSoundBtn')?.addEventListener('click', () => previewRulesSound('response-end'));
+  }
+
   function buildRulesForm() {
     const grid = $('rulesGrid');
     const buildNumberRow = ([label, key, suffix, min, max]) => {
@@ -1792,11 +1843,25 @@ textarea { resize: vertical; }
       row.innerHTML = `<label for="rule_${key}">${label}</label><input id="rule_${key}" name="${key}" type="checkbox">`;
       return row;
     };
+    const buildSoundPreviewRow = () => {
+      const row = document.createElement('div');
+      row.className = 'rule-sound-preview';
+      row.innerHTML = `
+        <button id="previewCorrectSoundBtn" type="button" class="secondary-btn">Play correct</button>
+        <button id="previewIncorrectSoundBtn" type="button" class="secondary-btn">Play incorrect</button>
+        <button id="previewResponseSoundBtn" type="button" class="secondary-btn">Play response bell</button>`;
+      return row;
+    };
     const buildMainClockSoundRow = () => {
       const row = document.createElement('div');
       row.className = 'rule-row';
       const options = MAIN_CLOCK_SOUND_OPTIONS.map(([value, label]) => `<option value="${value}">${label}</option>`).join('');
-      row.innerHTML = `<label for="rule_mainClockSound">Main clock sound<small>Loud, distinct end signal</small></label><select id="rule_mainClockSound" name="mainClockSound">${options}</select>`;
+      row.innerHTML = `
+        <label for="rule_mainClockSound">Main clock sound<small>Loud, long and distinct end signal</small></label>
+        <div class="rule-inline-control">
+          <select id="rule_mainClockSound" name="mainClockSound">${options}</select>
+          <button id="previewMainClockSoundBtn" type="button" class="secondary-btn">Play sound</button>
+        </div>`;
       return row;
     };
     const buildSection = (legend, rows, rowBuilder, className = '') => {
@@ -1810,8 +1875,13 @@ textarea { resize: vertical; }
     grid.replaceChildren(
       buildSection('Time Configurations', TIME_RULE_FIELDS, buildNumberRow),
       buildSection('Points Configurations', POINT_RULE_FIELDS, buildNumberRow),
-      buildSection('Audio Configurations', [...BOOLEAN_RULE_FIELDS, ['Main clock sound', 'mainClockSound']], row => row[1] === 'mainClockSound' ? buildMainClockSoundRow() : buildCheckRow(row), 'rules-section-full')
+      buildSection('Audio Configurations', [...BOOLEAN_RULE_FIELDS, ['Main clock sound', 'mainClockSound'], ['Sound previews', 'soundPreviews']], row => {
+        if (row[1] === 'mainClockSound') return buildMainClockSoundRow();
+        if (row[1] === 'soundPreviews') return buildSoundPreviewRow();
+        return buildCheckRow(row);
+      }, 'rules-section-full')
     );
+    bindRulesSoundPreviews();
   }
 
   function fillRulesForm(rules = state.rules) {
