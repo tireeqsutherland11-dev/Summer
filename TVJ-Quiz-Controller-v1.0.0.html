@@ -797,6 +797,8 @@ textarea { resize: vertical; }
     </form>
   </dialog>
 
+  <audio id="onlineBellPrimary" preload="auto" crossorigin="anonymous" src="https://commons.wikimedia.org/wiki/Special:Redirect/file/Synthetic_bell_sound.ogg"></audio>
+  <audio id="onlineBellBackup" preload="auto" crossorigin="anonymous" src="https://commons.wikimedia.org/wiki/Special:Redirect/file/Sound_Effect_-_Door_Bell.ogg"></audio>
   <div id="toastRegion" class="toast-region" aria-live="polite" aria-atomic="true"></div>
   <script>
 (() => {
@@ -818,7 +820,7 @@ textarea { resize: vertical; }
     speedCorrectPoints: 1,
     speedIncorrectPoints: -1,
     buzzerRoundSeconds: 240,
-    buzzerResponseSeconds: 10,
+    buzzerResponseSeconds: 5,
     buzzerCorrectPoints: 2,
     buzzerIncorrectPoints: -2,
     buzzerBeforeIdentifiedPoints: -2,
@@ -860,6 +862,7 @@ textarea { resize: vertical; }
   const deepCopy = (value) => JSON.parse(JSON.stringify(value));
   const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
   const audienceMode = new URLSearchParams(location.search).get('display') === 'audience' || location.hash === '#audience';
+  const RESPONSE_BELL_RESET_DELAY_MS = 1500;
 
   class CountdownClock {
     constructor(Seconds, onExpire) {
@@ -989,6 +992,7 @@ textarea { resize: vertical; }
   let audienceWindow = null;
   let lastAudienceState = null;
   let audioContext = null;
+  let bellAudioIndex = 0;
   let timeoutApplying = false;
   let storageFailureNotified = false;
   let channel = null;
@@ -1081,10 +1085,36 @@ textarea { resize: vertical; }
     oscillator.stop(start + duration + 0.02);
   }
 
-  function bellDing(delay = 0) {
+  function fallbackBellDing(delay = 0) {
     tone(587, .34, 'sine', .075, delay);
     tone(880, .26, 'sine', .03, delay + .006);
     tone(1175, .18, 'sine', .018, delay + .012);
+  }
+
+  function onlineBellDing(delay = 0) {
+    if (!state.rules.soundEnabled) return false;
+    if (delay > 0) {
+      setTimeout(() => onlineBellDing(0) || fallbackBellDing(), delay * 1000);
+      return true;
+    }
+    try {
+      const bellElements = [$('onlineBellPrimary'), $('onlineBellBackup')].filter(Boolean);
+      const bellAudio = bellElements[bellAudioIndex % bellElements.length];
+      if (!bellAudio) return false;
+      bellAudio.currentTime = 0;
+      const played = bellAudio.play();
+      if (played?.catch) played.catch(() => {
+        bellAudioIndex = (bellAudioIndex + 1) % bellElements.length;
+        fallbackBellDing();
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function bellDing(delay = 0) {
+    if (!onlineBellDing(delay)) fallbackBellDing(delay);
   }
 
   function sound(kind) {
@@ -1139,7 +1169,6 @@ textarea { resize: vertical; }
       if (!validateImportedState(saved)) return false;
       state = { ...defaultState(), ...saved.state };
       state.rules = { ...deepCopy(PRESET_RULES), ...(saved.state.rules || {}) };
-      if (state.rules.buzzerResponseSeconds === 5) state.rules.buzzerResponseSeconds = PRESET_RULES.buzzerResponseSeconds;
       state.teams = {
         A: { ...defaultState().teams.A, ...(saved.state.teams?.A || {}) },
         B: { ...defaultState().teams.B, ...(saved.state.teams?.B || {}) }
@@ -1153,7 +1182,7 @@ textarea { resize: vertical; }
       mainClock = new CountdownClock(0, onMainClockExpired);
       responseClock = new CountdownClock(0, onResponseClockExpired);
       mainClock.restore(saved.mainClock || { durationMs: timerDurationForRound(state.round) * 1000, remainingMs: timerDurationForRound(state.round) * 1000 }, false);
-      responseClock.restore(saved.responseClock || { durationMs: (state.round === 'alternate' ? state.rules.alternateResponseSeconds : state.rules.buzzerResponseSeconds) * 1000, remainingMs: (state.round === 'alternate' ? state.rules.alternateResponseSeconds : state.rules.buzzerResponseSeconds) * 1000 }, false);
+      responseClock.restore(saved.responseClock || { durationMs: (responseDurationForRound()) * 1000, remainingMs: (responseDurationForRound()) * 1000 }, false);
       state.status = saved.mainClock?.wasRunning || saved.responseClock?.wasRunning ? 'Recovered safely — clocks paused' : state.status;
       return true;
     } catch { return false; }
@@ -1211,6 +1240,10 @@ textarea { resize: vertical; }
     return 0;
   }
 
+  function responseDurationForRound(round = state.round) {
+    return round === 'alternate' ? state.rules.alternateResponseSeconds : state.rules.buzzerResponseSeconds;
+  }
+
   function speedMinuteLabel(minute) {
     const suffix = minute === 1 ? 'st' : minute === 2 ? 'nd' : minute === 3 ? 'rd' : 'th';
     return `${minute}${suffix} Minute`;
@@ -1257,7 +1290,7 @@ textarea { resize: vertical; }
       if (state.round === 'speed') state.speedPeriod = clamp(Number(baseline.speedPeriod) || 1, 1, state.rules.speedPeriodCount);
       if (Number.isFinite(Number(baseline.auditLength))) state.audit = state.audit.slice(0, Number(baseline.auditLength));
       mainClock.reset(timerDurationForRound(state.round));
-      responseClock.reset(state.round === 'alternate' ? state.rules.alternateResponseSeconds : state.rules.buzzerResponseSeconds);
+      responseClock.reset(responseDurationForRound());
       state.status = `${roundTitle()} reset`;
       logEvent('section_reset', `${roundTitle()} reset to its starting scores`);
       changed();
@@ -1323,7 +1356,7 @@ textarea { resize: vertical; }
     state.complete = round === 'complete';
     state.winner = '';
     mainClock.reset(timerDurationForRound(round));
-    responseClock.reset(round === 'alternate' ? state.rules.alternateResponseSeconds : state.rules.buzzerResponseSeconds);
+    responseClock.reset(responseDurationForRound(round));
     if (round === 'complete') {
       const a = state.teams.A.score;
       const b = state.teams.B.score;
@@ -1395,18 +1428,16 @@ textarea { resize: vertical; }
   }
 
   function resetMainTimer() {
-    confirmAction('Reset the main clock?', 'The current round clock will return to its full configured duration.', () => {
-      recordUndo();
-      mainClock.reset(timerDurationForRound(state.round));
-      state.status = 'Main clock reset';
-      logEvent('timer_reset', `${roundTitle()} clock reset`);
-      changed();
-    });
+    recordUndo();
+    mainClock.reset(timerDurationForRound(state.round));
+    state.status = 'Main clock reset';
+    logEvent('timer_reset', `${roundTitle()} clock reset`);
+    changed();
   }
 
   function resetResponseTimer() {
     recordUndo();
-    responseClock.reset(state.round === 'alternate' ? state.rules.alternateResponseSeconds : state.rules.buzzerResponseSeconds);
+    responseClock.reset(responseDurationForRound());
     state.status = 'Response time reset';
     logEvent('timer_reset', 'Response time reset');
     changed();
@@ -1533,7 +1564,7 @@ textarea { resize: vertical; }
     sound(outcome);
 
     if (state.round === 'alternate' || state.round === 'buzzer') {
-      responseClock.reset(state.round === 'alternate' ? state.rules.alternateResponseSeconds : state.rules.buzzerResponseSeconds);
+      responseClock.reset(responseDurationForRound());
       state.question += 1;
     } else if (state.round === 'speed') {
       state.question += 1;
@@ -1582,7 +1613,7 @@ textarea { resize: vertical; }
 
   function keyboardScore(team, direction) {
     if (!canJudgeAnswer(team)) return;
-    judgeAnswer(team, direction > 0 ? 'correct' : 'incorrect');
+    manualScore(team, keyboardScoreDelta(direction));
   }
 
   function passQuestion() {
@@ -1590,7 +1621,7 @@ textarea { resize: vertical; }
     recordUndo();
     if (state.round === 'alternate' || state.round === 'buzzer') {
       state.question += 1;
-      responseClock.reset(state.round === 'alternate' ? state.rules.alternateResponseSeconds : state.rules.buzzerResponseSeconds);
+      responseClock.reset(responseDurationForRound());
     } else if (state.round === 'speed') {
       state.question += 1;
     }
@@ -1629,6 +1660,13 @@ textarea { resize: vertical; }
     logEvent('response_clock_expired', `${roundTitle()} response clock expired`);
     sound('response-end');
     changed();
+    setTimeout(() => {
+      if (responseClock.running || responseClock.remainingMs > 0 || state.round === 'speed' || state.round === 'complete') return;
+      responseClock.reset(responseDurationForRound());
+      state.status = 'Response time ready';
+      logEvent('timer_reset', 'Response time auto-reset after bell');
+      changed();
+    }, RESPONSE_BELL_RESET_DELAY_MS);
   }
 
   function openSetup() {
@@ -1723,7 +1761,7 @@ textarea { resize: vertical; }
     state.rules = { ...state.rules, ...newRules };
     state.speedPeriod = clamp(state.speedPeriod, 1, state.rules.speedPeriodCount);
     mainClock.reset(timerDurationForRound(state.round));
-    responseClock.reset(state.round === 'alternate' ? state.rules.alternateResponseSeconds : state.rules.buzzerResponseSeconds);
+    responseClock.reset(responseDurationForRound());
     state.status = 'Rules updated; clocks reset';
     logEvent('rules_updated', 'Rules and timing updated; current clocks reset');
     $('rulesDialog').close();
