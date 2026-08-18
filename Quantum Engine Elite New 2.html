@@ -47,17 +47,19 @@
   .tab-panel[hidden] { display:none; }
   .section-title { color:#9ef; font-size:14px; margin:0 0 8px; }
   .solo-toolbar { border-color:#2a5660; box-shadow:0 0 0 1px rgba(94,234,212,.05); }
+  .configuration-solo-controls { position:static !important; inset:auto !important; width:auto !important; margin:8px 0 !important; z-index:auto !important; }
 </style>
 </head>
 <body>
-<h1>TRAIL-3 EVERY TICK · PER-PAIR: each pair's paper engine (trail-3 loss → random loss) fires its own live R1→R2→R3 · selected pair also trades live base</h1>
-
 <nav class="app-tabs" aria-label="Quantum Engine sections">
-  <button type="button" class="tab-button" id="soloTab" role="tab" aria-selected="true" aria-controls="soloPanel">Solo Recovery</button>
+  <button type="button" class="tab-button" id="soloTab" role="tab" aria-selected="true" aria-controls="soloPanel">Execute</button>
   <button type="button" class="tab-button" id="configTab" role="tab" aria-selected="false" aria-controls="configPanel">Configurations</button>
 </nav>
 
 <section class="tab-panel" id="configPanel" role="tabpanel" aria-labelledby="configTab" hidden>
+<div id="configurationSoloControls">
+  <h1>TRAIL-3 EVERY TICK · PER-PAIR: each pair's paper engine (trail-3 loss → random loss) fires its own live R1→R2→R3 · selected pair also trades live base</h1>
+</div>
 <div class="panel">
   <h2 class="section-title">Configurations</h2>
   <div class="row">
@@ -408,7 +410,7 @@
 
 <section class="tab-panel" id="soloPanel" role="tabpanel" aria-labelledby="soloTab">
 <div class="panel solo-toolbar">
-  <div class="section-title"><b>Solo Recovery</b> <small>Connection, session controls, and live status</small></div>
+  <div class="section-title"><b>Execute</b> <small>Connection, session controls, and live status</small></div>
   <div class="row">
     <button id="connect" style="background:#26a; color:#fff;">CONNECT</button>
     <button id="start" disabled>START</button>
@@ -429,6 +431,7 @@
     <span class="stat">Writeoffs (R3 LOSS) <b id="sWO">0</b></span>
     <span class="stat">Net P&L (actual) <b id="sPnl" class="pnl-pos">$0.00</b></span>
     <span class="stat" style="border-left:2px solid #2af; padding-left:8px;">TRUE P&L (per base trade) <b id="sTrueP" class="pnl-pos">$0.00</b></span>
+    <span class="stat" style="border-left:2px solid #34d399; padding-left:8px;">Live Account <b id="sLiveAccount">—</b></span>
   </div>
   <div class="row">
     <span class="stat">BASE <b id="sBase">0/0</b></span>
@@ -452,6 +455,50 @@
   <div id="log"></div>
 </div>
 </section>
+
+<script>
+  (function () {
+    var destination = document.getElementById('configurationSoloControls');
+    var liveAccount = document.getElementById('sLiveAccount');
+
+    function moveSoloControls() {
+      var labels = Array.from(document.querySelectorAll('b, strong, span, label'));
+      var label = labels.find(function (candidate) {
+        return candidate.textContent.trim().toUpperCase() === 'SOLO RECOVERY:';
+      });
+      if (!label) return;
+
+      var controls = label.parentElement;
+      while (controls && controls !== document.body &&
+             !(controls.textContent.indexOf('Use THIS only') !== -1 &&
+               controls.textContent.indexOf('Enable ALL') !== -1 &&
+               controls.textContent.indexOf('Disable ALL') !== -1)) {
+        controls = controls.parentElement;
+      }
+      if (controls && controls !== document.body && controls.parentElement !== destination) {
+        controls.classList.add('configuration-solo-controls');
+        destination.insertBefore(controls, destination.firstChild);
+      }
+    }
+
+    function updateLiveAccount() {
+      var details = typeof qeOtpAccountInfo !== 'undefined' && qeOtpAccountInfo ? qeOtpAccountInfo : null;
+      var accountId = details && (details.loginid || details.login_id || details.account_id);
+      var balance = details && details.balance;
+      if (accountId) {
+        liveAccount.textContent = accountId + (balance != null ? ' · ' + balance + ' ' + (details.currency || currency || '') : '');
+        return;
+      }
+      var status = document.getElementById('connStatus');
+      var statusText = status ? status.textContent.trim() : '';
+      liveAccount.textContent = statusText && statusText.toLowerCase() !== 'disconnected' ? statusText : '—';
+    }
+
+    new MutationObserver(moveSoloControls).observe(document.body, { childList:true, subtree:true });
+    moveSoloControls();
+    setInterval(updateLiveAccount, 1000);
+  }());
+</script>
 
 <script>
   (function () {
