@@ -423,6 +423,12 @@
 </div>
 
 <div class="panel" id="totals">
+  <div class="row" style="margin-bottom:10px; padding-bottom:10px; border-bottom:1px solid #234;">
+    <span class="stat" style="border-left:3px solid #34d399; padding-left:10px;">
+      Live account balance <b id="sLiveAccount">—</b>
+      <small id="sLiveAccountId" style="display:block; color:#789; margin-top:2px;">Connect an account to view its balance</small>
+    </span>
+  </div>
   <div class="row">
     <span class="stat">Trades <b id="sTrades">0</b></span>
     <span class="stat">Wins <b id="sWins">0</b></span>
@@ -431,7 +437,6 @@
     <span class="stat">Writeoffs (R3 LOSS) <b id="sWO">0</b></span>
     <span class="stat">Net P&L (actual) <b id="sPnl" class="pnl-pos">$0.00</b></span>
     <span class="stat" style="border-left:2px solid #2af; padding-left:8px;">TRUE P&L (per base trade) <b id="sTrueP" class="pnl-pos">$0.00</b></span>
-    <span class="stat" style="border-left:2px solid #34d399; padding-left:8px;">Live Account <b id="sLiveAccount">—</b></span>
   </div>
   <div class="row">
     <span class="stat">BASE <b id="sBase">0/0</b></span>
@@ -460,6 +465,9 @@
   (function () {
     var destination = document.getElementById('configurationSoloControls');
     var liveAccount = document.getElementById('sLiveAccount');
+    var liveAccountId = document.getElementById('sLiveAccountId');
+    var balanceSocket = null;
+    var balanceSubscribed = false;
 
     function moveSoloControls() {
       var labels = Array.from(document.querySelectorAll('b, strong, span, label'));
@@ -481,17 +489,64 @@
       }
     }
 
+    function formatBalance(value, code) {
+      var amount = Number(value);
+      if (!Number.isFinite(amount)) return '—';
+      try {
+        return new Intl.NumberFormat(undefined, {
+          style: 'currency',
+          currency: code || 'USD'
+        }).format(amount);
+      } catch (e) {
+        return amount.toFixed(2) + (code ? ' ' + code : '');
+      }
+    }
+
+    function showBalance(value, code, accountId) {
+      liveAccount.textContent = formatBalance(value, code);
+      liveAccountId.textContent = accountId || 'Live account';
+    }
+
+    function watchBalance() {
+      if (typeof ws === 'undefined' || !ws || ws.readyState !== WebSocket.OPEN) return;
+      if (balanceSocket !== ws) {
+        balanceSocket = ws;
+        balanceSubscribed = false;
+        ws.addEventListener('message', function (event) {
+          var message;
+          try { message = JSON.parse(event.data); } catch (e) { return; }
+          if (!message.balance) return;
+          var details = typeof qeOtpAccountInfo !== 'undefined' && qeOtpAccountInfo ? qeOtpAccountInfo : {};
+          showBalance(
+            message.balance.balance,
+            message.balance.currency || details.currency || currency,
+            message.balance.loginid || details.loginid || details.login_id || details.account_id
+          );
+        });
+      }
+      if (!balanceSubscribed && typeof qeOtpAccountInfo !== 'undefined' && qeOtpAccountInfo) {
+        ws.send(JSON.stringify({ balance: 1, subscribe: 1 }));
+        balanceSubscribed = true;
+      }
+    }
+
     function updateLiveAccount() {
+      watchBalance();
       var details = typeof qeOtpAccountInfo !== 'undefined' && qeOtpAccountInfo ? qeOtpAccountInfo : null;
       var accountId = details && (details.loginid || details.login_id || details.account_id);
       var balance = details && details.balance;
-      if (accountId) {
-        liveAccount.textContent = accountId + (balance != null ? ' · ' + balance + ' ' + (details.currency || currency || '') : '');
+      if (balance != null) {
+        showBalance(balance, details.currency || currency, accountId);
         return;
       }
       var status = document.getElementById('connStatus');
       var statusText = status ? status.textContent.trim() : '';
-      liveAccount.textContent = statusText && statusText.toLowerCase() !== 'disconnected' ? statusText : '—';
+      if (!statusText || statusText.toLowerCase() === 'disconnected') {
+        liveAccount.textContent = '—';
+        liveAccountId.textContent = 'Connect an account to view its balance';
+      } else if (accountId) {
+        liveAccountId.textContent = accountId;
+      }
     }
 
     new MutationObserver(moveSoloControls).observe(document.body, { childList:true, subtree:true });
