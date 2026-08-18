@@ -70,6 +70,7 @@
     <label>Token <input id="tok" type="text" value="" placeholder="your Deriv API token or PAT"></label>
     <label id="appIdLabel">App ID <input id="newApiAppId" type="text" value="338gc3SRZ9qYPje6mehlc" placeholder="UUID from developers.deriv.com" style="width:240px"></label>
     <label id="preferDemoLabel">Account <select id="preferDemo"><option value="demo" selected>Demo</option><option value="real">Real</option></select></label>
+    <label style="color:#22c55e; font-weight:bold; border:1px solid #22c55e; border-radius:6px; padding:4px 8px;"><input id="paperMode" type="checkbox" checked> 🧪 IN-HOUSE (paper) — no live contracts</label>
   </div>
   <div class="row">
     <label>Pair scope
@@ -409,7 +410,6 @@
 <div class="panel solo-toolbar">
   <div class="section-title"><b>Solo Recovery</b> <small>Connection, session controls, and live status</small></div>
   <div class="row">
-    <label style="color:#22c55e; font-weight:bold; border:1px solid #22c55e; border-radius:6px; padding:4px 8px;"><input id="paperMode" type="checkbox" checked> 🧪 IN-HOUSE (paper) — no live contracts</label>
     <button id="connect" style="background:#26a; color:#fff;">CONNECT</button>
     <button id="start" disabled>START</button>
     <button id="stop" class="stop" disabled>STOP</button>
