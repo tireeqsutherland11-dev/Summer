@@ -48,6 +48,10 @@
   .section-title { color:#9ef; font-size:14px; margin:0 0 8px; }
   .solo-toolbar { border-color:#2a5660; box-shadow:0 0 0 1px rgba(94,234,212,.05); }
   .configuration-solo-controls { position:static !important; inset:auto !important; width:auto !important; margin:8px 0 !important; z-index:auto !important; }
+  .config-persistence { justify-content:space-between; border-bottom:1px solid #1f2a36; padding-bottom:8px; margin-bottom:10px; }
+  .config-persistence button { background:#334155; color:#e2e8f0; border:1px solid #64748b; }
+  .config-persistence button:hover { background:#475569; }
+  #configSaveStatus { color:#5eead4; }
 </style>
 </head>
 <body>
@@ -62,6 +66,13 @@
 </div>
 <div class="panel">
   <h2 class="section-title">Configurations</h2>
+  <div class="row config-persistence">
+    <small>Inputs and configuration changes are saved automatically on this device.</small>
+    <span>
+      <small id="configSaveStatus" role="status" aria-live="polite">Ready</small>
+      <button type="button" id="restoreConfigDefaults" title="Clear saved settings and restore this page's preset">RESTORE DEFAULT PRESET</button>
+    </span>
+  </div>
   <div class="row">
     <label>Auth mode
       <select id="authMode">
@@ -460,6 +471,92 @@
   <div id="log"></div>
 </div>
 </section>
+
+<script>
+  (function () {
+    var storageKey = 'quantumEngineEliteConfigV1';
+    var panel = document.getElementById('configPanel');
+    var status = document.getElementById('configSaveStatus');
+    var resetButton = document.getElementById('restoreConfigDefaults');
+    var saveTimer;
+
+    function controls() {
+      return Array.from(panel.querySelectorAll('input[id], select[id], textarea[id]'));
+    }
+
+    function showStatus(message) {
+      status.textContent = message;
+      clearTimeout(showStatus.timer);
+      showStatus.timer = setTimeout(function () { status.textContent = 'Saved automatically'; }, 1800);
+    }
+
+    function readControl(control) {
+      if (control.type === 'checkbox' || control.type === 'radio') return control.checked;
+      return control.value;
+    }
+
+    function writeControl(control, value) {
+      if (control.type === 'checkbox' || control.type === 'radio') {
+        if (typeof value === 'boolean') control.checked = value;
+      } else if (value != null) {
+        control.value = String(value);
+      }
+    }
+
+    function saveConfiguration() {
+      var saved = {};
+      controls().forEach(function (control) { saved[control.id] = readControl(control); });
+      try {
+        localStorage.setItem(storageKey, JSON.stringify(saved));
+        showStatus('Saved');
+      } catch (e) {
+        status.textContent = 'Unable to save in this browser';
+      }
+    }
+
+    function restoreConfiguration() {
+      var saved;
+      try { saved = JSON.parse(localStorage.getItem(storageKey) || 'null'); } catch (e) { saved = null; }
+      if (!saved || typeof saved !== 'object') return;
+      controls().forEach(function (control) {
+        if (Object.prototype.hasOwnProperty.call(saved, control.id)) writeControl(control, saved[control.id]);
+      });
+      showStatus('Previous configuration loaded');
+    }
+
+    function restoreDefaults() {
+      controls().forEach(function (control) {
+        if (control.type === 'checkbox' || control.type === 'radio') {
+          control.checked = control.defaultChecked;
+        } else if (control.tagName === 'SELECT') {
+          var preset = Array.from(control.options).findIndex(function (option) { return option.defaultSelected; });
+          control.selectedIndex = preset < 0 ? 0 : preset;
+        } else {
+          control.value = control.defaultValue;
+        }
+        control.dispatchEvent(new Event('input', { bubbles:true }));
+        control.dispatchEvent(new Event('change', { bubbles:true }));
+      });
+      try { localStorage.removeItem(storageKey); } catch (e) {}
+      clearTimeout(saveTimer);
+      showStatus('Default preset restored');
+    }
+
+    panel.addEventListener('input', function (event) {
+      if (!event.target.matches('input[id], select[id], textarea[id]')) return;
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(saveConfiguration, 150);
+    });
+    panel.addEventListener('change', function (event) {
+      if (!event.target.matches('input[id], select[id], textarea[id]')) return;
+      clearTimeout(saveTimer);
+      saveConfiguration();
+    });
+    resetButton.addEventListener('click', restoreDefaults);
+    window.addEventListener('pagehide', saveConfiguration);
+    restoreConfiguration();
+  }());
+</script>
 
 <script>
   (function () {
