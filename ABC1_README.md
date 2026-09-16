@@ -16,7 +16,13 @@ low as `HL` or `LL`.
   the previous low (`HH + HL`).
 - Bearish: latest low is below the previous low **and** latest high is below
   the previous high (`LL + LH`).
-- Anything else is neutral/transition.
+- Anything else is reported explicitly as consolidation/transition.
+
+A high or low must differ from its predecessor by at least
+`Minimum_Structure_Change_ATR × max(ATR of both swings)` before it can become
+`HH`, `HL`, `LH`, or `LL`. Smaller changes are labelled `EQH`/`EQL` and do not
+create a directional market-structure state. This filters insignificant
+candle-to-candle changes without introducing repainting.
 
 The rules are evaluated independently on `Higher_Timeframe` and
 `Structure_Timeframe`. The dashboard reports both trends and their alignment.
@@ -39,6 +45,11 @@ The newest ZigZag leg is always provisional and is never supplied to market
 structure or chart labels. This completed-leg rule prevents confirmed labels
 from moving as new ticks arrive. The EA recalculates only when a new structure
 timeframe candle opens, so all analyzed candles are closed.
+
+The EA also retries its calculation on a two-second timer while history or ATR
+buffers are synchronizing. This keeps the dashboard and labels alive after an
+MT5 chart-timeframe change instead of waiting indefinitely for another
+structure-timeframe candle.
 
 ## Installation
 

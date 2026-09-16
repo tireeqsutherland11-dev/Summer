@@ -1,5 +1,5 @@
 #property copyright "ABC1"
-#property version   "1.00"
+#property version   "1.10"
 #property strict
 #property description "ABC1 multi-timeframe, non-repainting hybrid market-structure EA"
 
@@ -20,6 +20,7 @@ input int    Fractal_Length=3;
 input bool   ATR_Filter=true;
 input int    ATR_Period=14;
 input double Minimum_Swing_ATR=1.5;
+input double Minimum_Structure_Change_ATR=0.25;
 input int    ZigZag_Depth=12;
 input int    ZigZag_Deviation=5;
 input int    ZigZag_Backstep=3;
@@ -69,11 +70,13 @@ int      g_atr_structure=INVALID_HANDLE;
 bool LoadRates(const ENUM_TIMEFRAMES timeframe,const int requested,MqlRates &rates[])
   {
    ArraySetAsSeries(rates,true);
+   int minimum=MathMax(ATR_Period+Fractal_Length*2+10,ZigZag_Depth+10);
    int available=Bars(_Symbol,timeframe);
    int count=MathMin(requested,available);
-   if(count<MathMax(ATR_Period+Fractal_Length*2+10,ZigZag_Depth+10))
+   if(count<minimum)
       return false;
-   return CopyRates(_Symbol,timeframe,0,count,rates)==count;
+   int copied=CopyRates(_Symbol,timeframe,0,count,rates);
+   return copied>=minimum;
   }
 
 bool LoadATR(const ENUM_TIMEFRAMES timeframe,const int count,double &values[])
@@ -223,24 +226,44 @@ int BuildHybridSwings(const ENUM_TIMEFRAMES timeframe,SwingPoint &confirmed[])
    return ArraySize(confirmed);
   }
 
+bool MeaningfullyAbove(const SwingPoint &point,const SwingPoint &reference)
+  {
+   double threshold=MathMax(point.atr,reference.atr)*Minimum_Structure_Change_ATR;
+   return point.price-reference.price>threshold;
+  }
+
+bool MeaningfullyBelow(const SwingPoint &point,const SwingPoint &reference)
+  {
+   double threshold=MathMax(point.atr,reference.atr)*Minimum_Structure_Change_ATR;
+   return reference.price-point.price>threshold;
+  }
+
 void ClassifySwings(SwingPoint &swings[])
   {
-   double prior_high=0.0,prior_low=0.0;
+   SwingPoint prior_high,prior_low;
    bool have_high=false,have_low=false;
    for(int i=0;i<ArraySize(swings);i++)
      {
       if(swings[i].is_high)
         {
          if(have_high)
-            swings[i].label=swings[i].price>prior_high ? "HH" : "LH";
-         prior_high=swings[i].price;
+           {
+            if(MeaningfullyAbove(swings[i],prior_high)) swings[i].label="HH";
+            else if(MeaningfullyBelow(swings[i],prior_high)) swings[i].label="LH";
+            else swings[i].label="EQH";
+           }
+         prior_high=swings[i];
          have_high=true;
         }
       else
         {
          if(have_low)
-            swings[i].label=swings[i].price>prior_low ? "HL" : "LL";
-         prior_low=swings[i].price;
+           {
+            if(MeaningfullyAbove(swings[i],prior_low)) swings[i].label="HL";
+            else if(MeaningfullyBelow(swings[i],prior_low)) swings[i].label="LL";
+            else swings[i].label="EQL";
+           }
+         prior_low=swings[i];
          have_low=true;
         }
      }
@@ -271,20 +294,20 @@ StructureState ReadStructure(SwingPoint &swings[])
    if(!state.ready)
       return state;
 
-   if(state.latest_high.price>state.previous_high.price &&
-      state.latest_low.price>state.previous_low.price)
+   if(MeaningfullyAbove(state.latest_high,state.previous_high) &&
+      MeaningfullyAbove(state.latest_low,state.previous_low))
       state.trend=STRUCTURE_BULLISH;
-   else if(state.latest_low.price<state.previous_low.price &&
-           state.latest_high.price<state.previous_high.price)
+   else if(MeaningfullyBelow(state.latest_low,state.previous_low) &&
+           MeaningfullyBelow(state.latest_high,state.previous_high))
       state.trend=STRUCTURE_BEARISH;
    return state;
   }
 
 string TrendText(const ENUM_STRUCTURE_TREND trend)
   {
-   if(trend==STRUCTURE_BULLISH) return "BULLISH (HH + HL)";
-   if(trend==STRUCTURE_BEARISH) return "BEARISH (LL + LH)";
-   return "NEUTRAL / TRANSITION";
+   if(trend==STRUCTURE_BULLISH) return "UPTREND (HH + HL)";
+   if(trend==STRUCTURE_BEARISH) return "DOWNTREND (LL + LH)";
+   return "CONSOLIDATION / TRANSITION";
   }
 
 color LabelColor(const string label)
@@ -292,7 +315,8 @@ color LabelColor(const string label)
    if(label=="HH") return HH_Color;
    if(label=="HL") return HL_Color;
    if(label=="LH") return LH_Color;
-   return LL_Color;
+   if(label=="LL") return LL_Color;
+   return clrSilver;
   }
 
 void DrawLabels(const SwingPoint &swings[])
@@ -349,7 +373,7 @@ void DrawDashboard(const StructureState &higher,const StructureState &local,
    ObjectSetInteger(0,name,OBJPROP_SELECTABLE,false);
   }
 
-void EvaluateStructure()
+bool EvaluateStructure()
   {
    SwingPoint higher_swings[],local_swings[];
    int higher_count=BuildHybridSwings(Higher_Timeframe,higher_swings);
@@ -362,6 +386,9 @@ void EvaluateStructure()
    DrawDashboard(higher,local,higher_count,local_count);
    ChartRedraw();
 
+   if(!higher.ready || !local.ready)
+      return false;
+
    bool aligned=(higher.trend!=STRUCTURE_NEUTRAL && higher.trend==local.trend);
    datetime closed_bar=iTime(_Symbol,Structure_Timeframe,1);
    if(Alert_On_Aligned_Trend && aligned && closed_bar>0 && closed_bar!=g_last_alert_bar)
@@ -369,12 +396,26 @@ void EvaluateStructure()
       Alert("ABC1 ",_Symbol," MTF structure aligned: ",TrendText(local.trend));
       g_last_alert_bar=closed_bar;
      }
+   return true;
+  }
+
+// History and indicator buffers can still be synchronizing immediately after
+// attachment or a chart-timeframe change. Only acknowledge a bar after a
+// successful evaluation so the timer can retry without waiting for a new bar.
+void RefreshStructure(const bool force=false)
+  {
+   datetime current_bar=iTime(_Symbol,Structure_Timeframe,0);
+   if(current_bar<=0 || (!force && current_bar==g_last_structure_bar))
+      return;
+   if(EvaluateStructure())
+      g_last_structure_bar=current_bar;
   }
 
 bool InputsAreValid()
   {
    return Bars_To_Scan>=100 && Fractal_Length>=1 && ATR_Period>=2 &&
-          Minimum_Swing_ATR>=0.0 && ZigZag_Depth>=2 &&
+          Minimum_Swing_ATR>=0.0 && Minimum_Structure_Change_ATR>=0.0 &&
+          ZigZag_Depth>=2 &&
           ZigZag_Deviation>=0 && ZigZag_Backstep>=1 &&
           ZigZag_Backstep<ZigZag_Depth && Maximum_Labels>=1 &&
           Label_Font_Size>=6;
@@ -395,23 +436,31 @@ int OnInit()
       Print("ABC1: unable to create ATR handles");
       return INIT_FAILED;
      }
-   g_last_structure_bar=iTime(_Symbol,Structure_Timeframe,0);
-   EvaluateStructure();
+   g_last_structure_bar=0;
+   EventSetTimer(2);
+   RefreshStructure(true);
    return INIT_SUCCEEDED;
   }
 
 void OnTick()
   {
-   datetime current_bar=iTime(_Symbol,Structure_Timeframe,0);
-   if(current_bar>0 && current_bar!=g_last_structure_bar)
-     {
-      g_last_structure_bar=current_bar;
-      EvaluateStructure();
-     }
+   RefreshStructure();
+  }
+
+void OnTimer()
+  {
+   RefreshStructure();
+  }
+
+void OnChartEvent(const int id,const long &lparam,const double &dparam,const string &sparam)
+  {
+   if(id==CHARTEVENT_CHART_CHANGE)
+      RefreshStructure(true);
   }
 
 void OnDeinit(const int reason)
   {
+   EventKillTimer();
    if(g_atr_higher!=INVALID_HANDLE)
       IndicatorRelease(g_atr_higher);
    if(g_atr_structure!=INVALID_HANDLE)
