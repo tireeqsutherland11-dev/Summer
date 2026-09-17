@@ -15,6 +15,15 @@ names prefixed with `ScratchMT5_` so it never deletes unrelated chart objects.
 labels and structure lines. BoS, CHoCH, and liquidity-sweep lines stop at the
 first later candle whose high-to-low range touches their horizontal level.
 
+Structure breaks are deliberately selective. `Minimum_Swing_ATR` excludes
+minor pivots whose preceding leg is too small, while `Break_Buffer_ATR`
+requires price to clear a level rather than merely touch it. A BoS is drawn
+only when an established bullish trend breaks a significant HH, or an
+established bearish trend breaks a significant LL. A CHoCH is drawn only when
+price breaks the latest significant protected HL/LH against the established
+trend. `Significance_ATR_Period` controls the volatility baseline used by both
+filters.
+
 ## Install
 
 1. Copy `Scratch.mq5` to `MQL5/Experts` and compile it in MetaEditor.
