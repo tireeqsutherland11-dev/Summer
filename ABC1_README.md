@@ -24,7 +24,11 @@ A high or low must differ from its predecessor by at least
 `EQH`/`EQL` and do not create a directional market-structure state. Equal
 labels are hidden by default to keep the chart clean; set
 `Show_Equal_Labels=true` when they are useful for review. This filters
-insignificant candle-to-candle changes without introducing repainting.
+insignificant candle-to-candle changes without introducing repainting. The two
+same-side pivots must also be at least `Minimum_Structure_Separation_Bars`
+apart. Consequently, two otherwise valid highs or lows which form only a few
+candles apart are treated as equal/noise instead of producing tightly packed
+HH/LH or HL/LL labels.
 
 The rules are evaluated independently on `Higher_Timeframe` and
 `Structure_Timeframe`. The dashboard reports both trends and their alignment.
@@ -58,11 +62,15 @@ legs remain locked. This deliberately allows the newest HH/HL/LH/LL label to
 move until an opposite pivot confirms it, rather than leaving the display a
 full ZigZag leg behind current price.
 
-After a bullish structure has been established, the first LL is marked as a
-change of character (CHoCH). After a bearish structure, the first HH is marked
-the same way. Each event is shown by a short red horizontal segment starting at
-the breaking swing and a red `CHoCH` caption. `CHoCH_Line_Bars` controls the
-segment length.
+After bullish structure is established, its latest significant HL becomes the
+protected low. A bearish change of character (CHoCH) occurs only when a later
+low breaks that protected level by more than `CHoCH_Break_ATR × ATR`. The
+inverse applies to a bearish trend: its latest significant LH is protected and
+must be broken by a later high. This stateful rule avoids marking every minor
+LL/HH as a CHoCH. Each red CHoCH segment starts at the protected swing (where
+the eventual counter-trend move originates), ends at least at the breaking
+swing, and carries a `CHoCH` caption. `CHoCH_Line_Bars` sets its minimum visual
+length.
 
 The EA also retries its calculation on a two-second timer while history or ATR
 buffers are synchronizing. This keeps the dashboard and labels alive after an
