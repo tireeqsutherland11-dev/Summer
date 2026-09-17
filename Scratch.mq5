@@ -30,7 +30,7 @@ input color Bullish_BoS_Color=clrGreen;
 input color Bearish_BoS_Color=clrRed;
 input color CHoCH_Color=clrBlue;
 input color Liquidity_Sweep_Color=clrOrange;
-input bool Plot_ZigZag=true;
+input bool Show_ZigZag_Lines=true;
 input bool Plot_Swing_Labels=true;
 input bool Use_Expansion_Compression_Color=false;
 input color ZigZag_Color=clrBlack;
@@ -116,7 +116,7 @@ int PreviousSame(int at)
 void DrawPivot(int p)
   {
    if(p<0 || p>=ArraySize(pivots)) return;
-   if(p>0 && Plot_ZigZag) Line("zz_"+(string)p,pivots[p-1].time,pivots[p-1].price,pivots[p].time,pivots[p].price,ZigZag_Color,ZigZag_Style);
+   if(p>0 && Show_ZigZag_Lines) Line("zz_"+(string)p,pivots[p-1].time,pivots[p-1].price,pivots[p].time,pivots[p].price,ZigZag_Color,ZigZag_Style);
    int q=PreviousSame(p); if(q<0 || !Plot_Swing_Labels) return;
    string label; color c;
    if(pivots[p].type==1) { label=pivots[p].price>pivots[q].price?"HH":"LH"; c=label=="HH"?HH_HL_Color:LL_LH_Color; }
@@ -124,20 +124,41 @@ void DrawPivot(int p)
    if(Use_Quantitative_Labels) label=DoubleToString(MathAbs(pivots[p].price-pivots[p-1].price),_Digits);
    Text("swing_"+(string)p,pivots[p].time,pivots[p].price,label,c,pivots[p].type==1);
   }
-void BreakLine(string kind,int p,datetime now,color c,bool above)
+// Return the first later candle whose range reaches a horizontal structure
+// level. This keeps structure lines from running through candles after their
+// first contact. The supplied fallback is used when no contact is available.
+datetime FirstTouchTime(const MqlRates &rates[],const int total,
+                        const datetime origin,const datetime fallback,
+                        const double level)
   {
-   datetime middle=(datetime)(((long)pivots[p].time+(long)now)/2);
-   Line(kind+"_"+(string)p,pivots[p].time,pivots[p].price,now,pivots[p].price,c,Structure_Line_Style);
-   string txt=Use_Quantitative_Labels?(string)((now-pivots[p].time)/PeriodSeconds(Timeframe)):kind;
+   for(int i=0;i<total;i++)
+     {
+      if(rates[i].time<=origin)
+         continue;
+      if(rates[i].time>fallback)
+         break;
+      if(rates[i].low<=level && rates[i].high>=level)
+         return rates[i].time;
+     }
+   return fallback;
+  }
+void BreakLine(string kind,int p,datetime now,color c,bool above,
+               const MqlRates &rates[],const int total)
+  {
+   datetime touch=FirstTouchTime(rates,total,pivots[p].time,now,pivots[p].price);
+   datetime middle=(datetime)(((long)pivots[p].time+(long)touch)/2);
+   Line(kind+"_"+(string)p,pivots[p].time,pivots[p].price,touch,pivots[p].price,c,Structure_Line_Style);
+   string txt=Use_Quantitative_Labels?(string)((touch-pivots[p].time)/PeriodSeconds(Timeframe)):kind;
    Text(kind+"_label_"+(string)p,middle,pivots[p].price,txt,c,above);
   }
-void LiquiditySweep(int current)
+void LiquiditySweep(int current,const MqlRates &rates[],const int total)
   {
    if(!Show_Liquidity_Sweep_Lines) return; int q=PreviousSame(current); if(q<0) return;
    bool swept=(pivots[current].type==1 && pivots[current].price>pivots[q].price)||(pivots[current].type==-1 && pivots[current].price<pivots[q].price);
    if(!swept || pivots[q].broken) return;
-   Line("LS_"+(string)current,pivots[q].time,pivots[q].price,pivots[current].time,pivots[q].price,Liquidity_Sweep_Color,Structure_Line_Style);
-   Text("LS_label_"+(string)current,(datetime)(((long)pivots[q].time+(long)pivots[current].time)/2),pivots[q].price,"LS",LS_Color,pivots[current].type==1);
+   datetime touch=FirstTouchTime(rates,total,pivots[q].time,pivots[current].time,pivots[q].price);
+   Line("LS_"+(string)current,pivots[q].time,pivots[q].price,touch,pivots[q].price,Liquidity_Sweep_Color,Structure_Line_Style);
+   Text("LS_label_"+(string)current,(datetime)(((long)pivots[q].time+(long)touch)/2),pivots[q].price,"LS",LS_Color,pivots[current].type==1);
   }
 void Rebuild()
   {
@@ -182,7 +203,7 @@ void Rebuild()
    int trend=0;
    for(int p=0;p<ArraySize(pivots);p++)
      {
-      DrawPivot(p); LiquiditySweep(p);
+      DrawPivot(p); LiquiditySweep(p,r,copied);
      }
    // Breaks are evaluated on every closed bar against the latest unbroken pivot.
    for(int i=start;i<copied;i++) for(int p=ArraySize(pivots)-1;p>=0;p--)
@@ -191,8 +212,8 @@ void Rebuild()
       double ma=SMAValue(r,i,CalculateZigZagBy==LTF?LTF_SMA_Length:(CalculateZigZagBy==MTF?MTF_SMA_Length:HTF_SMA_Length)); if(ma==EMPTY_VALUE) break;
       bool br=(pivots[p].type==1&&ma>pivots[p].price)||(pivots[p].type==-1&&ma<pivots[p].price); if(!br) continue;
       int oldTrend=trend; int dir=pivots[p].type; bool choch=(oldTrend!=0&&dir!=oldTrend); pivots[p].broken=true; trend=dir;
-      if(choch&&Show_CHoCH_Lines) BreakLine("CHoCH",p,r[i].time,CHoCH_Color,dir==1);
-      else if(Show_BoS_Lines) BreakLine("BoS",p,r[i].time,dir==1?Bullish_BoS_Color:Bearish_BoS_Color,dir==1);
+      if(choch&&Show_CHoCH_Lines) BreakLine("CHoCH",p,r[i].time,CHoCH_Color,dir==1,r,copied);
+      else if(Show_BoS_Lines) BreakLine("BoS",p,r[i].time,dir==1?Bullish_BoS_Color:Bearish_BoS_Color,dir==1,r,copied);
       if(i==copied-2) { if(choch&&Alert_CHoCH) Fire(dir==1?"Bullish CHoCH":"Bearish CHoCH"); else if(!choch&&Alert_BoS) Fire(dir==1?"Bullish BoS":"Bearish BoS"); }
       break;
      }
