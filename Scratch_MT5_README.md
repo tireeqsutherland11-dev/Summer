@@ -1,69 +1,37 @@
-# Scratch — MetaTrader 5 conversion
+# Scratch — Pine market-structure port for MetaTrader 5
 
-`Scratch.mq5` converts the TradingView **indicator** in `Scratch.pine` to an
-MT5 Expert Advisor. It intentionally sends no orders: the Pine source contains
-market-structure drawing and alerts, but no entry, exit, lot-size, stop-loss,
-or take-profit rules.
+`Scratch.mq5` is an analysis-only Expert Advisor containing the swing, trend,
+Break of Structure (BOS), and Change of Character (CHoCH) logic from the
+supplied **Market Trend Analyser** Pine script. It never sends trading orders.
 
-The EA exposes the Pine script's eight reversal triggers (smart engulfment,
-SMA, ATR expansion, displacement, loopback, area, candle direction, and linear
-regression), its LTF/MTF/HTF structure modes, source selections, SMA lengths,
-line/label styling, quantitative labels, and alerts. It draws alternating
-swings, HH/HL/LH/LL labels, BoS, and CHoCH using
-names prefixed with `ScratchMT5_` so it never deletes unrelated chart objects.
-BoS and CHoCH lines stop at the first later candle whose high-to-low range
-touches their horizontal level. ZigZag and liquidity-sweep (LS) lines and
-labels are intentionally omitted to keep the chart focused on structure.
+## Identification rules
 
-## Current-trend panel
+* A swing high/low is confirmed only after `Swing_Detection_Length` bars have
+  appeared on its right. The default of 5 therefore matches
+  `ta.pivothigh(high, 5, 5)` and `ta.pivotlow(low, 5, 5)`.
+* A bullish break occurs when a completed candle crosses from at-or-below the
+  latest swing high to a close above it. A bearish break is the inverse at the
+  latest swing low.
+* Each confirmed swing may generate at most one break. Confirming a newer swing
+  resets that side's broken flag, exactly as in the Pine state machine.
+* In an undefined or already bullish market, a bullish break is BOS; in a
+  bearish market it is bullish CHoCH. Bearish classification is symmetrical.
+  A qualifying break immediately changes the persistent market structure.
 
-The MT5 EA and TradingView indicator combine the selected structure mode with a
-50-period EMA value zone. Structure remains the primary filter: the latest
-confirmed high and low must form HH + HL for an uptrend or LL + LH for a
-downtrend. The swing pair must also sit on the correct side of the EMA, current
-price must remain on that side, and the EMA must slope in the trend direction.
-Consolidation requires unclear structure plus a flat EMA intersecting recent
-candles. Other filter disagreements are reported as neutral/transition rather
-than allowing EMA direction to manufacture a trend.
+These rules intentionally replace the earlier trigger/zigzag and two-swing
+confirmation model in `Scratch.mq5`. The MA, HTF MA, session, ADX, and ATR
+sections in the supplied script are optional signal filters rather than part of
+its trend/BOS/CHoCH identification state machine, so they are not included.
 
-The EMA line and top-right status panel can be hidden independently. Inputs for
-the slope lookback, ATR-normalized flat threshold, and the percentage of recent
-candles intersecting the EMA control how the consolidation detail is described.
-Alerts are available for transitions into uptrend, downtrend, and consolidation.
-On MT5, `Show_Trend_EMA` draws the recent EMA value zone and
-`Show_Trend_Panel` displays the live classification, structure, EMA value, and
-momentum in the chart's upper-right corner. `Alert_Trend_Changes` controls
-terminal and optional push alerts when the classification changes.
-
-Structure breaks are deliberately selective. `Minimum_Swing_ATR` excludes
-minor pivots whose preceding leg is too small. A trend is confirmed only after
-the significant swings form HH + HL (uptrend) or LL + LH (downtrend). A blue
-BoS is then drawn from a previous HH to the break that forms the next HH, or
-from a previous LL to the break that forms the next LL; neutral-market breaks
-are not labelled as BoS.
-
-A transition is confirmed as a two-swing sequence rather than on its first
-countertrend break. An uptrend must form a new LL and then an LH before a red
-CHoCH is drawn from the last HL of that uptrend. A downtrend must form a new HH
-and then an HL before CHoCH is drawn from the last LH. `Significance_ATR_Period`
-sets the volatility baseline for the significant-swing filter. The default
-colors can be changed with `BoS_Color` and `CHoCH_Color`.
-
-## Install
+## Use
 
 1. Copy `Scratch.mq5` to `MQL5/Experts` and compile it in MetaEditor.
-2. Attach **Scratch** to a chart and enable Algo Trading if terminal alerts or
-   push notifications are wanted (the EA never trades).
-3. Set `Timeframe` to `PERIOD_CURRENT` to match Pine's blank Timeframe input,
-   or select an explicit analysis timeframe.
-4. Keep the same trigger, source, structure mode, and SMA settings in both
-   platforms when comparing output. The EA evaluates completed bars and
-   rebuilds its deterministic history whenever a new analysis bar opens.
+2. Attach it to a chart. It processes completed candles and rebuilds history
+   deterministically when a new analysis-timeframe candle opens.
+3. Configure swing length, history depth, colors, line style, labels, and
+   alerts. All chart objects use the `ScratchMT5_` prefix, so cleanup cannot
+   delete unrelated objects.
 
-## Platform mapping notes
-
-TradingView bar indexes have no durable MT5 equivalent, so every Pine drawing
-is anchored to its bar's `datetime`. Pine `alertcondition()` entries map to
-terminal `Alert()` messages, with optional `SendNotification()`. TradingView's
-transparent label backgrounds do not have a direct `OBJ_TEXT` equivalent;
-the MT5 labels therefore preserve text, placement, and foreground color.
+The upper-left chart comment reports `BULLISH`, `BEARISH`, or `UNDEFINED` plus
+the latest confirmed swing levels. Alerts fire only for a signal on the newly
+completed candle, not while historical objects are rebuilt.

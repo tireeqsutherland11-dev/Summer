@@ -1,306 +1,211 @@
-#property copyright "The_Forex_Steward / MT5 conversion"
-#property link      "https://www.mozilla.org/MPL/2.0/"
-#property version   "1.00"
+#property copyright "MT5 conversion"
+#property version   "2.00"
 #property strict
-#property description "MT5 port of Scratch.pine. Analysis/alerts only; the source does not place trades."
+#property description "Market-trend, BoS and CHoCH port of the supplied Pine indicator."
+#property description "Analysis and alerts only; this Expert Advisor never places orders."
 
-enum TriggerVersion { SmartEngulfments=1, SMA=2, ATRExpansion=3, Displacement=4, Loopback=5, Area=6, Candles=7, RegressionMA=8 };
-enum StructureMode { LTF=0, MTF=1, HTF=2 };
-enum PriceSource { SourceOpen=0, SourceClose=1, HL2=2, HLC3=3, OHLC4=4, HLCC4=5 };
-enum BreakSource { BreakClose=0, BreakWick=1 };
-
-input ENUM_TIMEFRAMES Timeframe=PERIOD_CURRENT;
-input TriggerVersion IndicatorVersion=SmartEngulfments;
-input StructureMode CalculateZigZagBy=MTF;
-input BreakSource InternalShiftSource=BreakClose;
-input PriceSource ReversalSource=HL2;
-input double DisplacementThreshold=0.1;
-input int TriggerPhaseLoopback=5;
-input int LTF_SMA_Length=2;
-input int MTF_SMA_Length=5;
-input int HTF_SMA_Length=15;
-input bool Show_BoS_Lines=true;
-input bool Show_CHoCH_Lines=true;
-input bool Show_Line_Labels=true;
-input bool Use_Quantitative_Labels=false;
-input int Line_Width=2;
-input ENUM_LINE_STYLE Structure_Line_Style=STYLE_SOLID;
-input color BoS_Color=clrBlue;
-input color CHoCH_Color=clrRed;
-input bool Plot_Swing_Labels=true;
-input bool Use_Expansion_Compression_Color=false;
-input color HH_HL_Color=clrGreen;
-input color LL_LH_Color=clrRed;
-input bool Alert_BoS=true;
-input bool Alert_CHoCH=true;
-input bool Alert_Swings=true;
-input bool Push_Notifications=false;
-input int Significance_ATR_Period=14;
-input double Minimum_Swing_ATR=1.0;
+input ENUM_TIMEFRAMES Analysis_Timeframe=PERIOD_CURRENT;
+input int Swing_Detection_Length=5;
 input int Bars_To_Process=5000;
 
+input bool Show_Swing_Points=true;
+input bool Show_BoS=true;
+input bool Show_CHoCH=true;
+input bool Show_Structure_Lines=true;
+input color Bullish_BoS_Color=clrTeal;
+input color Bearish_BoS_Color=clrRed;
+input color Bullish_CHoCH_Color=clrLime;
+input color Bearish_CHoCH_Color=clrMagenta;
+input ENUM_LINE_STYLE Structure_Line_Style=STYLE_DASH;
+input int Structure_Line_Width=1;
+
+input bool Alert_BoS=true;
+input bool Alert_CHoCH=true;
+input bool Push_Notifications=false;
+
 string prefix="ScratchMT5_";
-datetime lastBar=0;
-struct Pivot { datetime time; double price; int type; };
-Pivot pivots[];
+datetime last_bar=0;
+int current_structure=0; // 1 = bullish, -1 = bearish, 0 = undefined
 
-double Source(const MqlRates &r)
+bool IsPivotHigh(const MqlRates &rates[],const int total,const int index,const int length)
   {
-   if(ReversalSource==SourceOpen) return r.open;
-   if(ReversalSource==SourceClose) return r.close;
-   if(ReversalSource==HL2) return (r.high+r.low)/2.0;
-   if(ReversalSource==HLC3) return (r.high+r.low+r.close)/3.0;
-   if(ReversalSource==OHLC4) return (r.open+r.high+r.low+r.close)/4.0;
-   return (r.high+r.low+2.0*r.close)/4.0;
+   if(index-length<0 || index+length>=total) return false;
+   const double candidate=rates[index].high;
+   for(int i=index-length;i<=index+length;i++)
+      if(i!=index && rates[i].high>=candidate) return false;
+   return true;
   }
-double SMAValue(const MqlRates &r[],int i,int n)
+
+bool IsPivotLow(const MqlRates &rates[],const int total,const int index,const int length)
   {
-   if(i<n-1) return EMPTY_VALUE; double s=0;
-   for(int k=0;k<n;k++) s+=r[i-k].close;
-   return s/n;
+   if(index-length<0 || index+length>=total) return false;
+   const double candidate=rates[index].low;
+   for(int i=index-length;i<=index+length;i++)
+      if(i!=index && rates[i].low<=candidate) return false;
+   return true;
   }
-double SourceSMA(const MqlRates &r[],int i,int n)
+
+void DrawText(const string id,const datetime time,const double price,
+              const string value,const color clr,const bool above,const int size=9)
   {
-   if(i<n-1) return EMPTY_VALUE; double s=0;
-   for(int k=0;k<n;k++) s+=Source(r[i-k]);
-   return s/n;
+   string name=prefix+id;
+   if(ObjectFind(0,name)>=0 || !ObjectCreate(0,name,OBJ_TEXT,0,time,price)) return;
+   ObjectSetString(0,name,OBJPROP_TEXT,value);
+   ObjectSetInteger(0,name,OBJPROP_COLOR,clr);
+   ObjectSetInteger(0,name,OBJPROP_FONTSIZE,size);
+   ObjectSetInteger(0,name,OBJPROP_ANCHOR,above?ANCHOR_LOWER:ANCHOR_UPPER);
+   ObjectSetInteger(0,name,OBJPROP_BACK,false);
   }
-double TrueRange(const MqlRates &r[],int i)
+
+void DrawEvent(const string kind,const int direction,const datetime swing_time,
+               const double level,const MqlRates &event_bar)
   {
-   if(i<1) return r[i].high-r[i].low;
-   return MathMax(r[i].high-r[i].low,MathMax(MathAbs(r[i].high-r[i-1].close),MathAbs(r[i].low-r[i-1].close)));
-  }
-double ATRValue(const MqlRates &r[],int i,int n)
-  {
-   if(i<n) return EMPTY_VALUE; double s=0;
-   for(int k=0;k<n;k++) s+=TrueRange(r,i-k);
-   return s/n;
-  }
-double Regression(const MqlRates &r[],int i,int n)
-  {
-   if(i<n-1) return EMPTY_VALUE;
-   double sx=0,sy=0,sxy=0,sxx=0;
-   for(int k=0;k<n;k++) { double x=n-1-k,y=Source(r[i-k]); sx+=x; sy+=y; sxy+=x*y; sxx+=x*x; }
-   double d=n*sxx-sx*sx, slope=(d==0?0:(n*sxy-sx*sy)/d);
-   return (sy-slope*sx)/n+slope*(n-1);
-  }
-void Line(string id,datetime t1,double p1,datetime t2,double p2,color c,ENUM_LINE_STYLE style)
-  {
-   string n=prefix+id; if(ObjectFind(0,n)>=0) return;
-   if(ObjectCreate(0,n,OBJ_TREND,0,t1,p1,t2,p2)) { ObjectSetInteger(0,n,OBJPROP_RAY_RIGHT,false); ObjectSetInteger(0,n,OBJPROP_COLOR,c); ObjectSetInteger(0,n,OBJPROP_WIDTH,Line_Width); ObjectSetInteger(0,n,OBJPROP_STYLE,style); }
-  }
-void Text(string id,datetime t,double p,string value,color c,bool above)
-  {
-   if(!Show_Line_Labels && StringFind(id,"swing")<0) return;
-   string n=prefix+id; if(ObjectFind(0,n)>=0) return;
-   if(ObjectCreate(0,n,OBJ_TEXT,0,t,p)) { ObjectSetString(0,n,OBJPROP_TEXT,value); ObjectSetInteger(0,n,OBJPROP_COLOR,c); ObjectSetInteger(0,n,OBJPROP_FONTSIZE,9); ObjectSetInteger(0,n,OBJPROP_ANCHOR,above?ANCHOR_LOWER:ANCHOR_UPPER); ObjectSetInteger(0,n,OBJPROP_BACK,false); }
-  }
-void Fire(string message)
-  {
-   if(lastBar==0) return; Alert(_Symbol+" "+message); if(Push_Notifications) SendNotification(_Symbol+" "+message);
-  }
-void AddPivot(datetime t,double price,int type)
-  {
-   int n=ArraySize(pivots);
-   if(n>0 && pivots[n-1].type==type)
-     { if((type==1 && price>pivots[n-1].price)||(type==-1 && price<pivots[n-1].price)) { pivots[n-1].time=t; pivots[n-1].price=price; } return; }
-   ArrayResize(pivots,n+1); pivots[n].time=t; pivots[n].price=price; pivots[n].type=type;
-  }
-int PreviousSame(int at)
-  { for(int j=at-1;j>=0;j--) if(pivots[j].type==pivots[at].type) return j; return -1; }
-void DrawPivot(int p)
-  {
-   if(p<0 || p>=ArraySize(pivots)) return;
-   int q=PreviousSame(p); if(q<0 || !Plot_Swing_Labels) return;
-   string label; color c;
-   if(pivots[p].type==1) { label=pivots[p].price>pivots[q].price?"HH":"LH"; c=label=="HH"?HH_HL_Color:LL_LH_Color; }
-   else { label=pivots[p].price<pivots[q].price?"LL":"HL"; c=label=="HL"?HH_HL_Color:LL_LH_Color; }
-   if(Use_Quantitative_Labels) label=DoubleToString(MathAbs(pivots[p].price-pivots[p-1].price),_Digits);
-   Text("swing_"+(string)p,pivots[p].time,pivots[p].price,label,c,pivots[p].type==1);
-  }
-// Return the first later candle whose range reaches a horizontal structure
-// level. This keeps structure lines from running through candles after their
-// first contact. The supplied fallback is used when no contact is available.
-datetime FirstTouchTime(const MqlRates &rates[],const int total,
-                        const datetime origin,const datetime fallback,
-                        const double level)
-  {
-   for(int i=0;i<total;i++)
+   bool bos=(kind=="BOS");
+   if((bos && !Show_BoS) || (!bos && !Show_CHoCH)) return;
+   color clr=direction>0
+             ?(bos?Bullish_BoS_Color:Bullish_CHoCH_Color)
+             :(bos?Bearish_BoS_Color:Bearish_CHoCH_Color);
+   string id=kind+"_"+(direction>0?"bull_":"bear_")+(string)event_bar.time;
+   if(Show_Structure_Lines)
      {
-      if(rates[i].time<=origin)
-         continue;
-      if(rates[i].time>fallback)
-         break;
-      if(rates[i].low<=level && rates[i].high>=level)
-         return rates[i].time;
-     }
-   return fallback;
-  }
-void StructureLine(string kind,int origin,datetime event_time,color c,bool above,
-                   const MqlRates &rates[],const int total,const int direction)
-  {
-   if(origin<0 || origin>=ArraySize(pivots)) return;
-   datetime end=event_time;
-   // A continuation ends at the first retest/break of the old extreme.  For a
-   // CHoCH, require price to pass the protected pullback so that the line is
-   // not shortened by an ordinary retest immediately after that pullback.
-   if(kind=="BoS")
-      end=FirstTouchTime(rates,total,pivots[origin].time,event_time,pivots[origin].price);
-   else
-     {
-      for(int i=0;i<total;i++)
+      string name=prefix+id+"_line";
+      if(ObjectCreate(0,name,OBJ_TREND,0,swing_time,level,event_bar.time,level))
         {
-         if(rates[i].time<=pivots[origin].time) continue;
-         if(rates[i].time>event_time) break;
-         if((direction==1 && rates[i].high>pivots[origin].price) ||
-            (direction==-1 && rates[i].low<pivots[origin].price))
-           { end=rates[i].time; break; }
+         ObjectSetInteger(0,name,OBJPROP_RAY_RIGHT,false);
+         ObjectSetInteger(0,name,OBJPROP_COLOR,clr);
+         ObjectSetInteger(0,name,OBJPROP_STYLE,Structure_Line_Style);
+         ObjectSetInteger(0,name,OBJPROP_WIDTH,Structure_Line_Width);
         }
      }
-   datetime middle=(datetime)(((long)pivots[origin].time+(long)end)/2);
-   string id=kind+"_"+(string)origin+"_"+(string)event_time;
-   Line(id,pivots[origin].time,pivots[origin].price,end,pivots[origin].price,c,Structure_Line_Style);
-   ENUM_TIMEFRAMES tf=Timeframe==PERIOD_CURRENT?(ENUM_TIMEFRAMES)_Period:Timeframe;
-   string txt=Use_Quantitative_Labels?(string)((end-pivots[origin].time)/PeriodSeconds(tf)):kind;
-   Text(id+"_label",middle,pivots[origin].price,txt,c,above);
+   DrawText(id+"_label",event_bar.time,direction>0?event_bar.low:event_bar.high,
+            kind,clr,direction>0,10);
   }
-int BarIndexAtOrAfter(const MqlRates &rates[],const int total,const datetime time)
+
+void Notify(const string signal)
   {
-   int left=0,right=total-1,result=-1;
-   while(left<=right)
+   string message=_Symbol+" "+signal;
+   Alert(message);
+   if(Push_Notifications) SendNotification(message);
+  }
+
+void Rebuild(const bool permit_alerts)
+  {
+   ENUM_TIMEFRAMES timeframe=Analysis_Timeframe==PERIOD_CURRENT
+                            ?(ENUM_TIMEFRAMES)_Period:Analysis_Timeframe;
+   MqlRates rates[];
+   ArraySetAsSeries(rates,false);
+   int wanted=MathMax(100,MathMin(Bars_To_Process,100000));
+   // Start at one so decisions are based on completed candles, like a Pine
+   // alert configured "once per bar close".
+   int total=CopyRates(_Symbol,timeframe,1,wanted,rates);
+   if(total<2*Swing_Detection_Length+2) return;
+
+   ObjectsDeleteAll(0,prefix);
+   double last_high=0.0,last_low=0.0;
+   datetime last_high_time=0,last_low_time=0;
+   bool have_high=false,have_low=false;
+   bool high_broken=false,low_broken=false;
+   int structure=0;
+   string newest_signal="";
+   datetime newest_signal_time=0;
+
+   for(int i=2*Swing_Detection_Length;i<total;i++)
      {
-      int middle=(left+right)/2;
-      if(rates[middle].time>=time) { result=middle; right=middle-1; }
-      else left=middle+1;
-     }
-   return result;
-  }
-bool SignificantPivot(const int p,const MqlRates &rates[],const int total)
-  {
-   if(p<1 || p>=ArraySize(pivots)) return false;
-   int bar=BarIndexAtOrAfter(rates,total,pivots[p].time);
-   if(bar<0 || bar>=total) return false;
-   double atr=ATRValue(rates,bar,Significance_ATR_Period);
-   if(atr==EMPTY_VALUE || atr<=0) return false;
-   return MathAbs(pivots[p].price-pivots[p-1].price)>=Minimum_Swing_ATR*atr;
-  }
-void Rebuild()
-  {
-   ENUM_TIMEFRAMES tf=Timeframe==PERIOD_CURRENT?(ENUM_TIMEFRAMES)_Period:Timeframe;
-   MqlRates r[]; ArraySetAsSeries(r,false);
-   int wanted=MathMax(100,MathMin(Bars_To_Process,5000)); int copied=CopyRates(_Symbol,tf,0,wanted,r); if(copied<TriggerPhaseLoopback+20) return;
-   ObjectsDeleteAll(0,prefix); ArrayResize(pivots,0);
-   int start=MathMax(TriggerPhaseLoopback+2,HTF_SMA_Length+2);
-   int lastSignal=0,lastShift=0,lastUp=start,lastDown=start;
-   double runningHigh=0,runningLow=0; bool first=true,lastBull=false;
-   for(int i=start;i<copied;i++)
-     {
-      bool up=false,down=false;
-      if(IndicatorVersion==SmartEngulfments)
+      // ta.pivothigh/ta.pivotlow confirm a candidate Swing_Detection_Length
+      // bars later.  The candidate is therefore i-length, not the current bar.
+      int candidate=i-Swing_Detection_Length;
+      if(IsPivotHigh(rates,total,candidate,Swing_Detection_Length))
         {
-         bool starterBull=r[i-1].close<r[i-1].open && r[i].close>r[i].open && r[i].close>r[i-1].high;
-         bool starterBear=r[i-1].close>r[i-1].open && r[i].close<r[i].open && r[i].close<r[i-1].low;
-         if(lastSignal==0) { if(starterBull){lastSignal=1;runningLow=r[i].low;} else if(starterBear){lastSignal=-1;runningHigh=r[i].high;} }
-         if(lastSignal==-1) runningHigh=(runningHigh==0?r[i].high:MathMin(runningHigh,r[i].high)); else if(lastSignal==1) runningLow=(runningLow==0?r[i].low:MathMax(runningLow,r[i].low));
-         up=lastSignal==-1 && (InternalShiftSource==BreakClose?r[i].close:r[i].high)>runningHigh;
-         down=lastSignal==1 && (InternalShiftSource==BreakClose?r[i].close:r[i].low)<runningLow;
-         if(up){lastSignal=1;runningHigh=0;runningLow=r[i].low;} if(down){lastSignal=-1;runningLow=0;runningHigh=r[i].high;}
+         last_high=rates[candidate].high;
+         last_high_time=rates[candidate].time;
+         have_high=true;
+         high_broken=false;
+         if(Show_Swing_Points)
+            DrawText("swing_high_"+(string)last_high_time,last_high_time,last_high,
+                     "◆",Bearish_BoS_Color,true,7);
         }
-      else if(IndicatorVersion==SMA) { double a=SourceSMA(r,i,TriggerPhaseLoopback),b=SourceSMA(r,i-1,TriggerPhaseLoopback); up=a>b; down=a<b; }
-      else if(IndicatorVersion==ATRExpansion)
-        { double a=ATRValue(r,i,TriggerPhaseLoopback),avg=0; for(int k=0;k<TriggerPhaseLoopback;k++) avg+=ATRValue(r,i-k,TriggerPhaseLoopback); avg/=TriggerPhaseLoopback; up=a>avg&&r[i].close>r[i].open&&r[i].close>r[i-1].high; down=a>avg&&r[i].close<r[i].open&&r[i].close<r[i-1].low; }
-      else if(IndicatorVersion==Displacement)
-        { if(first){runningHigh=r[i].high;runningLow=r[i].low;first=false;} runningHigh=MathMax(runningHigh,r[i].high); runningLow=MathMin(runningLow,r[i].low); up=!lastBull&&(InternalShiftSource==BreakClose?r[i].close:r[i].high)>runningLow+DisplacementThreshold&&r[i].close>r[i].open; down=lastBull&&(InternalShiftSource==BreakClose?r[i].close:r[i].low)<runningHigh-DisplacementThreshold&&r[i].close<r[i].open; if(up||down){lastBull=up;runningHigh=r[i].high;runningLow=r[i].low;} }
-      else if(IndicatorVersion==Loopback)
-        { double s=Source(r[i]),hi=s,lo=s; for(int k=1;k<TriggerPhaseLoopback;k++){hi=MathMax(hi,Source(r[i-k]));lo=MathMin(lo,Source(r[i-k]));} up=s==hi; down=s==lo; }
-      else if(IndicatorVersion==Area) { up=r[i].close>=r[i-TriggerPhaseLoopback].close; down=!up; }
-      else if(IndicatorVersion==Candles) { up=r[i].close>r[i].open; down=r[i].close<r[i].open; }
-      else { double a=Regression(r,i,TriggerPhaseLoopback),b=Regression(r,i-1,TriggerPhaseLoopback); up=a>b; down=a<b; }
-      int signal=up?1:(down?-1:0);
-      if(up) lastUp=i-1; if(down) lastDown=i-1;
-      if(signal==0 || signal==lastShift) continue;
-      int from=signal==1?lastDown:lastUp; from=MathMax(start,MathMin(from,i));
-      int ext=from; double price=signal==1?r[from].low:r[from].high;
-      for(int k=from;k<=i;k++) if((signal==1&&r[k].low<price)||(signal==-1&&r[k].high>price)){price=signal==1?r[k].low:r[k].high;ext=k;}
-      AddPivot(r[ext].time,price,signal==1?-1:1); lastShift=signal;
-     }
-   for(int p=0;p<ArraySize(pivots);p++)
-     {
-      DrawPivot(p);
-     }
-   // Market-structure events are based on completed, significant swing
-   // sequences.  A trend requires HH+HL or LL+LH.  Continuation BoS is only
-   // possible once that trend exists and a prior HH/LL is exceeded.  A trend
-   // reversal remains pending until the countertrend extreme is followed by
-   // its confirming pullback (LL then LH, or HH then HL).
-   int trend=0,lastHigh=-1,lastLow=-1;
-   int highClass=0,lowClass=0; // +1=HH/HL, -1=LH/LL
-   int pending=0,transitionOrigin=-1,transitionExtreme=-1;
-   for(int p=0;p<ArraySize(pivots);p++)
-     {
-      if(!SignificantPivot(p,r,copied)) continue;
-      if(pivots[p].type==1)
+      if(IsPivotLow(rates,total,candidate,Swing_Detection_Length))
         {
-         if(lastHigh<0) { lastHigh=p; continue; }
-         int classification=pivots[p].price>pivots[lastHigh].price?1:-1;
-         if(trend==1 && classification==1)
-           {
-            if(highClass==1 && Show_BoS_Lines)
-               StructureLine("BoS",lastHigh,pivots[p].time,BoS_Color,true,r,copied,1);
-            if(highClass==1 && p==ArraySize(pivots)-1 && Alert_BoS) Fire("Bullish BoS");
-            pending=0;
-           }
-         else if(trend==-1 && classification==1)
-           {
-            if(pending==0) { pending=1; transitionOrigin=lastHigh; }
-            transitionExtreme=p;
-           }
-         else if(trend==1 && pending==-1 && classification==-1)
-           {
-            if(Show_CHoCH_Lines) StructureLine("CHoCH",transitionOrigin,pivots[transitionExtreme].time,CHoCH_Color,true,r,copied,-1);
-            if(p==ArraySize(pivots)-1 && Alert_CHoCH) Fire("Bearish CHoCH");
-            trend=-1; pending=0;
-           }
-         highClass=classification; lastHigh=p;
-        }
-      else
-        {
-         if(lastLow<0) { lastLow=p; continue; }
-         int classification=pivots[p].price>pivots[lastLow].price?1:-1;
-         if(trend==-1 && classification==-1)
-           {
-            if(lowClass==-1 && Show_BoS_Lines)
-               StructureLine("BoS",lastLow,pivots[p].time,BoS_Color,false,r,copied,-1);
-            if(lowClass==-1 && p==ArraySize(pivots)-1 && Alert_BoS) Fire("Bearish BoS");
-            pending=0;
-           }
-         else if(trend==1 && classification==-1)
-           {
-            if(pending==0) { pending=-1; transitionOrigin=lastLow; }
-            transitionExtreme=p;
-           }
-         else if(trend==-1 && pending==1 && classification==1)
-           {
-            if(Show_CHoCH_Lines) StructureLine("CHoCH",transitionOrigin,pivots[transitionExtreme].time,CHoCH_Color,false,r,copied,1);
-            if(p==ArraySize(pivots)-1 && Alert_CHoCH) Fire("Bullish CHoCH");
-            trend=1; pending=0;
-           }
-         lowClass=classification; lastLow=p;
+         last_low=rates[candidate].low;
+         last_low_time=rates[candidate].time;
+         have_low=true;
+         low_broken=false;
+         if(Show_Swing_Points)
+            DrawText("swing_low_"+(string)last_low_time,last_low_time,last_low,
+                     "◆",Bullish_BoS_Color,false,7);
         }
 
-      if(trend==0 && highClass!=0 && lowClass!=0)
+      // A break needs a close-through crossover and each swing level can emit
+      // only once.  This is the supplied Pine logic, evaluated chronologically.
+      bool bullish_break=have_high && !high_broken &&
+                         rates[i].close>last_high && rates[i-1].close<=last_high;
+      bool bearish_break=have_low && !low_broken &&
+                         rates[i].close<last_low && rates[i-1].close>=last_low;
+
+      if(bullish_break)
         {
-         if(highClass==1 && lowClass==1) trend=1;
-         else if(highClass==-1 && lowClass==-1) trend=-1;
+         high_broken=true;
+         string kind=(structure==-1)?"CHoCH":"BOS";
+         DrawEvent(kind,1,last_high_time,last_high,rates[i]);
+         structure=1;
+         newest_signal="Bullish "+kind;
+         newest_signal_time=rates[i].time;
+        }
+      if(bearish_break)
+        {
+         low_broken=true;
+         string kind=(structure==1)?"CHoCH":"BOS";
+         DrawEvent(kind,-1,last_low_time,last_low,rates[i]);
+         structure=-1;
+         newest_signal="Bearish "+kind;
+         newest_signal_time=rates[i].time;
         }
      }
+
+   current_structure=structure;
+   Comment("Market Structure: ",structure>0?"BULLISH":structure<0?"BEARISH":"UNDEFINED",
+           "\nLast Swing High: ",have_high?DoubleToString(last_high,_Digits):"-",
+           "\nLast Swing Low: ",have_low?DoubleToString(last_low,_Digits):"-");
    ChartRedraw();
+
+   if(permit_alerts && newest_signal_time==rates[total-1].time)
+     {
+      bool bos=StringFind(newest_signal,"BOS")>=0;
+      if((bos && Alert_BoS) || (!bos && Alert_CHoCH)) Notify(newest_signal);
+     }
   }
-int OnInit() { if(TriggerPhaseLoopback<1||LTF_SMA_Length<1||MTF_SMA_Length<1||HTF_SMA_Length<1||Significance_ATR_Period<1||Minimum_Swing_ATR<0) return INIT_PARAMETERS_INCORRECT; EventSetTimer(2); Rebuild(); return INIT_SUCCEEDED; }
-void OnDeinit(const int reason) { EventKillTimer(); ObjectsDeleteAll(0,prefix); }
-void OnTimer() { if(lastBar==0) Rebuild(); }
+
+int OnInit()
+  {
+   if(Swing_Detection_Length<1 || Swing_Detection_Length>50 ||
+      Bars_To_Process<100 || Structure_Line_Width<1 || Structure_Line_Width>5)
+      return INIT_PARAMETERS_INCORRECT;
+   EventSetTimer(2);
+   Rebuild(false);
+   return INIT_SUCCEEDED;
+  }
+
+void OnDeinit(const int reason)
+  {
+   EventKillTimer();
+   ObjectsDeleteAll(0,prefix);
+   Comment("");
+  }
+
+void OnTimer()
+  {
+   if(last_bar==0) Rebuild(false);
+  }
+
 void OnTick()
   {
-   ENUM_TIMEFRAMES tf=Timeframe==PERIOD_CURRENT?(ENUM_TIMEFRAMES)_Period:Timeframe; datetime t=iTime(_Symbol,tf,0);
-   if(t!=lastBar) { lastBar=t; Rebuild(); }
+   ENUM_TIMEFRAMES timeframe=Analysis_Timeframe==PERIOD_CURRENT
+                            ?(ENUM_TIMEFRAMES)_Period:Analysis_Timeframe;
+   datetime bar=iTime(_Symbol,timeframe,0);
+   if(bar!=last_bar)
+     {
+      bool initialized=(last_bar!=0);
+      last_bar=bar;
+      Rebuild(initialized);
+     }
   }
