@@ -16,11 +16,18 @@ touches their horizontal level. ZigZag and liquidity-sweep (LS) lines and
 labels are intentionally omitted to keep the chart focused on structure.
 
 Structure breaks are deliberately selective. `Minimum_Swing_ATR` excludes
-minor pivots whose preceding leg is too small, while `Break_Buffer_ATR`
-requires price to clear a level rather than merely touch it. The first confirmed
-significant break establishes direction and is drawn as a BoS. Later breaks in the same direction remain BoS events, while a break in the
-opposite direction is a CHoCH. `Significance_ATR_Period` controls the volatility
-baseline used by both filters.
+minor pivots whose preceding leg is too small. A trend is confirmed only after
+the significant swings form HH + HL (uptrend) or LL + LH (downtrend). A blue
+BoS is then drawn from a previous HH to the break that forms the next HH, or
+from a previous LL to the break that forms the next LL; neutral-market breaks
+are not labelled as BoS.
+
+A transition is confirmed as a two-swing sequence rather than on its first
+countertrend break. An uptrend must form a new LL and then an LH before a red
+CHoCH is drawn from the last HL of that uptrend. A downtrend must form a new HH
+and then an HL before CHoCH is drawn from the last LH. `Significance_ATR_Period`
+sets the volatility baseline for the significant-swing filter. The default
+colors can be changed with `BoS_Color` and `CHoCH_Color`.
 
 ## Install
 
