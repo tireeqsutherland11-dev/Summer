@@ -9,20 +9,18 @@ The EA exposes the Pine script's eight reversal triggers (smart engulfment,
 SMA, ATR expansion, displacement, loopback, area, candle direction, and linear
 regression), its LTF/MTF/HTF structure modes, source selections, SMA lengths,
 line/label styling, quantitative labels, and alerts. It draws alternating
-swings, HH/HL/LH/LL labels, ZigZag legs, BoS, CHoCH, and liquidity sweeps using
+swings, HH/HL/LH/LL labels, BoS, and CHoCH using
 names prefixed with `ScratchMT5_` so it never deletes unrelated chart objects.
-`Show_ZigZag_Lines` toggles the connecting ZigZag legs independently of swing
-labels and structure lines. BoS, CHoCH, and liquidity-sweep lines stop at the
-first later candle whose high-to-low range touches their horizontal level.
+BoS and CHoCH lines stop at the first later candle whose high-to-low range
+touches their horizontal level. ZigZag and liquidity-sweep (LS) lines and
+labels are intentionally omitted to keep the chart focused on structure.
 
 Structure breaks are deliberately selective. `Minimum_Swing_ATR` excludes
 minor pivots whose preceding leg is too small, while `Break_Buffer_ATR`
-requires price to clear a level rather than merely touch it. A BoS is drawn
-only when an established bullish trend breaks a significant HH, or an
-established bearish trend breaks a significant LL. A CHoCH is drawn only when
-price breaks the latest significant protected HL/LH against the established
-trend. `Significance_ATR_Period` controls the volatility baseline used by both
-filters.
+requires price to clear a level rather than merely touch it. The first confirmed
+significant break establishes direction and is drawn as a BoS. Later breaks in the same direction remain BoS events, while a break in the
+opposite direction is a CHoCH. `Significance_ATR_Period` controls the volatility
+baseline used by both filters.
 
 ## Install
 
