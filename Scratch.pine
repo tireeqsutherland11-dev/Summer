@@ -1,112 +1,157 @@
-//@version=6
-indicator("Higher High Lower Low - Live", shorttitle = "HH LL - Live", overlay = true, scale = scale.none, max_lines_count = 500, max_labels_count = 500)
+//@version=5
+// ============================================================================
+// Higher High Lower Low - Live [Scratch]
+// A functional reimplementation of the "HHLL Live" swing-structure concept.
+// (Original by LonesomeTheBlue is published closed-source on TradingView,
+//  so this is an independent rebuild of the described behavior, not a copy
+//  of the proprietary source.)
+//
+// What it does:
+//  - Detects confirmed swing highs/lows (pivots) over `len` bars each side
+//  - Classifies each confirmed pivot vs. the previous same-type pivot:
+//        High pivot -> "HH" (Higher High) or "LH" (Lower High)
+//        Low  pivot -> "HL" (Higher Low)  or "LL" (Lower Low)
+//  - Shows a "live" unconfirmed High/Low tag that follows the developing
+//    extreme bar-by-bar until it is confirmed as a real pivot (non-repainting
+//    once confirmed - the confirmed pivot's price/location never changes)
+//  - Optional zigzag line connecting pivots, or none
+//  - Optional RSI Overbought/Oversold recoloring of labels
+//  - Alerts for new highs/lows, HH/LH/HL/LL, and OB/OS combinations
+// ============================================================================
+indicator("Higher High Lower Low - Live [Scratch]", shorttitle="HHLL Live", overlay=true, max_labels_count=500, max_lines_count=500)
 
-// A swing is confirmed only after this many candles have printed on its right.
-// The unconfirmed end of the zig-zag is nevertheless updated on every tick.
-depth = input.int(5, "Pivot length", minval = 1)
-showLive = input.bool(true, "Show live swing")
-upColor = input.color(#00e68a, "High / rising color")
-downColor = input.color(#ff4d57, "Low / falling color")
-lineWidth = input.int(2, "Line width", minval = 1, maxval = 4)
-labelOffsetAtr = input.float(0.15, "Label offset (ATR)", minval = 0.0, step = 0.05, tooltip = "Moves swing captions away from their price point. The line remains attached to the exact swing.")
+// ============================ INPUTS ============================
+len          = input.int(4, "Swing Length (Pivot Legs)", minval=1, group="Settings")
+srcType      = input.string("High/Low", "Source", options=["High/Low", "Close/Open"], group="Settings")
+showMode     = input.string("Zigzag", "Show", options=["Zigzag", "Upper/Lower Bands", "None"], group="Settings")
+showLabels   = input.bool(true, "Show HH/LH/HL/LL Labels", group="Settings")
+showLive     = input.bool(true, "Show Live (unconfirmed) High/Low", group="Settings")
+onlyExtremes = input.bool(false, "Show Only HH/LL Labels", group="Settings")
 
-pivotHigh = ta.pivothigh(high, depth, depth)
-pivotLow = ta.pivotlow(low, depth, depth)
-atr = ta.atr(14)
+colHH       = input.color(#26a69a, "HH", group="Colors")
+colHL       = input.color(#ef5350, "HL", group="Colors")
+colLH       = input.color(#26a69a, "LH", group="Colors")
+colLL       = input.color(#26a69a, "LL", group="Colors")
+colHighLive = input.color(#ef5350, "Live 'High'", group="Colors")
+colLowLive  = input.color(#26a69a, "Live 'Low'", group="Colors")
+colBand     = input.color(color.gray, "Zigzag / Band Line", group="Colors")
 
-// Labels use a price-based offset so they remain close to their swing at every
-// zoom level without covering the candle or the exact end of the zig-zag.
-labelY(float price, bool isHigh, float pointAtr) =>
-    float distance = math.max(nz(pointAtr) * labelOffsetAtr, syminfo.mintick * 2)
-    price + (isHigh ? distance : -distance)
+useOBOS = input.bool(true, "Color Labels by RSI OB/OS", group="OB / OS")
+rsiLen  = input.int(14, "RSI Length", group="OB / OS")
+obLevel = input.float(65, "Overbought Level", group="OB / OS")
+osLevel = input.float(35, "Oversold Level", group="OB / OS")
+colOB   = input.color(color.new(color.orange, 0), "Overbought Color", group="OB / OS")
+colOS   = input.color(color.new(color.aqua, 0), "Oversold Color", group="OB / OS")
 
-var int lastType = 0
-var int lastX = na
-var float lastY = na
-var float previousHigh = na
-var float previousLow = na
-var float highBeforeLast = na
-var float lowBeforeLast = na
-var line lastConfirmedLine = na
-var label lastConfirmedLabel = na
+// ============================ SOURCE ============================
+highSrc = srcType == "High/Low" ? high : math.max(close, open)
+lowSrc  = srcType == "High/Low" ? low  : math.min(close, open)
 
-var int liveX = na
-var float liveY = na
-var line liveLine = na
+rsiVal = ta.rsi(close, rsiLen)
+isOB = useOBOS and rsiVal >= obLevel
+isOS = useOBOS and rsiVal <= osLevel
+
+// ============================ STATE ============================
+var float lastPivotPrice = na
+var int   lastPivotBar   = na
+var float prevHighPivot  = na
+var float prevLowPivot   = na
+
+var int   dir          = 1     // 1 = currently searching for the next HIGH, -1 = searching for the next LOW
+var float extremePrice = na
+var int   extremeBar   = na
+
+var line  liveLine  = na
 var label liveLabel = na
-var int liveAnchorX = na
 
-// Add confirmed turns to the zig-zag. If two pivots of the same kind occur in
-// succession, retain only the more extreme one and move the existing objects.
-if not na(pivotHigh)
-    int x = bar_index - depth
-    float y = pivotHigh
-    if lastType != 1
-        if not na(lastX)
-            lastConfirmedLine := line.new(lastX, lastY, x, y, xloc = xloc.bar_index, color = upColor, width = lineWidth)
-        string swingText = na(previousHigh) ? "High" : y > previousHigh ? "HH" : "LH"
-        lastConfirmedLabel := label.new(x, labelY(y, true, atr[depth]), swingText, xloc = xloc.bar_index, yloc = yloc.price, style = label.style_none, textcolor = upColor, size = size.small)
-        highBeforeLast := previousHigh
-        previousHigh := y
-        lastType := 1
-        lastX := x
-        lastY := y
-    else if y > lastY
-        lastX := x
-        lastY := y
-        label.set_xy(lastConfirmedLabel, x, labelY(y, true, atr[depth]))
-        label.set_text(lastConfirmedLabel, na(highBeforeLast) ? "High" : y > highBeforeLast ? "HH" : "LH")
-        previousHigh := y
-        if not na(lastConfirmedLine)
-            line.set_xy2(lastConfirmedLine, x, y)
+if bar_index == 0
+    extremePrice := highSrc
+    extremeBar   := bar_index
 
-if not na(pivotLow)
-    int x = bar_index - depth
-    float y = pivotLow
-    if lastType != -1
-        if not na(lastX)
-            lastConfirmedLine := line.new(lastX, lastY, x, y, xloc = xloc.bar_index, color = downColor, width = lineWidth)
-        string swingText = na(previousLow) ? "Low" : y < previousLow ? "LL" : "HL"
-        lastConfirmedLabel := label.new(x, labelY(y, false, atr[depth]), swingText, xloc = xloc.bar_index, yloc = yloc.price, style = label.style_none, textcolor = downColor, size = size.small)
-        lowBeforeLast := previousLow
-        previousLow := y
-        lastType := -1
-        lastX := x
-        lastY := y
-    else if y < lastY
-        lastX := x
-        lastY := y
-        label.set_xy(lastConfirmedLabel, x, labelY(y, false, atr[depth]))
-        label.set_text(lastConfirmedLabel, na(lowBeforeLast) ? "Low" : y < lowBeforeLast ? "LL" : "HL")
-        previousLow := y
-        if not na(lastConfirmedLine)
-            line.set_xy2(lastConfirmedLine, x, y)
+// Track the running (unconfirmed) extreme of the current leg
+if dir == 1
+    if na(extremePrice) or highSrc >= extremePrice
+        extremePrice := highSrc
+        extremeBar   := bar_index
+else
+    if na(extremePrice) or lowSrc <= extremePrice
+        extremePrice := lowSrc
+        extremeBar   := bar_index
 
-// The final leg is intentionally redrawn as price moves. This is the "live"
-// portion of the indicator and will repaint until that swing is confirmed.
-if not na(lastX)
-    if na(liveAnchorX) or liveAnchorX != lastX
-        liveAnchorX := lastX
-        liveX := bar_index
-        liveY := lastType == -1 ? high : low
+ph = ta.pivothigh(highSrc, len, len)
+pl = ta.pivotlow(lowSrc, len, len)
 
-    if lastType == -1
-        if high >= liveY
-            liveY := high
-            liveX := bar_index
-    else
-        if low <= liveY
-            liveY := low
-            liveX := bar_index
+// ---------------------------------------------------------------
+// Confirmed PIVOT HIGH
+// ---------------------------------------------------------------
+if not na(ph)
+    barAt = bar_index - len
+    string txt = na(prevHighPivot) ? "H" : (ph > prevHighPivot ? "HH" : "LH")
+    color  col = txt == "LH" ? colLH : colHH
+    if isOB
+        col := colOB
+    prevHighPivot := ph
 
-    if not na(liveLine)
-        line.delete(liveLine)
+    if showLabels and not (onlyExtremes and txt == "LH")
+        label.new(barAt, ph, txt, style=label.style_label_down, color=col, textcolor=color.white, size=size.small)
+
+    if not na(lastPivotBar) and showMode != "None"
+        line.new(lastPivotBar, lastPivotPrice, barAt, ph, color=col, width=2)
+
+    lastPivotPrice := ph
+    lastPivotBar   := barAt
+    dir            := -1
+    extremePrice   := lowSrc
+    extremeBar     := bar_index
+
+// ---------------------------------------------------------------
+// Confirmed PIVOT LOW
+// ---------------------------------------------------------------
+if not na(pl)
+    barAt = bar_index - len
+    string txt = na(prevLowPivot) ? "L" : (pl < prevLowPivot ? "LL" : "HL")
+    color  col = txt == "HL" ? colHL : colLL
+    if isOS
+        col := colOS
+    prevLowPivot := pl
+
+    if showLabels and not (onlyExtremes and txt == "HL")
+        label.new(barAt, pl, txt, style=label.style_label_up, color=col, textcolor=color.white, size=size.small)
+
+    if not na(lastPivotBar) and showMode != "None"
+        line.new(lastPivotBar, lastPivotPrice, barAt, pl, color=col, width=2)
+
+    lastPivotPrice := pl
+    lastPivotBar   := barAt
+    dir            := 1
+    extremePrice   := highSrc
+    extremeBar     := bar_index
+
+// ---------------------------------------------------------------
+// LIVE (unconfirmed) High / Low tag - moves each bar until confirmed
+// ---------------------------------------------------------------
+if showLive
     if not na(liveLabel)
         label.delete(liveLabel)
+    if not na(liveLine)
+        line.delete(liveLine)
+    if dir == 1
+        liveLabel := label.new(extremeBar, extremePrice, "High", style=label.style_label_down, color=colHighLive, textcolor=color.white, size=size.small)
+    else
+        liveLabel := label.new(extremeBar, extremePrice, "Low", style=label.style_label_up, color=colLowLive, textcolor=color.white, size=size.small)
+    if not na(lastPivotBar) and showMode == "Zigzag"
+        liveLine := line.new(lastPivotBar, lastPivotPrice, extremeBar, extremePrice, color=colBand, width=1, style=line.style_dashed)
 
-    if showLive
-        color liveColor = lastType == -1 ? upColor : downColor
-        string liveText = lastType == -1 ? "High" : "Low"
-        liveLine := line.new(lastX, lastY, liveX, liveY, xloc = xloc.bar_index, color = liveColor, width = lineWidth)
-        bool liveIsHigh = lastType == -1
-        liveLabel := label.new(liveX, labelY(liveY, liveIsHigh, atr), liveText, xloc = xloc.bar_index, yloc = yloc.price, style = liveIsHigh ? label.style_label_down : label.style_label_up, color = color.new(liveColor, 35), textcolor = color.white, size = size.small)
+// ============================ ALERTS ============================
+alertcondition(not na(ph), title="New High", message="{{ticker}}: New swing High formed")
+alertcondition(not na(pl), title="New Low", message="{{ticker}}: New swing Low formed")
+alertcondition(not na(ph) and ph > nz(prevHighPivot[1], ph), title="Higher High", message="{{ticker}}: Higher High")
+alertcondition(not na(ph) and ph <= nz(prevHighPivot[1], ph) and not na(prevHighPivot[1]), title="Lower High", message="{{ticker}}: Lower High")
+alertcondition(not na(pl) and pl < nz(prevLowPivot[1], pl), title="Lower Low", message="{{ticker}}: Lower Low")
+alertcondition(not na(pl) and pl >= nz(prevLowPivot[1], pl) and not na(prevLowPivot[1]), title="Higher Low", message="{{ticker}}: Higher Low")
+alertcondition(not na(ph) and isOB, title="New High and Overbought", message="{{ticker}}: New High while Overbought")
+alertcondition(not na(ph) and ph > nz(prevHighPivot[1], ph) and isOB, title="Higher High and Overbought", message="{{ticker}}: Higher High while Overbought")
+alertcondition(not na(ph) and ph <= nz(prevHighPivot[1], ph) and not na(prevHighPivot[1]) and isOB, title="Lower High and Overbought", message="{{ticker}}: Lower High while Overbought")
+alertcondition(not na(pl) and isOS, title="New Low and Oversold", message="{{ticker}}: New Low while Oversold")
+alertcondition(not na(pl) and pl >= nz(prevLowPivot[1], pl) and not na(prevLowPivot[1]) and isOS, title="Higher Low and Oversold", message="{{ticker}}: Higher Low while Oversold")
+alertcondition(not na(pl) and pl < nz(prevLowPivot[1], pl) and isOS, title="Lower Low and Oversold", message="{{ticker}}: Lower Low while Oversold")
