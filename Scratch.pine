@@ -36,8 +36,8 @@ if not na(pivotHigh)
     if lastType != 1
         if not na(lastX)
             lastConfirmedLine := line.new(lastX, lastY, x, y, xloc = xloc.bar_index, color = upColor, width = lineWidth)
-        string text = na(previousHigh) ? "High" : y > previousHigh ? "HH" : "LH"
-        lastConfirmedLabel := label.new(x, y, text, xloc = xloc.bar_index, yloc = yloc.price, style = label.style_none, textcolor = upColor, size = size.small)
+        string swingText = na(previousHigh) ? "High" : y > previousHigh ? "HH" : "LH"
+        lastConfirmedLabel := label.new(x, y, swingText, xloc = xloc.bar_index, yloc = yloc.price, style = label.style_none, textcolor = upColor, size = size.small)
         highBeforeLast := previousHigh
         previousHigh := y
         lastType := 1
@@ -58,8 +58,8 @@ if not na(pivotLow)
     if lastType != -1
         if not na(lastX)
             lastConfirmedLine := line.new(lastX, lastY, x, y, xloc = xloc.bar_index, color = downColor, width = lineWidth)
-        string text = na(previousLow) ? "Low" : y < previousLow ? "LL" : "HL"
-        lastConfirmedLabel := label.new(x, y, text, xloc = xloc.bar_index, yloc = yloc.price, style = label.style_none, textcolor = downColor, size = size.small)
+        string swingText = na(previousLow) ? "Low" : y < previousLow ? "LL" : "HL"
+        lastConfirmedLabel := label.new(x, y, swingText, xloc = xloc.bar_index, yloc = yloc.price, style = label.style_none, textcolor = downColor, size = size.small)
         lowBeforeLast := previousLow
         previousLow := y
         lastType := -1
