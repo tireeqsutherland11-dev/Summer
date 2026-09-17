@@ -1,6 +1,6 @@
 # ABC1 — Hybrid Multi-timeframe Market Structure EA
 
-`ABC1.mq5` is a closed-bar MetaTrader 5 Expert Advisor for charting market
+`ABC1.mq5` is a MetaTrader 5 Expert Advisor for charting market
 structure on Deriv Synthetic Indices (and any MT5 symbol with sufficient price
 history). It performs analysis only: the requested specification defines swing
 and trend qualification, but does not define entry, stop-loss, take-profit, or
@@ -41,10 +41,22 @@ A swing is published only when all enabled stages pass:
    `ZigZag_Deviation` points from the opposite leg, respects
    `ZigZag_Backstep`, and has subsequently been locked by an opposite pivot.
 
-The newest ZigZag leg is always provisional and is never supplied to market
-structure or chart labels. This completed-leg rule prevents confirmed labels
-from moving as new ticks arrive. The EA recalculates only when a new structure
-timeframe candle opens, so all analyzed candles are closed.
+Nearby same-side pivots are smoothed when they occur within
+`Swing_Smoothing_Bars`, even when a small counter-pivot lies between them. The
+cluster is represented by its highest high or lowest low, preventing several
+labels from accumulating around the same short consolidation.
+
+The newest ZigZag leg is supplied to market structure as a provisional point.
+It follows a more-extreme high or low on the live candle on every tick; older
+legs remain locked. This deliberately allows the newest HH/HL/LH/LL label to
+move until an opposite pivot confirms it, rather than leaving the display a
+full ZigZag leg behind current price.
+
+After a bullish structure has been established, the first LL is marked as a
+change of character (CHoCH). After a bearish structure, the first HH is marked
+the same way. Each event is shown by a short red horizontal segment starting at
+the breaking swing and a red `CHoCH` caption. `CHoCH_Line_Bars` controls the
+segment length.
 
 The EA also retries its calculation on a two-second timer while history or ATR
 buffers are synchronizing. This keeps the dashboard and labels alive after an

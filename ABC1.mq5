@@ -1,7 +1,7 @@
 #property copyright "ABC1"
-#property version   "1.10"
+#property version   "1.20"
 #property strict
-#property description "ABC1 multi-timeframe, non-repainting hybrid market-structure EA"
+#property description "ABC1 multi-timeframe hybrid market-structure EA with live provisional swings"
 
 enum ENUM_STRUCTURE_TREND
   {
@@ -24,6 +24,7 @@ input double Minimum_Structure_Change_ATR=0.25;
 input int    ZigZag_Depth=12;
 input int    ZigZag_Deviation=5;
 input int    ZigZag_Backstep=3;
+input int    Swing_Smoothing_Bars=5;
 
 input group "Display and alerts"
 input bool  Show_Structure_Labels=true;
@@ -34,6 +35,8 @@ input color HL_Color=clrDeepSkyBlue;
 input color LH_Color=clrOrange;
 input color LL_Color=clrTomato;
 input int   Label_Font_Size=9;
+input bool  Show_CHoCH=true;
+input int   CHoCH_Line_Bars=4;
 input bool  Alert_On_Aligned_Trend=false;
 
 struct SwingPoint
@@ -46,6 +49,8 @@ struct SwingPoint
    bool     fractal_confirmed;
    bool     atr_confirmed;
    bool     zigzag_confirmed;
+   bool     provisional;
+   bool     choch;
    string   label;
   };
 
@@ -151,8 +156,8 @@ void AppendSwing(SwingPoint &items[],const SwingPoint &point)
    items[size]=point;
   }
 
-// Produces an alternating ZigZag. The last leg remains provisional and is
-// removed, so signals already exposed to the rest of the EA cannot repaint.
+// Produces an alternating ZigZag. Nearby same-side pivots (including a small
+// counter-swing between them) are collapsed into the most extreme pivot.
 int BuildHybridSwings(const ENUM_TIMEFRAMES timeframe,SwingPoint &confirmed[])
   {
    ArrayResize(confirmed,0);
@@ -187,12 +192,28 @@ int BuildHybridSwings(const ENUM_TIMEFRAMES timeframe,SwingPoint &confirmed[])
          candidate.fractal_confirmed=true;
          candidate.atr_confirmed=true;
          candidate.zigzag_confirmed=false;
+         candidate.provisional=false;
+         candidate.choch=false;
          candidate.label="";
 
          int count=ArraySize(legs);
          if(count==0)
            {
             AppendSwing(legs,candidate);
+            continue;
+           }
+
+         // A shallow two-leg cluster is noise rather than three separate
+         // structure points. Keep its highest high/lowest low and discard the
+         // small counter-pivot between it and the new candidate.
+         if(count>=2 && legs[count-2].is_high==candidate.is_high &&
+            MathAbs(candidate.shift-legs[count-2].shift)<=Swing_Smoothing_Bars)
+           {
+            bool more_extreme=high ? candidate.price>legs[count-2].price
+                                   : candidate.price<legs[count-2].price;
+            ArrayResize(legs,count-1);
+            if(more_extreme)
+               legs[count-2]=candidate;
             continue;
            }
 
@@ -217,11 +238,27 @@ int BuildHybridSwings(const ENUM_TIMEFRAMES timeframe,SwingPoint &confirmed[])
         }
      }
 
-   // The final leg has no subsequent opposite pivot and is intentionally not
-   // published. This is the non-repainting completion rule.
+   // Publish the final leg as provisional and let the live candle extend it.
+   // Historical legs stay locked, while the point nearest price remains useful
+   // instead of lagging one complete ZigZag leg behind.
    int leg_count=ArraySize(legs);
-   for(int i=0;i<leg_count-1;i++)
-      if(legs[i].zigzag_confirmed)
+   if(leg_count>0)
+     {
+      int last=leg_count-1;
+      double live_price=legs[last].is_high ? rates[0].high : rates[0].low;
+      bool extends=legs[last].is_high ? live_price>legs[last].price
+                                     : live_price<legs[last].price;
+      if(extends)
+        {
+         legs[last].price=live_price;
+         legs[last].time=rates[0].time;
+         legs[last].shift=0;
+         legs[last].atr=atr[0];
+        }
+      legs[last].provisional=true;
+     }
+   for(int i=0;i<leg_count;i++)
+      if(legs[i].zigzag_confirmed || i==leg_count-1)
          AppendSwing(confirmed,legs[i]);
    return ArraySize(confirmed);
   }
@@ -242,6 +279,7 @@ void ClassifySwings(SwingPoint &swings[])
   {
    SwingPoint prior_high,prior_low;
    bool have_high=false,have_low=false;
+   ENUM_STRUCTURE_TREND established=STRUCTURE_NEUTRAL;
    for(int i=0;i<ArraySize(swings);i++)
      {
       if(swings[i].is_high)
@@ -265,6 +303,16 @@ void ClassifySwings(SwingPoint &swings[])
            }
          prior_low=swings[i];
          have_low=true;
+        }
+
+      swings[i].choch=((established==STRUCTURE_BULLISH && swings[i].label=="LL") ||
+                       (established==STRUCTURE_BEARISH && swings[i].label=="HH"));
+      if(have_high && have_low)
+        {
+         string high_label=prior_high.label;
+         string low_label=prior_low.label;
+         if(high_label=="HH" && low_label=="HL") established=STRUCTURE_BULLISH;
+         else if(high_label=="LH" && low_label=="LL") established=STRUCTURE_BEARISH;
         }
      }
   }
@@ -322,6 +370,7 @@ color LabelColor(const string label)
 void DrawLabels(const SwingPoint &swings[])
   {
    ObjectsDeleteAll(0,g_prefix+"SW_");
+   ObjectsDeleteAll(0,g_prefix+"CH_");
    if(!Show_Structure_Labels)
       return;
    int first=MathMax(0,ArraySize(swings)-Maximum_Labels);
@@ -342,6 +391,31 @@ void DrawLabels(const SwingPoint &swings[])
                        swings[i].is_high ? ANCHOR_LOWER : ANCHOR_UPPER);
       ObjectSetInteger(0,name,OBJPROP_SELECTABLE,false);
       ObjectSetInteger(0,name,OBJPROP_HIDDEN,true);
+
+      if(Show_CHoCH && swings[i].choch)
+        {
+         string base=g_prefix+"CH_"+IntegerToString((int)swings[i].time);
+         datetime end_time=swings[i].time+
+                           (datetime)(PeriodSeconds(Structure_Timeframe)*CHoCH_Line_Bars);
+         if(ObjectCreate(0,base+"_LINE",OBJ_TREND,0,swings[i].time,
+                         swings[i].price,end_time,swings[i].price))
+           {
+            ObjectSetInteger(0,base+"_LINE",OBJPROP_COLOR,clrRed);
+            ObjectSetInteger(0,base+"_LINE",OBJPROP_WIDTH,2);
+            ObjectSetInteger(0,base+"_LINE",OBJPROP_RAY_RIGHT,false);
+            ObjectSetInteger(0,base+"_LINE",OBJPROP_SELECTABLE,false);
+            ObjectSetInteger(0,base+"_LINE",OBJPROP_HIDDEN,true);
+           }
+         if(ObjectCreate(0,base+"_TEXT",OBJ_TEXT,0,end_time,swings[i].price))
+           {
+            ObjectSetString(0,base+"_TEXT",OBJPROP_TEXT,"CHoCH");
+            ObjectSetInteger(0,base+"_TEXT",OBJPROP_COLOR,clrRed);
+            ObjectSetInteger(0,base+"_TEXT",OBJPROP_FONTSIZE,Label_Font_Size);
+            ObjectSetInteger(0,base+"_TEXT",OBJPROP_ANCHOR,ANCHOR_LEFT);
+            ObjectSetInteger(0,base+"_TEXT",OBJPROP_SELECTABLE,false);
+            ObjectSetInteger(0,base+"_TEXT",OBJPROP_HIDDEN,true);
+           }
+        }
      }
   }
 
@@ -417,7 +491,8 @@ bool InputsAreValid()
           Minimum_Swing_ATR>=0.0 && Minimum_Structure_Change_ATR>=0.0 &&
           ZigZag_Depth>=2 &&
           ZigZag_Deviation>=0 && ZigZag_Backstep>=1 &&
-          ZigZag_Backstep<ZigZag_Depth && Maximum_Labels>=1 &&
+          ZigZag_Backstep<ZigZag_Depth && Swing_Smoothing_Bars>=0 &&
+          CHoCH_Line_Bars>=1 && Maximum_Labels>=1 &&
           Label_Font_Size>=6;
   }
 
@@ -444,7 +519,8 @@ int OnInit()
 
 void OnTick()
   {
-   RefreshStructure();
+   // The provisional point follows the live bar on every tick.
+   RefreshStructure(true);
   }
 
 void OnTimer()
