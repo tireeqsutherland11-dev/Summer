@@ -1,6 +1,6 @@
 #property copyright "The_Forex_Steward / MT5 conversion"
 #property link      "https://www.mozilla.org/MPL/2.0/"
-#property version   "1.00"
+#property version   "1.01"
 #property strict
 #property description "MT5 port of Scratch.pine. Analysis/alerts only; the source does not place trades."
 
@@ -38,9 +38,22 @@ input bool Push_Notifications=false;
 input int Significance_ATR_Period=14;
 input double Minimum_Swing_ATR=1.0;
 input int Bars_To_Process=5000;
+input bool Show_Trend_EMA=true;
+input bool Show_Trend_Panel=true;
+input int Trend_EMA_Length=50;
+input int EMA_Slope_Lookback=5;
+input double EMA_Flat_ATR_Threshold=0.05;
+input int EMA_Cut_Lookback=10;
+input double EMA_Cut_Ratio=0.5;
+input bool Alert_Trend_Changes=true;
+input color Uptrend_Color=clrLimeGreen;
+input color Downtrend_Color=clrTomato;
+input color Consolidation_Color=clrOrange;
+input color Neutral_Trend_Color=clrSilver;
 
 string prefix="ScratchMT5_";
 datetime lastBar=0;
+int previousMarketTrend=-1;
 struct Pivot { datetime time; double price; int type; };
 Pivot pivots[];
 
@@ -75,6 +88,57 @@ double ATRValue(const MqlRates &r[],int i,int n)
    if(i<n) return EMPTY_VALUE; double s=0;
    for(int k=0;k<n;k++) s+=TrueRange(r,i-k);
    return s/n;
+  }
+void EMAValues(const MqlRates &r[],const int total,const int length,double &values[])
+  {
+   ArrayResize(values,total);
+   if(total<=0) return;
+   double alpha=2.0/(length+1.0);
+   values[0]=r[0].close;
+   for(int i=1;i<total;i++) values[i]=alpha*r[i].close+(1.0-alpha)*values[i-1];
+  }
+void PanelLabel(const string id,const int x,const int y,const string value,const color c,const int size=9)
+  {
+   string n=prefix+id;
+   if(!ObjectCreate(0,n,OBJ_LABEL,0,0,0)) return;
+   ObjectSetInteger(0,n,OBJPROP_CORNER,CORNER_RIGHT_UPPER);
+   ObjectSetInteger(0,n,OBJPROP_ANCHOR,ANCHOR_RIGHT_UPPER);
+   ObjectSetInteger(0,n,OBJPROP_XDISTANCE,x);
+   ObjectSetInteger(0,n,OBJPROP_YDISTANCE,y);
+   ObjectSetInteger(0,n,OBJPROP_COLOR,c);
+   ObjectSetInteger(0,n,OBJPROP_FONTSIZE,size);
+   ObjectSetString(0,n,OBJPROP_FONT,"Arial");
+   ObjectSetString(0,n,OBJPROP_TEXT,value);
+  }
+void DrawTrendDisplay(const MqlRates &r[],const int total,const double &ema[],
+                      const int state,const string structure,const string momentum)
+  {
+   color c=state==1?Uptrend_Color:(state==2?Downtrend_Color:(state==3?Consolidation_Color:Neutral_Trend_Color));
+   if(Show_Trend_EMA)
+     {
+      int first=MathMax(1,total-250);
+      for(int i=first;i<total;i++)
+        {
+         string id="TrendEMA_"+(string)i;
+         Line(id,r[i-1].time,ema[i-1],r[i].time,ema[i],c,STYLE_SOLID);
+        }
+     }
+   if(!Show_Trend_Panel) return;
+   string trend=state==1?"UPTREND":(state==2?"DOWNTREND":(state==3?"CONSOLIDATION":"NEUTRAL / TRANSITION"));
+   string bg=prefix+"TrendPanelBG";
+   if(ObjectCreate(0,bg,OBJ_RECTANGLE_LABEL,0,0,0))
+     {
+      ObjectSetInteger(0,bg,OBJPROP_CORNER,CORNER_RIGHT_UPPER);
+      ObjectSetInteger(0,bg,OBJPROP_XDISTANCE,8); ObjectSetInteger(0,bg,OBJPROP_YDISTANCE,18);
+      ObjectSetInteger(0,bg,OBJPROP_XSIZE,260); ObjectSetInteger(0,bg,OBJPROP_YSIZE,93);
+      ObjectSetInteger(0,bg,OBJPROP_BGCOLOR,clrBlack); ObjectSetInteger(0,bg,OBJPROP_BORDER_COLOR,c);
+     }
+   PanelLabel("TrendTitle",252,25,"CURRENT TREND",clrWhite,10);
+   PanelLabel("TrendValue",18,25,trend,c,10);
+   PanelLabel("StructureTitle",252,47,"Structure",clrWhite);
+   PanelLabel("StructureValue",18,47,structure,c);
+   PanelLabel("EMAValue",252,67,(string)Trend_EMA_Length+" EMA  "+DoubleToString(ema[total-1],_Digits),c);
+   PanelLabel("MomentumValue",252,87,"Momentum  "+momentum,c);
   }
 double Regression(const MqlRates &r[],int i,int n)
   {
@@ -294,9 +358,45 @@ void Rebuild()
          else if(highClass==-1 && lowClass==-1) trend=-1;
         }
      }
+
+   // Market structure is the primary trend filter.  The EMA may confirm an
+   // established HH+HL / LL+LH sequence, but can never create one by itself.
+   double ema[]; EMAValues(r,copied,Trend_EMA_Length,ema);
+   int current=copied-1,slopeBar=current-EMA_Slope_Lookback;
+   double atr=ATRValue(r,current,14);
+   double threshold=(atr==EMPTY_VALUE?0.0:atr*EMA_Flat_ATR_Threshold);
+   double emaChange=slopeBar>=0?ema[current]-ema[slopeBar]:0.0;
+   bool emaFlat=slopeBar>=0 && MathAbs(emaChange)<=threshold;
+   bool emaRising=slopeBar>=0 && emaChange>threshold;
+   bool emaFalling=slopeBar>=0 && emaChange<-threshold;
+   int cutStart=MathMax(0,current-EMA_Cut_Lookback+1),cuts=0,samples=current-cutStart+1;
+   for(int i=cutStart;i<=current;i++)
+      if(r[i].low<=ema[i] && r[i].high>=ema[i]) cuts++;
+   bool emaThroughCandles=samples>0 && (double)cuts/samples>=EMA_Cut_Ratio;
+   bool bullishStructure=highClass==1 && lowClass==1;
+   bool bearishStructure=highClass==-1 && lowClass==-1;
+   bool structureAboveEMA=lastHigh>=0 && lastLow>=0 &&
+                          pivots[lastHigh].price>ema[current] && pivots[lastLow].price>ema[current];
+   bool structureBelowEMA=lastHigh>=0 && lastLow>=0 &&
+                          pivots[lastHigh].price<ema[current] && pivots[lastLow].price<ema[current];
+   bool marketUptrend=bullishStructure && structureAboveEMA && r[current].close>ema[current] && emaRising;
+   bool marketDowntrend=bearishStructure && structureBelowEMA && r[current].close<ema[current] && emaFalling;
+   bool marketConsolidation=!bullishStructure && !bearishStructure && emaFlat && emaThroughCandles;
+   int marketTrend=marketUptrend?1:(marketDowntrend?2:(marketConsolidation?3:0));
+   string structure=bullishStructure?"HH + HL":(bearishStructure?"LL + LH":"Mixed / Unclear");
+   string momentum=emaFlat?(emaThroughCandles?"Flat; cutting candles":"Flat"):
+                   (emaRising?"Rising":(emaFalling?"Falling":"Neutral"));
+   DrawTrendDisplay(r,copied,ema,marketTrend,structure,momentum);
+   if(Alert_Trend_Changes && previousMarketTrend>=0 && marketTrend!=previousMarketTrend)
+     {
+      if(marketTrend==1) Fire("Market trend changed to UPTREND: HH + HL above a rising "+(string)Trend_EMA_Length+" EMA");
+      else if(marketTrend==2) Fire("Market trend changed to DOWNTREND: LL + LH below a falling "+(string)Trend_EMA_Length+" EMA");
+      else if(marketTrend==3) Fire("Market trend changed to CONSOLIDATION: unclear structure and a flat EMA through price");
+     }
+   previousMarketTrend=marketTrend;
    ChartRedraw();
   }
-int OnInit() { if(TriggerPhaseLoopback<1||LTF_SMA_Length<1||MTF_SMA_Length<1||HTF_SMA_Length<1||Significance_ATR_Period<1||Minimum_Swing_ATR<0) return INIT_PARAMETERS_INCORRECT; EventSetTimer(2); Rebuild(); return INIT_SUCCEEDED; }
+int OnInit() { if(TriggerPhaseLoopback<1||LTF_SMA_Length<1||MTF_SMA_Length<1||HTF_SMA_Length<1||Significance_ATR_Period<1||Minimum_Swing_ATR<0||Trend_EMA_Length<1||EMA_Slope_Lookback<1||EMA_Flat_ATR_Threshold<0||EMA_Cut_Lookback<2||EMA_Cut_Ratio<0.0||EMA_Cut_Ratio>1.0) return INIT_PARAMETERS_INCORRECT; EventSetTimer(2); Rebuild(); return INIT_SUCCEEDED; }
 void OnDeinit(const int reason) { EventKillTimer(); ObjectsDeleteAll(0,prefix); }
 void OnTimer() { if(lastBar==0) Rebuild(); }
 void OnTick()

@@ -15,21 +15,25 @@ BoS and CHoCH lines stop at the first later candle whose high-to-low range
 touches their horizontal level. ZigZag and liquidity-sweep (LS) lines and
 labels are intentionally omitted to keep the chart focused on structure.
 
-## TradingView current-trend panel
+## Current-trend panel
 
-The TradingView indicator combines the selected structure mode with a 50-period
-EMA value zone. Structure remains the primary filter: the latest confirmed high
-and low must form HH + HL for an uptrend or LL + LH for a downtrend. The swing
-pair must also sit on the correct side of the EMA, current price must remain on
-that side, and the EMA must slope in the trend direction. Consolidation requires
-unclear structure plus a flat EMA intersecting recent candles. Other filter
-disagreements are reported as neutral/transition rather than allowing EMA
-direction to manufacture a trend.
+The MT5 EA and TradingView indicator combine the selected structure mode with a
+50-period EMA value zone. Structure remains the primary filter: the latest
+confirmed high and low must form HH + HL for an uptrend or LL + LH for a
+downtrend. The swing pair must also sit on the correct side of the EMA, current
+price must remain on that side, and the EMA must slope in the trend direction.
+Consolidation requires unclear structure plus a flat EMA intersecting recent
+candles. Other filter disagreements are reported as neutral/transition rather
+than allowing EMA direction to manufacture a trend.
 
 The EMA line and top-right status panel can be hidden independently. Inputs for
 the slope lookback, ATR-normalized flat threshold, and the percentage of recent
 candles intersecting the EMA control how the consolidation detail is described.
 Alerts are available for transitions into uptrend, downtrend, and consolidation.
+On MT5, `Show_Trend_EMA` draws the recent EMA value zone and
+`Show_Trend_Panel` displays the live classification, structure, EMA value, and
+momentum in the chart's upper-right corner. `Alert_Trend_Changes` controls
+terminal and optional push alerts when the classification changes.
 
 Structure breaks are deliberately selective. `Minimum_Swing_ATR` excludes
 minor pivots whose preceding leg is too small. A trend is confirmed only after
