@@ -1,5 +1,5 @@
 #property copyright "ABC1"
-#property version   "1.30"
+#property version   "1.40"
 #property strict
 #property description "ABC1 multi-timeframe hybrid market-structure EA with live provisional swings"
 
@@ -21,6 +21,8 @@ input bool   ATR_Filter=true;
 input int    ATR_Period=14;
 input double Minimum_Swing_ATR=1.5;
 input double Minimum_Structure_Change_ATR=0.25;
+input int    Minimum_Structure_Separation_Bars=5;
+input double CHoCH_Break_ATR=0.25;
 input int    ZigZag_Depth=12;
 input int    ZigZag_Deviation=5;
 input int    ZigZag_Backstep=3;
@@ -55,6 +57,8 @@ struct SwingPoint
    bool     zigzag_confirmed;
    bool     provisional;
    bool     choch;
+   datetime choch_origin_time;
+   double   choch_level;
    string   label;
   };
 
@@ -216,6 +220,8 @@ int BuildHybridSwings(const ENUM_TIMEFRAMES timeframe,SwingPoint &confirmed[])
          candidate.zigzag_confirmed=false;
          candidate.provisional=false;
          candidate.choch=false;
+         candidate.choch_origin_time=0;
+         candidate.choch_level=0.0;
          candidate.label="";
 
          int count=ArraySize(legs);
@@ -289,16 +295,33 @@ int BuildHybridSwings(const ENUM_TIMEFRAMES timeframe,SwingPoint &confirmed[])
    return ArraySize(confirmed);
   }
 
+bool StructurallySeparated(const SwingPoint &point,const SwingPoint &reference)
+  {
+   return Minimum_Structure_Separation_Bars<=0 ||
+          MathAbs(point.shift-reference.shift)>=Minimum_Structure_Separation_Bars;
+  }
+
 bool MeaningfullyAbove(const SwingPoint &point,const SwingPoint &reference)
   {
    double threshold=MathMax(point.atr,reference.atr)*Minimum_Structure_Change_ATR;
-   return point.price-reference.price>threshold;
+   return StructurallySeparated(point,reference) &&
+          point.price-reference.price>threshold;
   }
 
 bool MeaningfullyBelow(const SwingPoint &point,const SwingPoint &reference)
   {
    double threshold=MathMax(point.atr,reference.atr)*Minimum_Structure_Change_ATR;
-   return reference.price-point.price>threshold;
+   return StructurallySeparated(point,reference) &&
+          reference.price-point.price>threshold;
+  }
+
+bool BreaksProtectedLevel(const SwingPoint &point,const SwingPoint &protected_point,
+                          const bool upward)
+  {
+   double threshold=MathMax(point.atr,protected_point.atr)*CHoCH_Break_ATR;
+   if(upward)
+      return point.price-protected_point.price>threshold;
+   return protected_point.price-point.price>threshold;
   }
 
 void ClassifySwings(SwingPoint &swings[])
@@ -306,6 +329,8 @@ void ClassifySwings(SwingPoint &swings[])
    SwingPoint prior_high,prior_low;
    bool have_high=false,have_low=false;
    ENUM_STRUCTURE_TREND established=STRUCTURE_NEUTRAL;
+   SwingPoint protected_high,protected_low;
+   bool have_protected_high=false,have_protected_low=false;
    for(int i=0;i<ArraySize(swings);i++)
      {
       if(swings[i].is_high)
@@ -331,14 +356,52 @@ void ClassifySwings(SwingPoint &swings[])
          have_low=true;
         }
 
-      swings[i].choch=((established==STRUCTURE_BULLISH && swings[i].label=="LL") ||
-                       (established==STRUCTURE_BEARISH && swings[i].label=="HH"));
-      if(have_high && have_low)
+      // A CHoCH is a break of the protected pullback which supported the
+      // established trend.  It is not every newly classified LL or HH.  The
+      // line is therefore anchored to the level where the counter-trend move
+      // actually begins, rather than to the later breaking pivot.
+      bool changed=false;
+      if(established==STRUCTURE_BULLISH && !swings[i].is_high &&
+         have_protected_low &&
+         BreaksProtectedLevel(swings[i],protected_low,false))
+        {
+         swings[i].choch=true;
+         swings[i].choch_origin_time=protected_low.time;
+         swings[i].choch_level=protected_low.price;
+         established=STRUCTURE_NEUTRAL;
+         have_protected_low=false;
+         changed=true;
+        }
+      else if(established==STRUCTURE_BEARISH && swings[i].is_high &&
+              have_protected_high &&
+              BreaksProtectedLevel(swings[i],protected_high,true))
+        {
+         swings[i].choch=true;
+         swings[i].choch_origin_time=protected_high.time;
+         swings[i].choch_level=protected_high.price;
+         established=STRUCTURE_NEUTRAL;
+         have_protected_high=false;
+         changed=true;
+        }
+
+      if(!changed && have_high && have_low)
         {
          string high_label=prior_high.label;
          string low_label=prior_low.label;
-         if(high_label=="HH" && low_label=="HL") established=STRUCTURE_BULLISH;
-         else if(high_label=="LH" && low_label=="LL") established=STRUCTURE_BEARISH;
+         if(high_label=="HH" && low_label=="HL")
+           {
+            established=STRUCTURE_BULLISH;
+            protected_low=prior_low;
+            have_protected_low=true;
+            have_protected_high=false;
+           }
+         else if(high_label=="LH" && low_label=="LL")
+           {
+            established=STRUCTURE_BEARISH;
+            protected_high=prior_high;
+            have_protected_high=true;
+            have_protected_low=false;
+           }
         }
      }
   }
@@ -424,10 +487,13 @@ void DrawLabels(const SwingPoint &swings[])
       if(Show_CHoCH && swings[i].choch)
         {
          string base=g_prefix+"CH_"+IntegerToString((int)swings[i].time);
-         datetime end_time=swings[i].time+
-                           (datetime)(PeriodSeconds(Structure_Timeframe)*CHoCH_Line_Bars);
-         if(ObjectCreate(0,base+"_LINE",OBJ_TREND,0,swings[i].time,
-                         swings[i].price,end_time,swings[i].price))
+         datetime origin_time=swings[i].choch_origin_time;
+         double level=swings[i].choch_level;
+         datetime minimum_end=origin_time+
+                              (datetime)(PeriodSeconds(Structure_Timeframe)*CHoCH_Line_Bars);
+         datetime end_time=(swings[i].time>minimum_end ? swings[i].time : minimum_end);
+         if(ObjectCreate(0,base+"_LINE",OBJ_TREND,0,origin_time,
+                         level,end_time,level))
            {
             ObjectSetInteger(0,base+"_LINE",OBJPROP_COLOR,clrRed);
             ObjectSetInteger(0,base+"_LINE",OBJPROP_WIDTH,2);
@@ -435,7 +501,7 @@ void DrawLabels(const SwingPoint &swings[])
             ObjectSetInteger(0,base+"_LINE",OBJPROP_SELECTABLE,false);
             ObjectSetInteger(0,base+"_LINE",OBJPROP_HIDDEN,true);
            }
-         if(ObjectCreate(0,base+"_TEXT",OBJ_TEXT,0,end_time,swings[i].price))
+         if(ObjectCreate(0,base+"_TEXT",OBJ_TEXT,0,end_time,level))
            {
             ObjectSetString(0,base+"_TEXT",OBJPROP_TEXT,"CHoCH");
             ObjectSetInteger(0,base+"_TEXT",OBJPROP_COLOR,clrRed);
@@ -518,6 +584,7 @@ bool InputsAreValid()
   {
    return Bars_To_Scan>=100 && Fractal_Length>=1 && ATR_Period>=2 &&
           Minimum_Swing_ATR>=0.0 && Minimum_Structure_Change_ATR>=0.0 &&
+          Minimum_Structure_Separation_Bars>=0 && CHoCH_Break_ATR>=0.0 &&
           ZigZag_Depth>=2 &&
           ZigZag_Deviation>=0 && ZigZag_Backstep>=1 &&
           ZigZag_Backstep<ZigZag_Depth && Swing_Smoothing_Bars>=0 &&
