@@ -30,22 +30,34 @@ apart. Consequently, two otherwise valid highs or lows which form only a few
 candles apart are treated as equal/noise instead of producing tightly packed
 HH/LH or HL/LL labels.
 
-The rules are evaluated independently on `Higher_Timeframe` and
-`Structure_Timeframe`. The dashboard reports both trends and their alignment.
-Labels are drawn from the structure timeframe.
+Trend is evaluated only on `Structure_Timeframe` (H1 by default). A confirmed
+uptrend requires both higher highs and higher lows; a confirmed downtrend
+requires both lower lows and lower highs. `Setup_Timeframe` (M15 by default)
+never votes on or overrides that direction. Instead, it supplies potential
+pullback locations: in an uptrend only higher lows are eligible, while in a
+downtrend only lower highs are eligible.
+
+Within the latest 50 closed setup bars, ABC1 ranks eligible pullbacks by their
+ATR-normalized, two-sided prominence (the smaller price leg into or out of the
+pivot). Only the two strongest points are drawn. No setup points are shown while
+structure is neutral, so setup sensitivity cannot create a trend by itself.
+`Setup_Sensitivity` defaults to `0.75`, reducing the setup timeframe's ATR
+excursion and reversal thresholds to 75% of the structure thresholds while
+leaving the structure trend calculation unchanged.
 
 `Bars_To_Scan` is an exact per-timeframe depth. The EA waits for all requested
 bars and matching ATR values to load instead of silently analyzing a shorter
 window while a newly selected timeframe is synchronizing. Thus, a value of
-1000 analyzes 1000 bars on both the higher and structure timeframes regardless
+1000 analyzes 1000 bars on both the structure and setup timeframes regardless
 of which timeframe values are selected.
 
-When the structure timeframe is lower than the chart timeframe, many valid
+When the setup timeframe is lower than the chart timeframe, many valid
 structure points can fall inside one visible chart candle. By default,
 `Avoid_Label_Overlap` keeps only the newest label within each
 `Minimum_Label_Chart_Bars` interval. This is display-only filtering: the
-underlying swing construction, classification, trend state, and alerts still
-use the complete scan. Disable it when every lower-timeframe label is desired.
+underlying swing construction and classification still use the complete scan;
+the final setup-point selection uses the required 50-bar window. Disable it when
+every lower-timeframe label is desired.
 
 ## Hybrid swing pipeline
 
