@@ -39,8 +39,10 @@ downtrend only lower highs are eligible.
 
 Within the latest 50 closed setup bars, ABC1 ranks eligible pullbacks by their
 ATR-normalized, two-sided prominence (the smaller price leg into or out of the
-pivot). Only the two strongest points are drawn. No setup points are shown while
-structure is neutral, so setup sensitivity cannot create a trend by itself.
+pivot). Only the two strongest setup points are drawn alongside the structure
+timeframe's swing labels. No setup points are shown while structure is neutral,
+but the structure labels remain visible, so a consolidating market no longer
+leaves the chart blank. Setup sensitivity cannot create a trend by itself.
 `Setup_Sensitivity` defaults to `0.75`, reducing the setup timeframe's ATR
 excursion and reversal thresholds to 75% of the structure thresholds while
 leaving the structure trend calculation unchanged.

@@ -1,5 +1,5 @@
 #property copyright "ABC1"
-#property version   "1.50"
+#property version   "1.51"
 #property strict
 #property description "ABC1 multi-timeframe hybrid market-structure EA with live provisional swings"
 
@@ -541,6 +541,36 @@ int SelectSetupPoints(const SwingPoint &swings[],const ENUM_STRUCTURE_TREND tren
    return ArraySize(selected);
   }
 
+// Keep the structure layer visible even when the current market is neutral and
+// therefore has no trend-compatible setup points. Setup points are added to the
+// same chronological list, with duplicates removed when both timeframes happen
+// to identify the same pivot.
+void AddDisplayPoint(SwingPoint &display[],const SwingPoint &point)
+  {
+   int size=ArraySize(display);
+   for(int i=0;i<size;i++)
+      if(display[i].time==point.time && display[i].is_high==point.is_high)
+         return; // Preserve structure metadata such as a CHoCH marker.
+
+   int position=size;
+   while(position>0 && display[position-1].time>point.time)
+      position--;
+   ArrayResize(display,size+1);
+   for(int i=size;i>position;i--)
+      display[i]=display[i-1];
+   display[position]=point;
+  }
+
+void BuildDisplayPoints(const SwingPoint &structure_swings[],
+                        const SwingPoint &setup_points[],SwingPoint &display[])
+  {
+   ArrayResize(display,0);
+   for(int i=0;i<ArraySize(structure_swings);i++)
+      AddDisplayPoint(display,structure_swings[i]);
+   for(int i=0;i<ArraySize(setup_points);i++)
+      AddDisplayPoint(display,setup_points[i]);
+  }
+
 void DrawLabels(const SwingPoint &swings[])
   {
    ObjectsDeleteAll(0,g_prefix+"SW_");
@@ -643,14 +673,15 @@ void DrawDashboard(const StructureState &structure,const int structure_swings,
 
 bool EvaluateStructure()
   {
-   SwingPoint structure_swings[],setup_swings[],setup_points[];
+   SwingPoint structure_swings[],setup_swings[],setup_points[],display_points[];
    int structure_count=BuildHybridSwings(Structure_Timeframe,structure_swings);
    BuildHybridSwings(Setup_Timeframe,setup_swings,true);
    ClassifySwings(structure_swings);
    ClassifySwings(setup_swings);
    StructureState structure=ReadStructure(structure_swings);
    int setup_count=SelectSetupPoints(setup_swings,structure.trend,setup_points);
-   DrawLabels(setup_points);
+   BuildDisplayPoints(structure_swings,setup_points,display_points);
+   DrawLabels(display_points);
    DrawDashboard(structure,structure_count,setup_count);
    ChartRedraw();
 
