@@ -1,5 +1,5 @@
 //@version=6
-indicator("Higher High Lower Low - Live", shorttitle = "HH LL - Live", overlay = true, max_lines_count = 500, max_labels_count = 500)
+indicator("Higher High Lower Low - Live", shorttitle = "HH LL - Live", overlay = true, scale = scale.none, max_lines_count = 500, max_labels_count = 500)
 
 // A swing is confirmed only after this many candles have printed on its right.
 // The unconfirmed end of the zig-zag is nevertheless updated on every tick.
@@ -8,9 +8,17 @@ showLive = input.bool(true, "Show live swing")
 upColor = input.color(#00e68a, "High / rising color")
 downColor = input.color(#ff4d57, "Low / falling color")
 lineWidth = input.int(2, "Line width", minval = 1, maxval = 4)
+labelOffsetAtr = input.float(0.15, "Label offset (ATR)", minval = 0.0, step = 0.05, tooltip = "Moves swing captions away from their price point. The line remains attached to the exact swing.")
 
 pivotHigh = ta.pivothigh(high, depth, depth)
 pivotLow = ta.pivotlow(low, depth, depth)
+atr = ta.atr(14)
+
+// Labels use a price-based offset so they remain close to their swing at every
+// zoom level without covering the candle or the exact end of the zig-zag.
+labelY(float price, bool isHigh, float pointAtr) =>
+    float distance = math.max(nz(pointAtr) * labelOffsetAtr, syminfo.mintick * 2)
+    price + (isHigh ? distance : -distance)
 
 var int lastType = 0
 var int lastX = na
@@ -37,7 +45,7 @@ if not na(pivotHigh)
         if not na(lastX)
             lastConfirmedLine := line.new(lastX, lastY, x, y, xloc = xloc.bar_index, color = upColor, width = lineWidth)
         string swingText = na(previousHigh) ? "High" : y > previousHigh ? "HH" : "LH"
-        lastConfirmedLabel := label.new(x, y, swingText, xloc = xloc.bar_index, yloc = yloc.price, style = label.style_none, textcolor = upColor, size = size.small)
+        lastConfirmedLabel := label.new(x, labelY(y, true, atr[depth]), swingText, xloc = xloc.bar_index, yloc = yloc.price, style = label.style_none, textcolor = upColor, size = size.small)
         highBeforeLast := previousHigh
         previousHigh := y
         lastType := 1
@@ -46,7 +54,7 @@ if not na(pivotHigh)
     else if y > lastY
         lastX := x
         lastY := y
-        label.set_xy(lastConfirmedLabel, x, y)
+        label.set_xy(lastConfirmedLabel, x, labelY(y, true, atr[depth]))
         label.set_text(lastConfirmedLabel, na(highBeforeLast) ? "High" : y > highBeforeLast ? "HH" : "LH")
         previousHigh := y
         if not na(lastConfirmedLine)
@@ -59,7 +67,7 @@ if not na(pivotLow)
         if not na(lastX)
             lastConfirmedLine := line.new(lastX, lastY, x, y, xloc = xloc.bar_index, color = downColor, width = lineWidth)
         string swingText = na(previousLow) ? "Low" : y < previousLow ? "LL" : "HL"
-        lastConfirmedLabel := label.new(x, y, swingText, xloc = xloc.bar_index, yloc = yloc.price, style = label.style_none, textcolor = downColor, size = size.small)
+        lastConfirmedLabel := label.new(x, labelY(y, false, atr[depth]), swingText, xloc = xloc.bar_index, yloc = yloc.price, style = label.style_none, textcolor = downColor, size = size.small)
         lowBeforeLast := previousLow
         previousLow := y
         lastType := -1
@@ -68,7 +76,7 @@ if not na(pivotLow)
     else if y < lastY
         lastX := x
         lastY := y
-        label.set_xy(lastConfirmedLabel, x, y)
+        label.set_xy(lastConfirmedLabel, x, labelY(y, false, atr[depth]))
         label.set_text(lastConfirmedLabel, na(lowBeforeLast) ? "Low" : y < lowBeforeLast ? "LL" : "HL")
         previousLow := y
         if not na(lastConfirmedLine)
@@ -100,4 +108,5 @@ if not na(lastX)
         color liveColor = lastType == -1 ? upColor : downColor
         string liveText = lastType == -1 ? "High" : "Low"
         liveLine := line.new(lastX, lastY, liveX, liveY, xloc = xloc.bar_index, color = liveColor, width = lineWidth)
-        liveLabel := label.new(liveX, liveY, liveText, xloc = xloc.bar_index, yloc = yloc.price, style = lastType == -1 ? label.style_label_down : label.style_label_up, color = color.new(liveColor, 35), textcolor = color.white, size = size.small)
+        bool liveIsHigh = lastType == -1
+        liveLabel := label.new(liveX, labelY(liveY, liveIsHigh, atr), liveText, xloc = xloc.bar_index, yloc = yloc.price, style = liveIsHigh ? label.style_label_down : label.style_label_up, color = color.new(liveColor, 35), textcolor = color.white, size = size.small)
