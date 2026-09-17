@@ -24,7 +24,7 @@
 //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
 //@version=6
-indicator("Market Structure - Zig Zag, CHoCH, BoS and LS", overlay=true)
+indicator("Market Structure - Zig Zag, CHoCH, BoS and LS", overlay=true, max_lines_count=500, max_labels_count=500)
 import TradingView/ta/12
 
 // === User Inputs ========
@@ -68,6 +68,17 @@ LScolor = input.color(color.orange, title="Text Color (LS)")
 HHHLcolorbg = input.color(color.rgb(76, 175, 79, 85), title="Background Color (HH and HL)")
 LLLHcolorbg = input.color(color.rgb(255, 82, 82, 85), title="Background Color (LL and LH)")
 LScolorbg = input.color(color.rgb(255, 153, 0, 85), title="Background Color (LS)")
+
+// Higher-timeframe context uses only confirmed pivots.  This keeps the levels
+// stable on lower-timeframe charts and prevents an unfinished 4H/24H candle
+// from moving a line after it has been published.
+showHTFContext = input.bool(true, "Show Higher-Timeframe Trendlines / Levels", group="Higher-Timeframe Context")
+show4HContext = input.bool(true, "Show 4H", group="Higher-Timeframe Context")
+show24HContext = input.bool(true, "Show 24H", group="Higher-Timeframe Context")
+htfPivotStrength = input.int(5, "Pivot Strength", minval=2, maxval=20, group="Higher-Timeframe Context", tooltip="Bars required on both sides of a 4H/24H pivot. Higher values keep only more significant levels.")
+htfLabelOffset = input.int(8, "Right Label Offset (chart bars)", minval=1, maxval=100, group="Higher-Timeframe Context")
+htf4HColor = input.color(color.rgb(33, 150, 243), "4H Color", group="Higher-Timeframe Context")
+htf24HColor = input.color(color.rgb(156, 39, 176), "24H Color", group="Higher-Timeframe Context")
 
 alertMode = input.int(1, title= "Enable/Disable for Any Alert() Function Call↓ Alert Status→", minval= 1, maxval= 1)
 alertBoS = input.bool(true, title= "BoS")
@@ -1777,6 +1788,157 @@ if MTFBullishCHoCH and shiftMode == "HTF"
     HTFBearishBoSOccurred := false
 
 
+
+// =====================================================================
+// ================ 4H / 24H TRENDLINES AND STRONG LEVELS =============
+// =====================================================================
+
+// Return confirmed pivot prices and the opening time of the candle on
+// which each pivot occurred. request.security() evaluates this function in
+// the requested timeframe, so strength always means 4H or 24H candles.
+getConfirmedPivots(int strength) =>
+    float pivotHigh = ta.pivothigh(high, strength, strength)
+    float pivotLow = ta.pivotlow(low, strength, strength)
+    int pivotHighTime = not na(pivotHigh) ? time[strength] : na
+    int pivotLowTime = not na(pivotLow) ? time[strength] : na
+    [pivotHigh, pivotHighTime, pivotLow, pivotLowTime]
+
+projectTrendline(float firstPrice, int firstTime, float secondPrice, int secondTime, int targetTime) =>
+    int elapsed = secondTime - firstTime
+    elapsed != 0 ? secondPrice + (secondPrice - firstPrice) * (targetTime - secondTime) / elapsed : secondPrice
+
+[pivot4HHigh, pivot4HHighTime, pivot4HLow, pivot4HLowTime] = request.security(syminfo.tickerid, "240", getConfirmedPivots(htfPivotStrength), gaps=barmerge.gaps_on, lookahead=barmerge.lookahead_off)
+[pivot24HHigh, pivot24HHighTime, pivot24HLow, pivot24HLowTime] = request.security(syminfo.tickerid, "D", getConfirmedPivots(htfPivotStrength), gaps=barmerge.gaps_on, lookahead=barmerge.lookahead_off)
+
+var float prior4HHigh = na
+var int prior4HHighTime = na
+var float latest4HHigh = na
+var int latest4HHighTime = na
+var float prior4HLow = na
+var int prior4HLowTime = na
+var float latest4HLow = na
+var int latest4HLowTime = na
+var line resistance4HLine = na
+var line support4HLine = na
+var line high4HTrendline = na
+var line low4HTrendline = na
+var label resistance4HLabel = na
+var label support4HLabel = na
+var label high4HTrendLabel = na
+var label low4HTrendLabel = na
+
+var float prior24HHigh = na
+var int prior24HHighTime = na
+var float latest24HHigh = na
+var int latest24HHighTime = na
+var float prior24HLow = na
+var int prior24HLowTime = na
+var float latest24HLow = na
+var int latest24HLowTime = na
+var line resistance24HLine = na
+var line support24HLine = na
+var line high24HTrendline = na
+var line low24HTrendline = na
+var label resistance24HLabel = na
+var label support24HLabel = na
+var label high24HTrendLabel = na
+var label low24HTrendLabel = na
+
+bool new4HHigh = showHTFContext and show4HContext and not na(pivot4HHighTime) and pivot4HHighTime != latest4HHighTime
+bool new4HLow = showHTFContext and show4HContext and not na(pivot4HLowTime) and pivot4HLowTime != latest4HLowTime
+bool new24HHigh = showHTFContext and show24HContext and not na(pivot24HHighTime) and pivot24HHighTime != latest24HHighTime
+bool new24HLow = showHTFContext and show24HContext and not na(pivot24HLowTime) and pivot24HLowTime != latest24HLowTime
+
+if new4HHigh
+    prior4HHigh := latest4HHigh
+    prior4HHighTime := latest4HHighTime
+    latest4HHigh := pivot4HHigh
+    latest4HHighTime := pivot4HHighTime
+    line.delete(resistance4HLine)
+    label.delete(resistance4HLabel)
+    resistance4HLine := line.new(latest4HHighTime, latest4HHigh, time, latest4HHigh, xloc=xloc.bar_time, extend=extend.right, color=htf4HColor, width=2)
+    resistance4HLabel := label.new(bar_index + htfLabelOffset, latest4HHigh, "4H Resistance", xloc=xloc.bar_index, style=label.style_label_left, color=htf4HColor, textcolor=color.white, size=size.small)
+    if not na(prior4HHigh)
+        line.delete(high4HTrendline)
+        label.delete(high4HTrendLabel)
+        high4HTrendline := line.new(prior4HHighTime, prior4HHigh, latest4HHighTime, latest4HHigh, xloc=xloc.bar_time, extend=extend.right, color=htf4HColor, width=2, style=line.style_dashed)
+
+if new4HLow
+    prior4HLow := latest4HLow
+    prior4HLowTime := latest4HLowTime
+    latest4HLow := pivot4HLow
+    latest4HLowTime := pivot4HLowTime
+    line.delete(support4HLine)
+    label.delete(support4HLabel)
+    support4HLine := line.new(latest4HLowTime, latest4HLow, time, latest4HLow, xloc=xloc.bar_time, extend=extend.right, color=htf4HColor, width=2)
+    support4HLabel := label.new(bar_index + htfLabelOffset, latest4HLow, "4H Support", xloc=xloc.bar_index, style=label.style_label_left, color=htf4HColor, textcolor=color.white, size=size.small)
+    if not na(prior4HLow)
+        line.delete(low4HTrendline)
+        label.delete(low4HTrendLabel)
+        low4HTrendline := line.new(prior4HLowTime, prior4HLow, latest4HLowTime, latest4HLow, xloc=xloc.bar_time, extend=extend.right, color=htf4HColor, width=2, style=line.style_dotted)
+
+if new24HHigh
+    prior24HHigh := latest24HHigh
+    prior24HHighTime := latest24HHighTime
+    latest24HHigh := pivot24HHigh
+    latest24HHighTime := pivot24HHighTime
+    line.delete(resistance24HLine)
+    label.delete(resistance24HLabel)
+    resistance24HLine := line.new(latest24HHighTime, latest24HHigh, time, latest24HHigh, xloc=xloc.bar_time, extend=extend.right, color=htf24HColor, width=3)
+    resistance24HLabel := label.new(bar_index + htfLabelOffset, latest24HHigh, "24H Resistance", xloc=xloc.bar_index, style=label.style_label_left, color=htf24HColor, textcolor=color.white, size=size.small)
+    if not na(prior24HHigh)
+        line.delete(high24HTrendline)
+        label.delete(high24HTrendLabel)
+        high24HTrendline := line.new(prior24HHighTime, prior24HHigh, latest24HHighTime, latest24HHigh, xloc=xloc.bar_time, extend=extend.right, color=htf24HColor, width=3, style=line.style_dashed)
+
+if new24HLow
+    prior24HLow := latest24HLow
+    prior24HLowTime := latest24HLowTime
+    latest24HLow := pivot24HLow
+    latest24HLowTime := pivot24HLowTime
+    line.delete(support24HLine)
+    label.delete(support24HLabel)
+    support24HLine := line.new(latest24HLowTime, latest24HLow, time, latest24HLow, xloc=xloc.bar_time, extend=extend.right, color=htf24HColor, width=3)
+    support24HLabel := label.new(bar_index + htfLabelOffset, latest24HLow, "24H Support", xloc=xloc.bar_index, style=label.style_label_left, color=htf24HColor, textcolor=color.white, size=size.small)
+    if not na(prior24HLow)
+        line.delete(low24HTrendline)
+        label.delete(low24HTrendLabel)
+        low24HTrendline := line.new(prior24HLowTime, prior24HLow, latest24HLowTime, latest24HLow, xloc=xloc.bar_time, extend=extend.right, color=htf24HColor, width=3, style=line.style_dotted)
+
+// Keep all captions beyond the live candle. Trendline captions follow the
+// projected slope rather than sitting at the last pivot price.
+if barstate.islast
+    int labelTime = time + (time - time[1]) * htfLabelOffset
+    if showHTFContext and show4HContext
+        if not na(resistance4HLabel)
+            label.set_x(resistance4HLabel, bar_index + htfLabelOffset)
+            label.set_y(resistance4HLabel, latest4HHigh)
+        if not na(support4HLabel)
+            label.set_x(support4HLabel, bar_index + htfLabelOffset)
+            label.set_y(support4HLabel, latest4HLow)
+        if not na(high4HTrendline)
+            float projected4HHigh = projectTrendline(prior4HHigh, prior4HHighTime, latest4HHigh, latest4HHighTime, labelTime)
+            high4HTrendLabel := na(high4HTrendLabel) ? label.new(labelTime, projected4HHigh, "4H High Trend", xloc=xloc.bar_time, style=label.style_label_left, color=htf4HColor, textcolor=color.white, size=size.small) : high4HTrendLabel
+            label.set_xy(high4HTrendLabel, labelTime, projected4HHigh)
+        if not na(low4HTrendline)
+            float projected4HLow = projectTrendline(prior4HLow, prior4HLowTime, latest4HLow, latest4HLowTime, labelTime)
+            low4HTrendLabel := na(low4HTrendLabel) ? label.new(labelTime, projected4HLow, "4H Low Trend", xloc=xloc.bar_time, style=label.style_label_left, color=htf4HColor, textcolor=color.white, size=size.small) : low4HTrendLabel
+            label.set_xy(low4HTrendLabel, labelTime, projected4HLow)
+    if showHTFContext and show24HContext
+        if not na(resistance24HLabel)
+            label.set_x(resistance24HLabel, bar_index + htfLabelOffset)
+            label.set_y(resistance24HLabel, latest24HHigh)
+        if not na(support24HLabel)
+            label.set_x(support24HLabel, bar_index + htfLabelOffset)
+            label.set_y(support24HLabel, latest24HLow)
+        if not na(high24HTrendline)
+            float projected24HHigh = projectTrendline(prior24HHigh, prior24HHighTime, latest24HHigh, latest24HHighTime, labelTime)
+            high24HTrendLabel := na(high24HTrendLabel) ? label.new(labelTime, projected24HHigh, "24H High Trend", xloc=xloc.bar_time, style=label.style_label_left, color=htf24HColor, textcolor=color.white, size=size.small) : high24HTrendLabel
+            label.set_xy(high24HTrendLabel, labelTime, projected24HHigh)
+        if not na(low24HTrendline)
+            float projected24HLow = projectTrendline(prior24HLow, prior24HLowTime, latest24HLow, latest24HLowTime, labelTime)
+            low24HTrendLabel := na(low24HTrendLabel) ? label.new(labelTime, projected24HLow, "24H Low Trend", xloc=xloc.bar_time, style=label.style_label_left, color=htf24HColor, textcolor=color.white, size=size.small) : low24HTrendLabel
+            label.set_xy(low24HTrendLabel, labelTime, projected24HLow)
 
 // =====================================================================
 // ========================== ALERT DECLARATIONS =======================
