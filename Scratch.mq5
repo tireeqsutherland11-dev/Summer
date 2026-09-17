@@ -21,7 +21,6 @@ input int MTF_SMA_Length=5;
 input int HTF_SMA_Length=15;
 input bool Show_BoS_Lines=true;
 input bool Show_CHoCH_Lines=true;
-input bool Show_Liquidity_Sweep_Lines=true;
 input bool Show_Line_Labels=true;
 input bool Use_Quantitative_Labels=false;
 input int Line_Width=2;
@@ -29,15 +28,10 @@ input ENUM_LINE_STYLE Structure_Line_Style=STYLE_SOLID;
 input color Bullish_BoS_Color=clrGreen;
 input color Bearish_BoS_Color=clrRed;
 input color CHoCH_Color=clrBlue;
-input color Liquidity_Sweep_Color=clrOrange;
-input bool Show_ZigZag_Lines=true;
 input bool Plot_Swing_Labels=true;
 input bool Use_Expansion_Compression_Color=false;
-input color ZigZag_Color=clrBlack;
-input ENUM_LINE_STYLE ZigZag_Style=STYLE_SOLID;
 input color HH_HL_Color=clrGreen;
 input color LL_LH_Color=clrRed;
-input color LS_Color=clrOrange;
 input bool Alert_BoS=true;
 input bool Alert_CHoCH=true;
 input bool Alert_Swings=true;
@@ -119,7 +113,6 @@ int PreviousSame(int at)
 void DrawPivot(int p)
   {
    if(p<0 || p>=ArraySize(pivots)) return;
-   if(p>0 && Show_ZigZag_Lines) Line("zz_"+(string)p,pivots[p-1].time,pivots[p-1].price,pivots[p].time,pivots[p].price,ZigZag_Color,ZigZag_Style);
    int q=PreviousSame(p); if(q<0 || !Plot_Swing_Labels) return;
    string label; color c;
    if(pivots[p].type==1) { label=pivots[p].price>pivots[q].price?"HH":"LH"; c=label=="HH"?HH_HL_Color:LL_LH_Color; }
@@ -153,15 +146,6 @@ void BreakLine(string kind,int p,datetime now,color c,bool above,
    Line(kind+"_"+(string)p,pivots[p].time,pivots[p].price,touch,pivots[p].price,c,Structure_Line_Style);
    string txt=Use_Quantitative_Labels?(string)((touch-pivots[p].time)/PeriodSeconds(Timeframe)):kind;
    Text(kind+"_label_"+(string)p,middle,pivots[p].price,txt,c,above);
-  }
-void LiquiditySweep(int current,const MqlRates &rates[],const int total)
-  {
-   if(!Show_Liquidity_Sweep_Lines) return; int q=PreviousSame(current); if(q<0) return;
-   bool swept=(pivots[current].type==1 && pivots[current].price>pivots[q].price)||(pivots[current].type==-1 && pivots[current].price<pivots[q].price);
-   if(!swept || pivots[q].broken) return;
-   datetime touch=FirstTouchTime(rates,total,pivots[q].time,pivots[current].time,pivots[q].price);
-   Line("LS_"+(string)current,pivots[q].time,pivots[q].price,touch,pivots[q].price,Liquidity_Sweep_Color,Structure_Line_Style);
-   Text("LS_label_"+(string)current,(datetime)(((long)pivots[q].time+(long)touch)/2),pivots[q].price,"LS",LS_Color,pivots[current].type==1);
   }
 int BarIndexAtOrAfter(const MqlRates &rates[],const int total,const datetime time)
   {
@@ -229,58 +213,33 @@ void Rebuild()
      }
    for(int p=0;p<ArraySize(pivots);p++)
      {
-      DrawPivot(p); LiquiditySweep(p,r,copied);
+      DrawPivot(p);
      }
-   // Only significant, most-recent swing levels participate in market structure.
-   // A BoS must continue the established trend through an HH/LL. A CHoCH must
-   // break the trend's protected HL/LH; minor and already-consumed levels are ignored.
-   int trend=0,currentHigh=-1,currentLow=-1,previousHigh=-1,previousLow=-1,nextPivot=0;
-   double lastBullBos=-1.0e308,lastBearBos=1.0e308;
+   // Evaluate the latest significant, unbroken swing on each closed bar. The
+   // first confirmed break establishes direction as a BoS; later breaks in the
+   // same direction are BoS, while an opposite break is a CHoCH. This avoids
+   // requiring a fully classified HH/HL or LH/LL sequence before any BoS can
+   // appear, while retaining the ATR significance and clearance filters.
+   int trend=0;
    for(int i=start;i<copied-1;i++)
      {
-      while(nextPivot<ArraySize(pivots) && pivots[nextPivot].time<r[i].time)
-        {
-         int p=nextPivot++;
-         if(!SignificantPivot(p,r,copied)) continue;
-         if(pivots[p].type==1)
-           {
-            // In a downtrend retain only progressively lower highs as the
-            // protected reversal level; an uptrend may seek its next HH.
-            if(trend!=-1 || currentHigh<0 || pivots[p].price<pivots[currentHigh].price)
-              { previousHigh=currentHigh; currentHigh=p; }
-           }
-         else
-           {
-            // In an uptrend retain only progressively higher lows as the
-            // protected reversal level; a downtrend may seek its next LL.
-            if(trend!=1 || currentLow<0 || pivots[p].price>pivots[currentLow].price)
-              { previousLow=currentLow; currentLow=p; }
-           }
-         if(trend==0 && previousHigh>=0 && previousLow>=0 && currentHigh>=0 && currentLow>=0)
-           {
-            if(pivots[currentHigh].price>pivots[previousHigh].price && pivots[currentLow].price>pivots[previousLow].price) trend=1;
-            else if(pivots[currentHigh].price<pivots[previousHigh].price && pivots[currentLow].price<pivots[previousLow].price) trend=-1;
-           }
-        }
       double atr=ATRValue(r,i,Significance_ATR_Period); if(atr==EMPTY_VALUE) continue;
       double buffer=atr*Break_Buffer_ATR;
       int averageLength=CalculateZigZagBy==LTF?LTF_SMA_Length:(CalculateZigZagBy==MTF?MTF_SMA_Length:HTF_SMA_Length);
       double breakValue=SMAValue(r,i,averageLength); if(breakValue==EMPTY_VALUE) continue;
-      int p=-1,dir=0; bool choch=false;
-      if(trend==1 && currentLow>=0 && !pivots[currentLow].broken && BrokeLevel(breakValue,pivots[currentLow].price,-1,buffer))
-        { p=currentLow; dir=-1; choch=true; }
-      else if(trend==-1 && currentHigh>=0 && !pivots[currentHigh].broken && BrokeLevel(breakValue,pivots[currentHigh].price,1,buffer))
-        { p=currentHigh; dir=1; choch=true; }
-      else if(trend==1 && currentHigh>=0 && previousHigh>=0 && !pivots[currentHigh].broken && pivots[currentHigh].price>pivots[previousHigh].price && pivots[currentHigh].price>lastBullBos && BrokeLevel(breakValue,pivots[currentHigh].price,1,buffer))
-        { p=currentHigh; dir=1; lastBullBos=pivots[p].price; }
-      else if(trend==-1 && currentLow>=0 && previousLow>=0 && !pivots[currentLow].broken && pivots[currentLow].price<pivots[previousLow].price && pivots[currentLow].price<lastBearBos && BrokeLevel(breakValue,pivots[currentLow].price,-1,buffer))
-        { p=currentLow; dir=-1; lastBearBos=pivots[p].price; }
-      if(p<0) continue;
-      pivots[p].broken=true;
-      if(choch) trend=dir;
-      if(choch && Show_CHoCH_Lines) BreakLine("CHoCH",p,r[i].time,CHoCH_Color,dir==1,r,copied);
-      else if(!choch && Show_BoS_Lines) BreakLine("BoS",p,r[i].time,dir==1?Bullish_BoS_Color:Bearish_BoS_Color,dir==1,r,copied);
-      if(i==copied-2) { if(choch&&Alert_CHoCH) Fire(dir==1?"Bullish CHoCH":"Bearish CHoCH"); else if(!choch&&Alert_BoS) Fire(dir==1?"Bullish BoS":"Bearish BoS"); }
+      for(int p=ArraySize(pivots)-1;p>=0;p--)
+        {
+         if(pivots[p].time>=r[i].time || pivots[p].broken || !SignificantPivot(p,r,copied)) continue;
+         int dir=pivots[p].type;
+         if(!BrokeLevel(breakValue,pivots[p].price,dir,buffer)) continue;
+         bool choch=trend!=0 && dir!=trend;
+         pivots[p].broken=true;
+         trend=dir;
+         if(choch && Show_CHoCH_Lines) BreakLine("CHoCH",p,r[i].time,CHoCH_Color,dir==1,r,copied);
+         else if(!choch && Show_BoS_Lines) BreakLine("BoS",p,r[i].time,dir==1?Bullish_BoS_Color:Bearish_BoS_Color,dir==1,r,copied);
+         if(i==copied-2) { if(choch&&Alert_CHoCH) Fire(dir==1?"Bullish CHoCH":"Bearish CHoCH"); else if(!choch&&Alert_BoS) Fire(dir==1?"Bullish BoS":"Bearish BoS"); }
+         break;
+        }
      }
    ChartRedraw();
   }
