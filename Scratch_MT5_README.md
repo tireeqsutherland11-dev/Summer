@@ -11,6 +11,9 @@ regression), its LTF/MTF/HTF structure modes, source selections, SMA lengths,
 line/label styling, quantitative labels, and alerts. It draws alternating
 swings, HH/HL/LH/LL labels, ZigZag legs, BoS, CHoCH, and liquidity sweeps using
 names prefixed with `ScratchMT5_` so it never deletes unrelated chart objects.
+`Show_ZigZag_Lines` toggles the connecting ZigZag legs independently of swing
+labels and structure lines. BoS, CHoCH, and liquidity-sweep lines stop at the
+first later candle whose high-to-low range touches their horizontal level.
 
 ## Install
 
