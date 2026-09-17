@@ -36,6 +36,8 @@ input bool  Show_Structure_Labels=true;
 input bool  Show_Equal_Labels=false;
 input bool  Show_Dashboard=true;
 input int   Maximum_Labels=40;
+input bool  Avoid_Label_Overlap=true;
+input int   Minimum_Label_Chart_Bars=1;
 input color HH_Color=clrLimeGreen;
 input color HL_Color=clrDeepSkyBlue;
 input color LH_Color=clrOrange;
@@ -84,12 +86,12 @@ bool LoadRates(const ENUM_TIMEFRAMES timeframe,const int requested,MqlRates &rat
   {
    ArraySetAsSeries(rates,true);
    int minimum=MathMax(ATR_Period+Fractal_Length*2+10,ZigZag_Depth+10);
-   int available=Bars(_Symbol,timeframe);
-   int count=MathMin(requested,available);
-   if(count<minimum)
+   if(requested<minimum)
       return false;
-   int copied=CopyRates(_Symbol,timeframe,0,count,rates);
-   return copied>=minimum;
+   // Never silently shorten the scan while a newly selected timeframe is
+   // downloading. CopyRates starts synchronization and the timer retries.
+   int copied=CopyRates(_Symbol,timeframe,0,requested,rates);
+   return copied==requested;
   }
 
 bool LoadATR(const ENUM_TIMEFRAMES timeframe,const int count,double &values[])
@@ -462,13 +464,22 @@ void DrawLabels(const SwingPoint &swings[])
    ObjectsDeleteAll(0,g_prefix+"CH_");
    if(!Show_Structure_Labels)
       return;
-   int first=MathMax(0,ArraySize(swings)-Maximum_Labels);
-   for(int i=first;i<ArraySize(swings);i++)
+   int drawn=0;
+   datetime last_drawn=0;
+   int chart_seconds=PeriodSeconds((ENUM_TIMEFRAMES)Period());
+   int minimum_gap=(Avoid_Label_Overlap && chart_seconds>0
+                    ? chart_seconds*Minimum_Label_Chart_Bars : 0);
+   // Pick newest-first so the current point wins when several lower-timeframe
+   // swings occupy one chart candle. Analysis still uses every loaded swing.
+   for(int i=ArraySize(swings)-1;i>=0 && drawn<Maximum_Labels;i--)
      {
       if(swings[i].label=="")
          continue;
       if(!Show_Equal_Labels &&
          (swings[i].label=="EQH" || swings[i].label=="EQL"))
+         continue;
+      if(minimum_gap>0 && last_drawn>0 &&
+         MathAbs((long)(last_drawn-swings[i].time))<minimum_gap)
          continue;
       string name=g_prefix+"SW_"+IntegerToString((int)swings[i].time)+
                   (swings[i].is_high ? "_H" : "_L");
@@ -483,6 +494,8 @@ void DrawLabels(const SwingPoint &swings[])
                        swings[i].is_high ? ANCHOR_LOWER : ANCHOR_UPPER);
       ObjectSetInteger(0,name,OBJPROP_SELECTABLE,false);
       ObjectSetInteger(0,name,OBJPROP_HIDDEN,true);
+      last_drawn=swings[i].time;
+      drawn++;
 
       if(Show_CHoCH && swings[i].choch)
         {
@@ -591,6 +604,7 @@ bool InputsAreValid()
           Swing_Cluster_ATR>=0.0 && Swing_Cluster_Bars>=0 &&
           Minimum_Reversal_ATR>=0.0 &&
           CHoCH_Line_Bars>=1 && Maximum_Labels>=1 &&
+          Minimum_Label_Chart_Bars>=1 &&
           Label_Font_Size>=6;
   }
 

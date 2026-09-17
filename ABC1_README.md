@@ -34,6 +34,19 @@ The rules are evaluated independently on `Higher_Timeframe` and
 `Structure_Timeframe`. The dashboard reports both trends and their alignment.
 Labels are drawn from the structure timeframe.
 
+`Bars_To_Scan` is an exact per-timeframe depth. The EA waits for all requested
+bars and matching ATR values to load instead of silently analyzing a shorter
+window while a newly selected timeframe is synchronizing. Thus, a value of
+1000 analyzes 1000 bars on both the higher and structure timeframes regardless
+of which timeframe values are selected.
+
+When the structure timeframe is lower than the chart timeframe, many valid
+structure points can fall inside one visible chart candle. By default,
+`Avoid_Label_Overlap` keeps only the newest label within each
+`Minimum_Label_Chart_Bars` interval. This is display-only filtering: the
+underlying swing construction, classification, trend state, and alerts still
+use the complete scan. Disable it when every lower-timeframe label is desired.
+
 ## Hybrid swing pipeline
 
 A swing is published only when all enabled stages pass:
