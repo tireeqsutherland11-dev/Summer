@@ -1793,22 +1793,28 @@ if MTFBullishCHoCH and shiftMode == "HTF"
 // ================ 4H / 24H TRENDLINES AND STRONG LEVELS =============
 // =====================================================================
 
-// Return confirmed pivot prices and the opening time of the candle on
-// which each pivot occurred. request.security() evaluates this function in
-// the requested timeframe, so strength always means 4H or 24H candles.
+// Return the most recent confirmed pivot prices and the opening time of the
+// candles on which they occurred. Persisting each result in its source
+// timeframe is important: a raw ta.pivot* value exists only on the single
+// confirmation candle and can otherwise be skipped when security data is
+// merged into the chart timeframe.
 getConfirmedPivots(int strength) =>
     float pivotHigh = ta.pivothigh(high, strength, strength)
     float pivotLow = ta.pivotlow(low, strength, strength)
-    int pivotHighTime = not na(pivotHigh) ? time[strength] : na
-    int pivotLowTime = not na(pivotLow) ? time[strength] : na
-    [pivotHigh, pivotHighTime, pivotLow, pivotLowTime]
+    bool confirmedHigh = not na(pivotHigh)
+    bool confirmedLow = not na(pivotLow)
+    float lastPivotHigh = ta.valuewhen(confirmedHigh, pivotHigh, 0)
+    int lastPivotHighTime = ta.valuewhen(confirmedHigh, time[strength], 0)
+    float lastPivotLow = ta.valuewhen(confirmedLow, pivotLow, 0)
+    int lastPivotLowTime = ta.valuewhen(confirmedLow, time[strength], 0)
+    [lastPivotHigh, lastPivotHighTime, lastPivotLow, lastPivotLowTime]
 
 projectTrendline(float firstPrice, int firstTime, float secondPrice, int secondTime, int targetTime) =>
     int elapsed = secondTime - firstTime
     elapsed != 0 ? secondPrice + (secondPrice - firstPrice) * (targetTime - secondTime) / elapsed : secondPrice
 
-[pivot4HHigh, pivot4HHighTime, pivot4HLow, pivot4HLowTime] = request.security(syminfo.tickerid, "240", getConfirmedPivots(htfPivotStrength), gaps=barmerge.gaps_on, lookahead=barmerge.lookahead_off)
-[pivot24HHigh, pivot24HHighTime, pivot24HLow, pivot24HLowTime] = request.security(syminfo.tickerid, "D", getConfirmedPivots(htfPivotStrength), gaps=barmerge.gaps_on, lookahead=barmerge.lookahead_off)
+[pivot4HHigh, pivot4HHighTime, pivot4HLow, pivot4HLowTime] = request.security(syminfo.tickerid, "240", getConfirmedPivots(htfPivotStrength), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+[pivot24HHigh, pivot24HHighTime, pivot24HLow, pivot24HLowTime] = request.security(syminfo.tickerid, "D", getConfirmedPivots(htfPivotStrength), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
 
 var float prior4HHigh = na
 var int prior4HHighTime = na
