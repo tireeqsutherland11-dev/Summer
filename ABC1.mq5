@@ -1,5 +1,5 @@
 #property copyright "ABC1"
-#property version   "1.20"
+#property version   "1.30"
 #property strict
 #property description "ABC1 multi-timeframe hybrid market-structure EA with live provisional swings"
 
@@ -25,9 +25,13 @@ input int    ZigZag_Depth=12;
 input int    ZigZag_Deviation=5;
 input int    ZigZag_Backstep=3;
 input int    Swing_Smoothing_Bars=5;
+input double Swing_Cluster_ATR=0.35;
+input int    Swing_Cluster_Bars=20;
+input double Minimum_Reversal_ATR=0.75;
 
 input group "Display and alerts"
 input bool  Show_Structure_Labels=true;
+input bool  Show_Equal_Labels=false;
 input bool  Show_Dashboard=true;
 input int   Maximum_Labels=40;
 input color HH_Color=clrLimeGreen;
@@ -156,6 +160,24 @@ void AppendSwing(SwingPoint &items[],const SwingPoint &point)
    items[size]=point;
   }
 
+double SwingATRScale(const SwingPoint &first,const SwingPoint &second)
+  {
+   return MathMax(first.atr,second.atr);
+  }
+
+// Two highs (or two lows) belong to one structure area when their prices are
+// close in volatility terms. The bar cap prevents unrelated, old levels from
+// being merged simply because price revisits them much later.
+bool SameSwingArea(const SwingPoint &first,const SwingPoint &second)
+  {
+   if(Swing_Cluster_ATR<=0.0 || Swing_Cluster_Bars<=0)
+      return false;
+   if(MathAbs(first.shift-second.shift)>Swing_Cluster_Bars)
+      return false;
+   double scale=SwingATRScale(first,second);
+   return scale>0.0 && MathAbs(first.price-second.price)<=scale*Swing_Cluster_ATR;
+  }
+
 // Produces an alternating ZigZag. Nearby same-side pivots (including a small
 // counter-swing between them) are collapsed into the most extreme pivot.
 int BuildHybridSwings(const ENUM_TIMEFRAMES timeframe,SwingPoint &confirmed[])
@@ -207,7 +229,8 @@ int BuildHybridSwings(const ENUM_TIMEFRAMES timeframe,SwingPoint &confirmed[])
          // structure points. Keep its highest high/lowest low and discard the
          // small counter-pivot between it and the new candidate.
          if(count>=2 && legs[count-2].is_high==candidate.is_high &&
-            MathAbs(candidate.shift-legs[count-2].shift)<=Swing_Smoothing_Bars)
+            (MathAbs(candidate.shift-legs[count-2].shift)<=Swing_Smoothing_Bars ||
+             SameSwingArea(candidate,legs[count-2])))
            {
             bool more_extreme=high ? candidate.price>legs[count-2].price
                                    : candidate.price<legs[count-2].price;
@@ -230,7 +253,10 @@ int BuildHybridSwings(const ENUM_TIMEFRAMES timeframe,SwingPoint &confirmed[])
 
          double distance=MathAbs(candidate.price-last.price)/_Point;
          int bar_spacing=MathAbs(candidate.shift-last.shift);
-         if(distance<ZigZag_Deviation || bar_spacing<ZigZag_Backstep)
+         double reversal=MathAbs(candidate.price-last.price);
+         double required_reversal=SwingATRScale(candidate,last)*Minimum_Reversal_ATR;
+         if(distance<ZigZag_Deviation || bar_spacing<ZigZag_Backstep ||
+            reversal<required_reversal)
             continue;
 
          legs[count-1].zigzag_confirmed=true;
@@ -378,6 +404,9 @@ void DrawLabels(const SwingPoint &swings[])
      {
       if(swings[i].label=="")
          continue;
+      if(!Show_Equal_Labels &&
+         (swings[i].label=="EQH" || swings[i].label=="EQL"))
+         continue;
       string name=g_prefix+"SW_"+IntegerToString((int)swings[i].time)+
                   (swings[i].is_high ? "_H" : "_L");
       double offset=MathMax(swings[i].atr*0.12,10.0*_Point);
@@ -492,6 +521,8 @@ bool InputsAreValid()
           ZigZag_Depth>=2 &&
           ZigZag_Deviation>=0 && ZigZag_Backstep>=1 &&
           ZigZag_Backstep<ZigZag_Depth && Swing_Smoothing_Bars>=0 &&
+          Swing_Cluster_ATR>=0.0 && Swing_Cluster_Bars>=0 &&
+          Minimum_Reversal_ATR>=0.0 &&
           CHoCH_Line_Bars>=1 && Maximum_Labels>=1 &&
           Label_Font_Size>=6;
   }
