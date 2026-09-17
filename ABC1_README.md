@@ -20,9 +20,11 @@ low as `HL` or `LL`.
 
 A high or low must differ from its predecessor by at least
 `Minimum_Structure_Change_ATR × max(ATR of both swings)` before it can become
-`HH`, `HL`, `LH`, or `LL`. Smaller changes are labelled `EQH`/`EQL` and do not
-create a directional market-structure state. This filters insignificant
-candle-to-candle changes without introducing repainting.
+`HH`, `HL`, `LH`, or `LL`. Smaller changes are classified internally as
+`EQH`/`EQL` and do not create a directional market-structure state. Equal
+labels are hidden by default to keep the chart clean; set
+`Show_Equal_Labels=true` when they are useful for review. This filters
+insignificant candle-to-candle changes without introducing repainting.
 
 The rules are evaluated independently on `Higher_Timeframe` and
 `Structure_Timeframe`. The dashboard reports both trends and their alignment.
@@ -38,13 +40,17 @@ A swing is published only when all enabled stages pass:
    `ATR(candidate) × Minimum_Swing_ATR` away from the candidate. Set
    `ATR_Filter=false` to bypass this stage.
 3. **ZigZag confirmation:** the candidate is a depth-window extreme, exceeds
-   `ZigZag_Deviation` points from the opposite leg, respects
-   `ZigZag_Backstep`, and has subsequently been locked by an opposite pivot.
+   both `ZigZag_Deviation` points and `Minimum_Reversal_ATR × ATR` from the
+   opposite leg, respects `ZigZag_Backstep`, and has subsequently been locked
+   by an opposite pivot. The ATR reversal gate removes the frequent shallow
+   fluctuations that a points-only threshold can admit on volatile symbols.
 
 Nearby same-side pivots are smoothed when they occur within
-`Swing_Smoothing_Bars`, even when a small counter-pivot lies between them. The
-cluster is represented by its highest high or lowest low, preventing several
-labels from accumulating around the same short consolidation.
+`Swing_Smoothing_Bars`, even when a small counter-pivot lies between them.
+Pivots within `Swing_Cluster_ATR × ATR` are also treated as one price area for
+up to `Swing_Cluster_Bars`. Each cluster is represented by only its highest
+high or lowest low. This makes repeated HH/HL or LH/LL tests in the same area
+produce a single, extreme structure point rather than a cluster of labels.
 
 The newest ZigZag leg is supplied to market structure as a provisional point.
 It follows a more-extreme high or low on the live candle on every tick; older
