@@ -74,6 +74,14 @@ alertBoS = input.bool(true, title= "BoS")
 alertCHoCH = input.bool(true, title= "CHoCH")
 alertHighsandLows = input.bool(true, title= "Swing Highs & Lows")
 
+showTrendEMA = input.bool(true, "Show 50 EMA", group="Current Market Trend")
+showTrendPanel = input.bool(true, "Show Current Trend", group="Current Market Trend")
+trendEMALength = input.int(50, "EMA Length", minval=1, group="Current Market Trend")
+emaSlopeLookback = input.int(5, "EMA Slope Lookback", minval=1, group="Current Market Trend", tooltip="Number of chart bars used to judge whether the EMA is rising or falling.")
+emaFlatATRThreshold = input.float(0.05, "Flat EMA Threshold (ATR)", minval=0.0, step=0.01, group="Current Market Trend", tooltip="The EMA is flat when its change over the slope lookback is no greater than this multiple of ATR.")
+emaCutLookback = input.int(10, "EMA/Candle Lookback", minval=2, group="Current Market Trend")
+emaCutRatio = input.float(0.5, "Candles Cutting EMA", minval=0.1, maxval=1.0, step=0.1, group="Current Market Trend", tooltip="Minimum share of recent candles whose range crosses the EMA for consolidation confirmation.")
+
 HtfOpen  = request.security(syminfo.tickerid, htf, open)
 HtfHigh  = request.security(syminfo.tickerid, htf, high)
 HtfLow   = request.security(syminfo.tickerid, htf, low)
@@ -1811,6 +1819,82 @@ if shiftMode == "MTF"
     HLOccurredAlert := MTFBullishShift and isHL
     LLOccurredAlert := MTFBullishShift and isLL and not isLiquiditySweepMTF
     LSOccurredAlert := (MTFBullishShift or MTFBearishShift) and isLiquiditySweepMTF
+
+// =====================================================================
+// ======================== CURRENT MARKET TREND =======================
+// =====================================================================
+// Structure is the primary filter.  The most recently confirmed high and low
+// classifications must agree before the EMA is allowed to confirm a trend.
+bool trendHighEvent = shiftMode == "LTF" ? plotLTFBearishShift : shiftMode == "MTF" ? MTFBearishShift : MTFBearishCHoCH
+bool trendLowEvent = shiftMode == "LTF" ? plotLTFBullishShift : shiftMode == "MTF" ? MTFBullishShift : MTFBullishCHoCH
+bool validHigherHigh = trendHighEvent and isHH and not (shiftMode == "LTF" ? isLiquiditySweep : shiftMode == "MTF" ? isLiquiditySweepMTF : isLiquiditySweepHTF)
+bool validLowerLow = trendLowEvent and isLL and not (shiftMode == "LTF" ? isLiquiditySweep : shiftMode == "MTF" ? isLiquiditySweepMTF : isLiquiditySweepHTF)
+
+float selectedSwingHigh = shiftMode == "LTF" ? localHigh : shiftMode == "MTF" ? ShiftLocalHigh : HTFLocalHigh
+float selectedSwingLow = shiftMode == "LTF" ? localLow : shiftMode == "MTF" ? ShiftLocalLow : HTFLocalLow
+
+var int latestHighStructure = 0 // 1 = HH, -1 = LH
+var int latestLowStructure = 0  // 1 = HL, -1 = LL
+var float latestStructureHigh = na
+var float latestStructureLow = na
+
+if trendHighEvent
+    if validHigherHigh
+        latestHighStructure := 1
+        latestStructureHigh := selectedSwingHigh
+    else if isLH
+        latestHighStructure := -1
+        latestStructureHigh := selectedSwingHigh
+
+if trendLowEvent
+    if isHL
+        latestLowStructure := 1
+        latestStructureLow := selectedSwingLow
+    else if validLowerLow
+        latestLowStructure := -1
+        latestStructureLow := selectedSwingLow
+
+float trendEMA = request.security(syminfo.tickerid, htf, ta.ema(close, trendEMALength))
+float trendATR = request.security(syminfo.tickerid, htf, ta.atr(14))
+float emaChange = trendEMA - trendEMA[emaSlopeLookback]
+bool emaFlat = not na(trendATR) and math.abs(emaChange) <= trendATR * emaFlatATRThreshold
+bool emaRising = emaChange > trendATR * emaFlatATRThreshold
+bool emaFalling = emaChange < -trendATR * emaFlatATRThreshold
+float emaCuts = math.sum(low <= trendEMA and high >= trendEMA ? 1.0 : 0.0, emaCutLookback)
+bool emaThroughCandles = emaCuts / emaCutLookback >= emaCutRatio
+
+bool bullishStructure = latestHighStructure == 1 and latestLowStructure == 1
+bool bearishStructure = latestHighStructure == -1 and latestLowStructure == -1
+bool structureAboveEMA = not na(latestStructureHigh) and not na(latestStructureLow) and latestStructureHigh > trendEMA and latestStructureLow > trendEMA
+bool structureBelowEMA = not na(latestStructureHigh) and not na(latestStructureLow) and latestStructureHigh < trendEMA and latestStructureLow < trendEMA
+bool marketUptrend = bullishStructure and structureAboveEMA and close > trendEMA and emaRising
+bool marketDowntrend = bearishStructure and structureBelowEMA and close < trendEMA and emaFalling
+bool marketConsolidation = not bullishStructure and not bearishStructure and emaFlat and emaThroughCandles
+string currentMarketTrend = marketUptrend ? "UPTREND" : marketDowntrend ? "DOWNTREND" : marketConsolidation ? "CONSOLIDATION" : "NEUTRAL / TRANSITION"
+color currentTrendColor = marketUptrend ? color.green : marketDowntrend ? color.red : marketConsolidation ? color.orange : color.gray
+string structureState = bullishStructure ? "HH + HL" : bearishStructure ? "LL + LH" : "Mixed / Unclear"
+string emaState = emaFlat ? "Flat" : emaRising ? "Rising" : emaFalling ? "Falling" : "Neutral"
+string consolidationDetail = emaFlat and emaThroughCandles ? "Flat; cutting candles" : emaThroughCandles ? "Cutting candles" : emaState
+
+plot(showTrendEMA ? trendEMA : na, "50 EMA Value Zone", color=currentTrendColor, linewidth=2)
+
+var table trendPanel = table.new(position.top_right, 2, 4, border_width=1)
+if barstate.islast
+    if showTrendPanel
+        table.cell(trendPanel, 0, 0, "CURRENT TREND", bgcolor=color.new(currentTrendColor, 15), text_color=color.white)
+        table.cell(trendPanel, 1, 0, currentMarketTrend, bgcolor=color.new(currentTrendColor, 15), text_color=color.white)
+        table.cell(trendPanel, 0, 1, "Structure", text_color=color.white, bgcolor=color.new(color.black, 25))
+        table.cell(trendPanel, 1, 1, structureState, text_color=currentTrendColor, bgcolor=color.new(color.black, 25))
+        table.cell(trendPanel, 0, 2, "50 EMA", text_color=color.white, bgcolor=color.new(color.black, 25))
+        table.cell(trendPanel, 1, 2, str.tostring(trendEMA, format.mintick), text_color=currentTrendColor, bgcolor=color.new(color.black, 25))
+        table.cell(trendPanel, 0, 3, "Momentum", text_color=color.white, bgcolor=color.new(color.black, 25))
+        table.cell(trendPanel, 1, 3, marketUptrend or marketDowntrend ? emaState : consolidationDetail, text_color=currentTrendColor, bgcolor=color.new(color.black, 25))
+    else
+        table.clear(trendPanel, 0, 0, 1, 3)
+
+alertcondition(marketUptrend and not marketUptrend[1], title="Market Trend: Uptrend", message="Market trend changed to UPTREND: HH + HL above a rising 50 EMA.")
+alertcondition(marketDowntrend and not marketDowntrend[1], title="Market Trend: Downtrend", message="Market trend changed to DOWNTREND: LL + LH below a falling 50 EMA.")
+alertcondition(marketConsolidation and not marketConsolidation[1], title="Market Trend: Consolidation", message="Market trend changed to CONSOLIDATION: structure is unclear and the 50 EMA is flat through price.")
 
 // === Alert Conditions ===
 
