@@ -25,9 +25,8 @@ input bool Show_Line_Labels=true;
 input bool Use_Quantitative_Labels=false;
 input int Line_Width=2;
 input ENUM_LINE_STYLE Structure_Line_Style=STYLE_SOLID;
-input color Bullish_BoS_Color=clrGreen;
-input color Bearish_BoS_Color=clrRed;
-input color CHoCH_Color=clrBlue;
+input color BoS_Color=clrBlue;
+input color CHoCH_Color=clrRed;
 input bool Plot_Swing_Labels=true;
 input bool Use_Expansion_Compression_Color=false;
 input color HH_HL_Color=clrGreen;
@@ -38,12 +37,11 @@ input bool Alert_Swings=true;
 input bool Push_Notifications=false;
 input int Significance_ATR_Period=14;
 input double Minimum_Swing_ATR=1.0;
-input double Break_Buffer_ATR=0.10;
 input int Bars_To_Process=5000;
 
 string prefix="ScratchMT5_";
 datetime lastBar=0;
-struct Pivot { datetime time; double price; int type; bool broken; };
+struct Pivot { datetime time; double price; int type; };
 Pivot pivots[];
 
 double Source(const MqlRates &r)
@@ -106,7 +104,7 @@ void AddPivot(datetime t,double price,int type)
    int n=ArraySize(pivots);
    if(n>0 && pivots[n-1].type==type)
      { if((type==1 && price>pivots[n-1].price)||(type==-1 && price<pivots[n-1].price)) { pivots[n-1].time=t; pivots[n-1].price=price; } return; }
-   ArrayResize(pivots,n+1); pivots[n].time=t; pivots[n].price=price; pivots[n].type=type; pivots[n].broken=false;
+   ArrayResize(pivots,n+1); pivots[n].time=t; pivots[n].price=price; pivots[n].type=type;
   }
 int PreviousSame(int at)
   { for(int j=at-1;j>=0;j--) if(pivots[j].type==pivots[at].type) return j; return -1; }
@@ -138,14 +136,33 @@ datetime FirstTouchTime(const MqlRates &rates[],const int total,
      }
    return fallback;
   }
-void BreakLine(string kind,int p,datetime now,color c,bool above,
-               const MqlRates &rates[],const int total)
+void StructureLine(string kind,int origin,datetime event_time,color c,bool above,
+                   const MqlRates &rates[],const int total,const int direction)
   {
-   datetime touch=FirstTouchTime(rates,total,pivots[p].time,now,pivots[p].price);
-   datetime middle=(datetime)(((long)pivots[p].time+(long)touch)/2);
-   Line(kind+"_"+(string)p,pivots[p].time,pivots[p].price,touch,pivots[p].price,c,Structure_Line_Style);
-   string txt=Use_Quantitative_Labels?(string)((touch-pivots[p].time)/PeriodSeconds(Timeframe)):kind;
-   Text(kind+"_label_"+(string)p,middle,pivots[p].price,txt,c,above);
+   if(origin<0 || origin>=ArraySize(pivots)) return;
+   datetime end=event_time;
+   // A continuation ends at the first retest/break of the old extreme.  For a
+   // CHoCH, require price to pass the protected pullback so that the line is
+   // not shortened by an ordinary retest immediately after that pullback.
+   if(kind=="BoS")
+      end=FirstTouchTime(rates,total,pivots[origin].time,event_time,pivots[origin].price);
+   else
+     {
+      for(int i=0;i<total;i++)
+        {
+         if(rates[i].time<=pivots[origin].time) continue;
+         if(rates[i].time>event_time) break;
+         if((direction==1 && rates[i].high>pivots[origin].price) ||
+            (direction==-1 && rates[i].low<pivots[origin].price))
+           { end=rates[i].time; break; }
+        }
+     }
+   datetime middle=(datetime)(((long)pivots[origin].time+(long)end)/2);
+   string id=kind+"_"+(string)origin+"_"+(string)event_time;
+   Line(id,pivots[origin].time,pivots[origin].price,end,pivots[origin].price,c,Structure_Line_Style);
+   ENUM_TIMEFRAMES tf=Timeframe==PERIOD_CURRENT?(ENUM_TIMEFRAMES)_Period:Timeframe;
+   string txt=Use_Quantitative_Labels?(string)((end-pivots[origin].time)/PeriodSeconds(tf)):kind;
+   Text(id+"_label",middle,pivots[origin].price,txt,c,above);
   }
 int BarIndexAtOrAfter(const MqlRates &rates[],const int total,const datetime time)
   {
@@ -166,10 +183,6 @@ bool SignificantPivot(const int p,const MqlRates &rates[],const int total)
    double atr=ATRValue(rates,bar,Significance_ATR_Period);
    if(atr==EMPTY_VALUE || atr<=0) return false;
    return MathAbs(pivots[p].price-pivots[p-1].price)>=Minimum_Swing_ATR*atr;
-  }
-bool BrokeLevel(const double value,const double level,const int direction,const double buffer)
-  {
-   return direction==1?value>level+buffer:value<level-buffer;
   }
 void Rebuild()
   {
@@ -215,35 +228,75 @@ void Rebuild()
      {
       DrawPivot(p);
      }
-   // Evaluate the latest significant, unbroken swing on each closed bar. The
-   // first confirmed break establishes direction as a BoS; later breaks in the
-   // same direction are BoS, while an opposite break is a CHoCH. This avoids
-   // requiring a fully classified HH/HL or LH/LL sequence before any BoS can
-   // appear, while retaining the ATR significance and clearance filters.
-   int trend=0;
-   for(int i=start;i<copied-1;i++)
+   // Market-structure events are based on completed, significant swing
+   // sequences.  A trend requires HH+HL or LL+LH.  Continuation BoS is only
+   // possible once that trend exists and a prior HH/LL is exceeded.  A trend
+   // reversal remains pending until the countertrend extreme is followed by
+   // its confirming pullback (LL then LH, or HH then HL).
+   int trend=0,lastHigh=-1,lastLow=-1;
+   int highClass=0,lowClass=0; // +1=HH/HL, -1=LH/LL
+   int pending=0,transitionOrigin=-1,transitionExtreme=-1;
+   for(int p=0;p<ArraySize(pivots);p++)
      {
-      double atr=ATRValue(r,i,Significance_ATR_Period); if(atr==EMPTY_VALUE) continue;
-      double buffer=atr*Break_Buffer_ATR;
-      int averageLength=CalculateZigZagBy==LTF?LTF_SMA_Length:(CalculateZigZagBy==MTF?MTF_SMA_Length:HTF_SMA_Length);
-      double breakValue=SMAValue(r,i,averageLength); if(breakValue==EMPTY_VALUE) continue;
-      for(int p=ArraySize(pivots)-1;p>=0;p--)
+      if(!SignificantPivot(p,r,copied)) continue;
+      if(pivots[p].type==1)
         {
-         if(pivots[p].time>=r[i].time || pivots[p].broken || !SignificantPivot(p,r,copied)) continue;
-         int dir=pivots[p].type;
-         if(!BrokeLevel(breakValue,pivots[p].price,dir,buffer)) continue;
-         bool choch=trend!=0 && dir!=trend;
-         pivots[p].broken=true;
-         trend=dir;
-         if(choch && Show_CHoCH_Lines) BreakLine("CHoCH",p,r[i].time,CHoCH_Color,dir==1,r,copied);
-         else if(!choch && Show_BoS_Lines) BreakLine("BoS",p,r[i].time,dir==1?Bullish_BoS_Color:Bearish_BoS_Color,dir==1,r,copied);
-         if(i==copied-2) { if(choch&&Alert_CHoCH) Fire(dir==1?"Bullish CHoCH":"Bearish CHoCH"); else if(!choch&&Alert_BoS) Fire(dir==1?"Bullish BoS":"Bearish BoS"); }
-         break;
+         if(lastHigh<0) { lastHigh=p; continue; }
+         int classification=pivots[p].price>pivots[lastHigh].price?1:-1;
+         if(trend==1 && classification==1)
+           {
+            if(highClass==1 && Show_BoS_Lines)
+               StructureLine("BoS",lastHigh,pivots[p].time,BoS_Color,true,r,copied,1);
+            if(highClass==1 && p==ArraySize(pivots)-1 && Alert_BoS) Fire("Bullish BoS");
+            pending=0;
+           }
+         else if(trend==-1 && classification==1)
+           {
+            if(pending==0) { pending=1; transitionOrigin=lastHigh; }
+            transitionExtreme=p;
+           }
+         else if(trend==1 && pending==-1 && classification==-1)
+           {
+            if(Show_CHoCH_Lines) StructureLine("CHoCH",transitionOrigin,pivots[transitionExtreme].time,CHoCH_Color,true,r,copied,-1);
+            if(p==ArraySize(pivots)-1 && Alert_CHoCH) Fire("Bearish CHoCH");
+            trend=-1; pending=0;
+           }
+         highClass=classification; lastHigh=p;
+        }
+      else
+        {
+         if(lastLow<0) { lastLow=p; continue; }
+         int classification=pivots[p].price>pivots[lastLow].price?1:-1;
+         if(trend==-1 && classification==-1)
+           {
+            if(lowClass==-1 && Show_BoS_Lines)
+               StructureLine("BoS",lastLow,pivots[p].time,BoS_Color,false,r,copied,-1);
+            if(lowClass==-1 && p==ArraySize(pivots)-1 && Alert_BoS) Fire("Bearish BoS");
+            pending=0;
+           }
+         else if(trend==1 && classification==-1)
+           {
+            if(pending==0) { pending=-1; transitionOrigin=lastLow; }
+            transitionExtreme=p;
+           }
+         else if(trend==-1 && pending==1 && classification==1)
+           {
+            if(Show_CHoCH_Lines) StructureLine("CHoCH",transitionOrigin,pivots[transitionExtreme].time,CHoCH_Color,false,r,copied,1);
+            if(p==ArraySize(pivots)-1 && Alert_CHoCH) Fire("Bullish CHoCH");
+            trend=1; pending=0;
+           }
+         lowClass=classification; lastLow=p;
+        }
+
+      if(trend==0 && highClass!=0 && lowClass!=0)
+        {
+         if(highClass==1 && lowClass==1) trend=1;
+         else if(highClass==-1 && lowClass==-1) trend=-1;
         }
      }
    ChartRedraw();
   }
-int OnInit() { if(TriggerPhaseLoopback<1||LTF_SMA_Length<1||MTF_SMA_Length<1||HTF_SMA_Length<1||Significance_ATR_Period<1||Minimum_Swing_ATR<0||Break_Buffer_ATR<0) return INIT_PARAMETERS_INCORRECT; EventSetTimer(2); Rebuild(); return INIT_SUCCEEDED; }
+int OnInit() { if(TriggerPhaseLoopback<1||LTF_SMA_Length<1||MTF_SMA_Length<1||HTF_SMA_Length<1||Significance_ATR_Period<1||Minimum_Swing_ATR<0) return INIT_PARAMETERS_INCORRECT; EventSetTimer(2); Rebuild(); return INIT_SUCCEEDED; }
 void OnDeinit(const int reason) { EventKillTimer(); ObjectsDeleteAll(0,prefix); }
 void OnTimer() { if(lastBar==0) Rebuild(); }
 void OnTick()
