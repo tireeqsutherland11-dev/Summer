@@ -1,0 +1,103 @@
+//@version=6
+indicator("Higher High Lower Low - Live", shorttitle = "HH LL - Live", overlay = true, max_lines_count = 500, max_labels_count = 500)
+
+// A swing is confirmed only after this many candles have printed on its right.
+// The unconfirmed end of the zig-zag is nevertheless updated on every tick.
+depth = input.int(5, "Pivot length", minval = 1)
+showLive = input.bool(true, "Show live swing")
+upColor = input.color(#00e68a, "High / rising color")
+downColor = input.color(#ff4d57, "Low / falling color")
+lineWidth = input.int(2, "Line width", minval = 1, maxval = 4)
+
+pivotHigh = ta.pivothigh(high, depth, depth)
+pivotLow = ta.pivotlow(low, depth, depth)
+
+var int lastType = 0
+var int lastX = na
+var float lastY = na
+var float previousHigh = na
+var float previousLow = na
+var float highBeforeLast = na
+var float lowBeforeLast = na
+var line lastConfirmedLine = na
+var label lastConfirmedLabel = na
+
+var int liveX = na
+var float liveY = na
+var line liveLine = na
+var label liveLabel = na
+var int liveAnchorX = na
+
+// Add confirmed turns to the zig-zag. If two pivots of the same kind occur in
+// succession, retain only the more extreme one and move the existing objects.
+if not na(pivotHigh)
+    int x = bar_index - depth
+    float y = pivotHigh
+    if lastType != 1
+        if not na(lastX)
+            lastConfirmedLine := line.new(lastX, lastY, x, y, xloc = xloc.bar_index, color = upColor, width = lineWidth)
+        string text = na(previousHigh) ? "High" : y > previousHigh ? "HH" : "LH"
+        lastConfirmedLabel := label.new(x, y, text, xloc = xloc.bar_index, yloc = yloc.price, style = label.style_none, textcolor = upColor, size = size.small)
+        highBeforeLast := previousHigh
+        previousHigh := y
+        lastType := 1
+        lastX := x
+        lastY := y
+    else if y > lastY
+        lastX := x
+        lastY := y
+        label.set_xy(lastConfirmedLabel, x, y)
+        label.set_text(lastConfirmedLabel, na(highBeforeLast) ? "High" : y > highBeforeLast ? "HH" : "LH")
+        previousHigh := y
+        if not na(lastConfirmedLine)
+            line.set_xy2(lastConfirmedLine, x, y)
+
+if not na(pivotLow)
+    int x = bar_index - depth
+    float y = pivotLow
+    if lastType != -1
+        if not na(lastX)
+            lastConfirmedLine := line.new(lastX, lastY, x, y, xloc = xloc.bar_index, color = downColor, width = lineWidth)
+        string text = na(previousLow) ? "Low" : y < previousLow ? "LL" : "HL"
+        lastConfirmedLabel := label.new(x, y, text, xloc = xloc.bar_index, yloc = yloc.price, style = label.style_none, textcolor = downColor, size = size.small)
+        lowBeforeLast := previousLow
+        previousLow := y
+        lastType := -1
+        lastX := x
+        lastY := y
+    else if y < lastY
+        lastX := x
+        lastY := y
+        label.set_xy(lastConfirmedLabel, x, y)
+        label.set_text(lastConfirmedLabel, na(lowBeforeLast) ? "Low" : y < lowBeforeLast ? "LL" : "HL")
+        previousLow := y
+        if not na(lastConfirmedLine)
+            line.set_xy2(lastConfirmedLine, x, y)
+
+// The final leg is intentionally redrawn as price moves. This is the "live"
+// portion of the indicator and will repaint until that swing is confirmed.
+if not na(lastX)
+    if na(liveAnchorX) or liveAnchorX != lastX
+        liveAnchorX := lastX
+        liveX := bar_index
+        liveY := lastType == -1 ? high : low
+
+    if lastType == -1
+        if high >= liveY
+            liveY := high
+            liveX := bar_index
+    else
+        if low <= liveY
+            liveY := low
+            liveX := bar_index
+
+    if not na(liveLine)
+        line.delete(liveLine)
+    if not na(liveLabel)
+        label.delete(liveLabel)
+
+    if showLive
+        color liveColor = lastType == -1 ? upColor : downColor
+        string liveText = lastType == -1 ? "High" : "Low"
+        liveLine := line.new(lastX, lastY, liveX, liveY, xloc = xloc.bar_index, color = liveColor, width = lineWidth)
+        liveLabel := label.new(liveX, liveY, liveText, xloc = xloc.bar_index, yloc = yloc.price, style = lastType == -1 ? label.style_label_down : label.style_label_up, color = color.new(liveColor, 35), textcolor = color.white, size = size.small)
