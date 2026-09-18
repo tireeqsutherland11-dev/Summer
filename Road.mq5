@@ -1,5 +1,5 @@
 #property copyright "Market Trend Analyser conversion"
-#property version   "1.00"
+#property version   "1.10"
 #property strict
 #property description "Road: MT5 port of the Market Trend Analyser Pine Script."
 #property description "Signal/visualisation EA only; the source indicator contains no trading rules."
@@ -14,6 +14,21 @@ enum ROAD_LABEL_SIZE { ROAD_TINY=7, ROAD_SMALL=9, ROAD_NORMAL=11, ROAD_LARGE=14 
 input group "General"
 input ENUM_TIMEFRAMES Analysis_Timeframe=PERIOD_CURRENT;
 input int Bars_To_Process=5000;
+
+input group "Higher-Timeframe Support / Resistance"
+input bool Show_HTF_Support_Resistance=true;
+input ENUM_TIMEFRAMES SR_Timeframe=PERIOD_H4;
+input int SR_Lookback_Bars=500;
+input int SR_Pivot_Length=3;
+input int SR_ATR_Length=14;
+input double SR_Merge_Distance_ATR=0.25;
+input int SR_Minimum_Touches=2;
+input int SR_Maximum_Levels_Per_Side=3;
+input color SR_Support_Color=clrDeepSkyBlue;
+input color SR_Resistance_Color=clrTomato;
+input ENUM_LINE_STYLE SR_Line_Style=STYLE_DOT;
+input int SR_Line_Width=2;
+input bool Show_SR_Labels=true;
 
 input group "Swing Detection"
 input int Swing_Detection_Length=5;
@@ -82,6 +97,17 @@ int g_ma_handle=INVALID_HANDLE;
 int g_htf_ma_handle=INVALID_HANDLE;
 int g_adx_handle=INVALID_HANDLE;
 int g_atr_handle=INVALID_HANDLE;
+int g_sr_atr_handle=INVALID_HANDLE;
+
+struct ROAD_SR_LEVEL
+  {
+   double price;
+   double weight;
+   int touches;
+   datetime first_time;
+   datetime last_time;
+   double score;
+  };
 
 ENUM_TIMEFRAMES RoadTimeframe()
   {
@@ -192,6 +218,116 @@ void DrawSegment(const string id,const datetime from,const double from_price,
    ObjectSetInteger(0,name,OBJPROP_STYLE,style);
    ObjectSetInteger(0,name,OBJPROP_WIDTH,MathMax(1,MathMin(4,width)));
    ObjectSetInteger(0,name,OBJPROP_SELECTABLE,false);
+  }
+
+void AddSRLevel(ROAD_SR_LEVEL &levels[],const double price,const datetime time,
+                const double tolerance,const double importance)
+  {
+   int count=ArraySize(levels),match=-1;
+   double nearest=DBL_MAX;
+   for(int i=0;i<count;i++)
+     {
+      double distance=MathAbs(levels[i].price-price);
+      if(distance<=tolerance && distance<nearest) { nearest=distance; match=i; }
+     }
+   if(match<0)
+     {
+      ArrayResize(levels,count+1);
+      levels[count].price=price;
+      levels[count].weight=importance;
+      levels[count].touches=1;
+      levels[count].first_time=time;
+      levels[count].last_time=time;
+      levels[count].score=0.0;
+      return;
+     }
+   double combined=levels[match].weight+importance;
+   levels[match].price=(levels[match].price*levels[match].weight+price*importance)/combined;
+   levels[match].weight=combined;
+   levels[match].touches++;
+   if(time<levels[match].first_time) levels[match].first_time=time;
+   if(time>levels[match].last_time) levels[match].last_time=time;
+  }
+
+// Confirmed HTF pivots are merged into price zones. Repeated reactions dominate
+// the score, while a large rejection and a recent touch break otherwise equal ties.
+void BuildSRSide(const MqlRates &rates[],const double &atr[],const int total,
+                 const bool resistance,ROAD_SR_LEVEL &levels[])
+  {
+   ArrayResize(levels,0);
+   int length=MathMax(1,MathMin(20,SR_Pivot_Length));
+   for(int i=length;i<total-length;i++)
+     {
+      bool pivot=resistance?PivotHigh(rates,total,i,length):PivotLow(rates,total,i,length);
+      if(!pivot || atr[i]<=0.0 || atr[i]==EMPTY_VALUE) continue;
+      double price=resistance?rates[i].high:rates[i].low;
+      double rejection=resistance?price-MathMax(rates[i].open,rates[i].close)
+                                  :MathMin(rates[i].open,rates[i].close)-price;
+      double importance=1.0+MathMax(0.0,rejection/atr[i]);
+      double tolerance=MathMax(_Point,atr[i]*MathMax(0.0,SR_Merge_Distance_ATR));
+      AddSRLevel(levels,price,rates[i].time,tolerance,importance);
+     }
+   for(int i=0;i<ArraySize(levels);i++)
+     {
+      double recency=(double)(iBarShift(_Symbol,SR_Timeframe,levels[i].last_time,false));
+      levels[i].score=levels[i].touches*1000.0+levels[i].weight*10.0-recency*0.01;
+     }
+  }
+
+int BestSRLevel(const ROAD_SR_LEVEL &levels[],const bool used[],const bool resistance,
+                const double market_price)
+  {
+   int best=-1;
+   for(int i=0;i<ArraySize(levels);i++)
+     {
+      if(used[i] || levels[i].touches<SR_Minimum_Touches) continue;
+      if((resistance && levels[i].price<=market_price) || (!resistance && levels[i].price>=market_price)) continue;
+      if(best<0 || levels[i].score>levels[best].score) best=i;
+     }
+   return best;
+  }
+
+void DrawSRSide(const ROAD_SR_LEVEL &levels[],const bool resistance,const double market_price,
+                const datetime chart_time)
+  {
+   int count=ArraySize(levels);
+   bool used[]; ArrayResize(used,count); ArrayInitialize(used,false);
+   int maximum=MathMax(1,MathMin(10,SR_Maximum_Levels_Per_Side));
+   color clr=resistance?SR_Resistance_Color:SR_Support_Color;
+   string side=resistance?"R":"S";
+   for(int rank=0;rank<maximum;rank++)
+     {
+      int selected=BestSRLevel(levels,used,resistance,market_price);
+      if(selected<0) break;
+      used[selected]=true;
+      string key="HTF_SR_"+side+"_"+(string)levels[selected].first_time;
+      DrawSegment(key,levels[selected].first_time,levels[selected].price,
+                  chart_time,levels[selected].price,clr,SR_Line_Style,SR_Line_Width);
+      string object_name=g_prefix+key;
+      if(ObjectFind(0,object_name)>=0) ObjectSetInteger(0,object_name,OBJPROP_RAY_RIGHT,true);
+      if(Show_SR_Labels)
+        {
+         string caption=(resistance?"HTF R":"HTF S")+" ("+
+                        IntegerToString(levels[selected].touches)+" touches)";
+         DrawText(key+"_LABEL",chart_time,levels[selected].price,caption,clr,!resistance,8);
+        }
+     }
+  }
+
+void DrawSignificantSR(const double market_price,const datetime chart_time)
+  {
+   if(!Show_HTF_Support_Resistance) return;
+   int wanted=MathMax(50,MathMin(10000,SR_Lookback_Bars));
+   MqlRates rates[]; ArraySetAsSeries(rates,false);
+   int total=CopyRates(_Symbol,SR_Timeframe,1,wanted,rates);
+   if(total<2*SR_Pivot_Length+2) return;
+   double atr[]; ArrayResize(atr,total); ArraySetAsSeries(atr,false);
+   if(g_sr_atr_handle==INVALID_HANDLE || CopyBuffer(g_sr_atr_handle,0,1,total,atr)!=total) return;
+   ROAD_SR_LEVEL supports[],resistances[];
+   BuildSRSide(rates,atr,total,false,supports);
+   BuildSRSide(rates,atr,total,true,resistances);
+   DrawSRSide(supports,false,market_price,chart_time);
+   DrawSRSide(resistances,true,market_price,chart_time);
   }
 
 void DrawSignal(const string kind,const int direction,const datetime swing_time,
@@ -361,6 +497,8 @@ void Rebuild(const bool permit_alert)
    if(Show_Swing_Points && have_low)
       DrawSegment("LAST_LOW",last_low_time,last_low,rates[total-1].time,last_low,clrTeal,STYLE_DOT,1);
 
+   DrawSignificantSR(rates[total-1].close,rates[total-1].time);
+
    DrawDashboard(structure,have_high,last_high,have_low,last_low,dashboard_session,
                  adx[total-1],dashboard_adx,atr[total-1],dashboard_atr,rates[total-1].close,
                  ma[total-1],last_htf_ma,dashboard_bull_bos,dashboard_bear_bos,
@@ -373,7 +511,10 @@ void Rebuild(const bool permit_alert)
 int OnInit()
   {
    if(Swing_Detection_Length<1 || Swing_Detection_Length>50 || MA_Length<1 ||
-      HTF_MA_Length<1 || ADX_Length<1 || ATR_Length<1 || Bars_To_Process<100)
+      HTF_MA_Length<1 || ADX_Length<1 || ATR_Length<1 || Bars_To_Process<100 ||
+      SR_Lookback_Bars<50 || SR_Pivot_Length<1 || SR_Pivot_Length>20 || SR_ATR_Length<1 ||
+      SR_Merge_Distance_ATR<0.0 || SR_Minimum_Touches<1 ||
+      SR_Maximum_Levels_Per_Side<1 || SR_Maximum_Levels_Per_Side>10)
       return INIT_PARAMETERS_INCORRECT;
    ENUM_TIMEFRAMES timeframe=RoadTimeframe();
    g_prefix="Road_"+(string)ChartID()+"_";
@@ -381,8 +522,10 @@ int OnInit()
    g_htf_ma_handle=iMA(_Symbol,HTF_Timeframe,HTF_MA_Length,0,RoadMAMethod(HTF_MA_Type),PRICE_CLOSE);
    g_adx_handle=iADX(_Symbol,timeframe,ADX_Length);
    g_atr_handle=iATR(_Symbol,timeframe,ATR_Length);
+   g_sr_atr_handle=iATR(_Symbol,SR_Timeframe,SR_ATR_Length);
    if(g_ma_handle==INVALID_HANDLE || g_htf_ma_handle==INVALID_HANDLE ||
-      g_adx_handle==INVALID_HANDLE || g_atr_handle==INVALID_HANDLE) return INIT_FAILED;
+      g_adx_handle==INVALID_HANDLE || g_atr_handle==INVALID_HANDLE ||
+      g_sr_atr_handle==INVALID_HANDLE) return INIT_FAILED;
    EventSetTimer(2);
    Rebuild(false);
    return INIT_SUCCEEDED;
@@ -395,6 +538,7 @@ void OnDeinit(const int reason)
    if(g_htf_ma_handle!=INVALID_HANDLE) IndicatorRelease(g_htf_ma_handle);
    if(g_adx_handle!=INVALID_HANDLE) IndicatorRelease(g_adx_handle);
    if(g_atr_handle!=INVALID_HANDLE) IndicatorRelease(g_atr_handle);
+   if(g_sr_atr_handle!=INVALID_HANDLE) IndicatorRelease(g_sr_atr_handle);
    ObjectsDeleteAll(0,g_prefix);
    Comment("");
   }
