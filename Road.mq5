@@ -13,7 +13,7 @@ enum ROAD_LABEL_SIZE { ROAD_TINY=7, ROAD_SMALL=9, ROAD_NORMAL=11, ROAD_LARGE=14 
 
 input group "General"
 input ENUM_TIMEFRAMES Analysis_Timeframe=PERIOD_CURRENT;
-input int Bars_To_Process=5000;
+input int Bars_To_Process=1000;
 
 input group "Higher-Timeframe Support / Resistance"
 input bool Show_HTF_Support_Resistance=true;
@@ -22,7 +22,7 @@ input int SR_Lookback_Bars=500;
 input int SR_Pivot_Length=3;
 input int SR_ATR_Length=14;
 input double SR_Merge_Distance_ATR=0.25;
-input int SR_Minimum_Touches=2;
+input int SR_Minimum_Touches=3;
 input int SR_Maximum_Levels_Per_Side=3;
 input color SR_Support_Color=clrDeepSkyBlue;
 input color SR_Resistance_Color=clrTomato;
@@ -59,12 +59,12 @@ input bool Show_MA_Line=true;
 input color MA_Color=clrBlue;
 
 input group "MA Filter (HTF)"
-input bool Use_HTF_MA_Filter=false;
-input ENUM_TIMEFRAMES HTF_Timeframe=PERIOD_H4;
-input int HTF_MA_Length=200;
+input bool Use_HTF_MA_Filter=true;
+input ENUM_TIMEFRAMES HTF_Timeframe=PERIOD_H1;
+input int HTF_MA_Length=100;
 input ROAD_MA_TYPE HTF_MA_Type=ROAD_EMA;
 input ROAD_MA_FILTER_MODE HTF_MA_Filter_Mode=ROAD_PRICE_ABOVE_BELOW;
-input bool Show_HTF_MA_Line=false;
+input bool Show_HTF_MA_Line=true;
 input color HTF_MA_Color=clrOrange;
 
 input group "Session Filter"
@@ -556,3 +556,7 @@ void CheckForBar()
 
 void OnTick() { CheckForBar(); }
 void OnTimer() { CheckForBar(); }
+
+
+
+
