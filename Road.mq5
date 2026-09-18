@@ -1,5 +1,5 @@
 #property copyright "Market Trend Analyser conversion"
-#property version   "1.10"
+#property version   "1.20"
 #property strict
 #property description "Road: MT5 port of the Market Trend Analyser Pine Script."
 #property description "Signal/visualisation EA only; the source indicator contains no trading rules."
@@ -17,12 +17,13 @@ input int Bars_To_Process=1000;
 
 input group "Higher-Timeframe Support / Resistance"
 input bool Show_HTF_Support_Resistance=true;
-input ENUM_TIMEFRAMES SR_Timeframe=PERIOD_H4;
 input int SR_Lookback_Bars=500;
 input int SR_Pivot_Length=3;
 input int SR_ATR_Length=14;
 input double SR_Merge_Distance_ATR=0.25;
-input int SR_Minimum_Touches=3;
+input int SR_Impulse_Lookahead=6;
+input double SR_Minimum_Impulse_ATR=1.5;
+input int SR_Minimum_Touches=1;
 input int SR_Maximum_Levels_Per_Side=3;
 input color SR_Support_Color=clrDeepSkyBlue;
 input color SR_Resistance_Color=clrTomato;
@@ -98,6 +99,7 @@ int g_htf_ma_handle=INVALID_HANDLE;
 int g_adx_handle=INVALID_HANDLE;
 int g_atr_handle=INVALID_HANDLE;
 int g_sr_atr_handle=INVALID_HANDLE;
+const ENUM_TIMEFRAMES SR_Timeframe=PERIOD_H4;
 
 struct ROAD_SR_LEVEL
   {
@@ -107,6 +109,16 @@ struct ROAD_SR_LEVEL
    datetime first_time;
    datetime last_time;
    double score;
+   int structure_mask;
+   bool strong_origin;
+  };
+
+enum ROAD_SR_STRUCTURE
+  {
+   ROAD_SR_HH=1,
+   ROAD_SR_LH=2,
+   ROAD_SR_HL=4,
+   ROAD_SR_LL=8
   };
 
 ENUM_TIMEFRAMES RoadTimeframe()
@@ -221,7 +233,8 @@ void DrawSegment(const string id,const datetime from,const double from_price,
   }
 
 void AddSRLevel(ROAD_SR_LEVEL &levels[],const double price,const datetime time,
-                const double tolerance,const double importance)
+                const double tolerance,const double importance,
+                const int structure_type,const bool strong_origin)
   {
    int count=ArraySize(levels),match=-1;
    double nearest=DBL_MAX;
@@ -239,38 +252,72 @@ void AddSRLevel(ROAD_SR_LEVEL &levels[],const double price,const datetime time,
       levels[count].first_time=time;
       levels[count].last_time=time;
       levels[count].score=0.0;
+      levels[count].structure_mask=structure_type;
+      levels[count].strong_origin=strong_origin;
       return;
      }
    double combined=levels[match].weight+importance;
    levels[match].price=(levels[match].price*levels[match].weight+price*importance)/combined;
    levels[match].weight=combined;
    levels[match].touches++;
+   levels[match].structure_mask|=structure_type;
+   levels[match].strong_origin=levels[match].strong_origin || strong_origin;
    if(time<levels[match].first_time) levels[match].first_time=time;
    if(time>levels[match].last_time) levels[match].last_time=time;
   }
 
-// Confirmed HTF pivots are merged into price zones. Repeated reactions dominate
-// the score, while a large rejection and a recent touch break otherwise equal ties.
+string SRStructureText(const int mask)
+  {
+   string result="";
+   if((mask&ROAD_SR_HH)!=0) result="HH";
+   if((mask&ROAD_SR_LH)!=0) result+=(result==""?"":"/")+"LH";
+   if((mask&ROAD_SR_HL)!=0) result+=(result==""?"":"/")+"HL";
+   if((mask&ROAD_SR_LL)!=0) result+=(result==""?"":"/")+"LL";
+   return result;
+  }
+
+// A major H4 level is a confirmed structural swing (HH/LH/HL/LL) and/or the
+// origin of an impulsive move.  The look-ahead is safe here because only closed
+// candles are copied and the level is not published until the move is known.
 void BuildSRSide(const MqlRates &rates[],const double &atr[],const int total,
                  const bool resistance,ROAD_SR_LEVEL &levels[])
   {
    ArrayResize(levels,0);
    int length=MathMax(1,MathMin(20,SR_Pivot_Length));
+   int impulse_bars=MathMax(1,MathMin(50,SR_Impulse_Lookahead));
+   double previous_swing=0.0;
+   bool have_previous=false;
    for(int i=length;i<total-length;i++)
      {
       bool pivot=resistance?PivotHigh(rates,total,i,length):PivotLow(rates,total,i,length);
       if(!pivot || atr[i]<=0.0 || atr[i]==EMPTY_VALUE) continue;
       double price=resistance?rates[i].high:rates[i].low;
+      int structure_type=0;
+      if(have_previous)
+         structure_type=resistance?(price>previous_swing?ROAD_SR_HH:ROAD_SR_LH)
+                                   :(price>previous_swing?ROAD_SR_HL:ROAD_SR_LL);
+      previous_swing=price;
+      have_previous=true;
+
+      double furthest=price;
+      int move_end=MathMin(total-1,i+impulse_bars);
+      for(int j=i+1;j<=move_end;j++)
+         furthest=resistance?MathMin(furthest,rates[j].low):MathMax(furthest,rates[j].high);
+      double impulse=resistance?price-furthest:furthest-price;
+      bool strong_origin=impulse>=atr[i]*SR_Minimum_Impulse_ATR;
+      if(structure_type==0 && !strong_origin) continue;
       double rejection=resistance?price-MathMax(rates[i].open,rates[i].close)
                                   :MathMin(rates[i].open,rates[i].close)-price;
-      double importance=1.0+MathMax(0.0,rejection/atr[i]);
+      double importance=1.0+MathMax(0.0,rejection/atr[i])+MathMax(0.0,impulse/atr[i]);
       double tolerance=MathMax(_Point,atr[i]*MathMax(0.0,SR_Merge_Distance_ATR));
-      AddSRLevel(levels,price,rates[i].time,tolerance,importance);
+      AddSRLevel(levels,price,rates[i].time,tolerance,importance,structure_type,strong_origin);
      }
    for(int i=0;i<ArraySize(levels);i++)
      {
       double recency=(double)(iBarShift(_Symbol,SR_Timeframe,levels[i].last_time,false));
-      levels[i].score=levels[i].touches*1000.0+levels[i].weight*10.0-recency*0.01;
+      levels[i].score=(levels[i].strong_origin?2000.0:0.0)+
+                      (levels[i].structure_mask!=0?1000.0:0.0)+
+                      levels[i].touches*100.0+levels[i].weight*10.0-recency*0.01;
      }
   }
 
@@ -307,8 +354,11 @@ void DrawSRSide(const ROAD_SR_LEVEL &levels[],const bool resistance,const double
       if(ObjectFind(0,object_name)>=0) ObjectSetInteger(0,object_name,OBJPROP_RAY_RIGHT,true);
       if(Show_SR_Labels)
         {
-         string caption=(resistance?"HTF R":"HTF S")+" ("+
-                        IntegerToString(levels[selected].touches)+" touches)";
+         string traits=SRStructureText(levels[selected].structure_mask);
+         if(levels[selected].strong_origin) traits+=(traits==""?"":" + ")+"IMPULSE";
+         string caption="H4 "+(resistance?"R":"S")+" ["+traits+"] ("+
+                        IntegerToString(levels[selected].touches)+" touch"+
+                        (levels[selected].touches==1?"":"es")+")";
          DrawText(key+"_LABEL",chart_time,levels[selected].price,caption,clr,!resistance,8);
         }
      }
@@ -513,7 +563,8 @@ int OnInit()
    if(Swing_Detection_Length<1 || Swing_Detection_Length>50 || MA_Length<1 ||
       HTF_MA_Length<1 || ADX_Length<1 || ATR_Length<1 || Bars_To_Process<100 ||
       SR_Lookback_Bars<50 || SR_Pivot_Length<1 || SR_Pivot_Length>20 || SR_ATR_Length<1 ||
-      SR_Merge_Distance_ATR<0.0 || SR_Minimum_Touches<1 ||
+      SR_Merge_Distance_ATR<0.0 || SR_Impulse_Lookahead<1 || SR_Impulse_Lookahead>50 ||
+      SR_Minimum_Impulse_ATR<=0.0 || SR_Minimum_Touches<1 ||
       SR_Maximum_Levels_Per_Side<1 || SR_Maximum_Levels_Per_Side>10)
       return INIT_PARAMETERS_INCORRECT;
    ENUM_TIMEFRAMES timeframe=RoadTimeframe();
@@ -556,7 +607,5 @@ void CheckForBar()
 
 void OnTick() { CheckForBar(); }
 void OnTimer() { CheckForBar(); }
-
-
 
 
