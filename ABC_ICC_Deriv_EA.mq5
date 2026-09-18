@@ -259,10 +259,17 @@ void Draw(const Analysis &a) {
    ObjectSetInteger(0,name,OBJPROP_CORNER,CORNER_LEFT_UPPER);ObjectSetInteger(0,name,OBJPROP_XDISTANCE,12);ObjectSetInteger(0,name,OBJPROP_YDISTANCE,18);ObjectSetInteger(0,name,OBJPROP_COLOR,clrWhite);
    string d=a.direction==DIR_BUY?"BUY":(a.direction==DIR_SELL?"SELL":"WAIT"); ObjectSetString(0,name,OBJPROP_TEXT,"ABC/ICC  "+d+"  Score "+IntegerToString(a.score)+"/"+IntegerToString(a.maxScore)+"\n"+a.reason);
 }
+void DrawPriceLine(const string suffix,const double price,const color lineColor) {
+   string name=g_prefix+suffix;
+   if(ObjectFind(0,name)<0) ObjectCreate(0,name,OBJ_HLINE,0,0,price);
+   ObjectSetDouble(0,name,OBJPROP_PRICE,price);
+   ObjectSetInteger(0,name,OBJPROP_COLOR,lineColor);
+}
 void Draw(const Analysis &a,const Plan &p) {
    Draw(a); if(!InpEnableVisualization)return;
-   string names[3]={"entry","sl","tp"}; double prices[3]={p.entry,p.sl,p.tp}; color cols[3]={clrDodgerBlue,clrTomato,clrLimeGreen};
-   for(int i=0;i<3;i++){string n=g_prefix+names[i];if(ObjectFind(0,n)<0)ObjectCreate(0,n,OBJ_HLINE,0,0,prices[i]);ObjectSetDouble(0,n,OBJPROP_PRICE,prices[i]);ObjectSetInteger(0,n,OBJPROP_COLOR,cols[i]);}
+   DrawPriceLine("entry",p.entry,clrDodgerBlue);
+   DrawPriceLine("sl",p.sl,clrTomato);
+   DrawPriceLine("tp",p.tp,clrLimeGreen);
 }
 bool SendOrder(const Plan &p,string &result) {
    MqlTradeRequest req={}; MqlTradeResult res={}; req.action=TRADE_ACTION_DEAL;req.symbol=_Symbol;req.magic=InpMagicNumber;req.volume=p.volume;req.deviation=InpMaxSlippagePoints;req.sl=p.sl;req.tp=p.tp;req.comment=p.id;
