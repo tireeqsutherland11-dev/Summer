@@ -274,7 +274,7 @@ void BuildSRSide(const MqlRates &rates[],const double &atr[],const int total,
      }
   }
 
-int BestSRLevel(const ROAD_SR_LEVEL &levels[],const bool used[],const bool resistance,
+int BestSRLevel(const ROAD_SR_LEVEL &levels[],const bool &used[],const bool resistance,
                 const double market_price)
   {
    int best=-1;
