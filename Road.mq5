@@ -1,5 +1,5 @@
 #property copyright "Market Trend Analyser conversion"
-#property version   "1.20"
+#property version   "1.21"
 #property strict
 #property description "Road: MT5 port of the Market Trend Analyser Pine Script."
 #property description "Signal/visualisation EA only; the source indicator contains no trading rules."
@@ -448,12 +448,13 @@ void Rebuild(const bool permit_alert)
 
    ObjectsDeleteAll(0,g_prefix);
    bool have_high=false,have_low=false,high_broken=false,low_broken=false;
-   bool have_continuation_high=false,have_continuation_low=false;
    double last_high=0.0,last_low=0.0,last_htf_ma=0.0;
-   double continuation_high=0.0,continuation_low=0.0;
    datetime last_high_time=0,last_low_time=0,newest_signal_time=0;
-   datetime continuation_high_time=0,continuation_low_time=0;
    int structure=0;
+   // The first confirmed swing break establishes an initial bias.  BOS is
+   // armed only after an opposite swing break has confirmed a CHoCH, so an
+   // incomplete history cannot manufacture a continuation signal.
+   bool choch_confirmed=false;
    string newest_signal="";
    bool dashboard_bull_bos=false,dashboard_bear_bos=false;
    bool dashboard_bull_choch=false,dashboard_bear_choch=false;
@@ -507,55 +508,44 @@ void Rebuild(const bool permit_alert)
 
       bool bullish_break=have_high && !high_broken && rates[i].close>last_high && rates[i-1].close<=last_high;
       bool bearish_break=have_low && !low_broken && rates[i].close<last_low && rates[i-1].close>=last_low;
-      // Once direction has been confirmed, continuation structure is measured
-      // from the extreme created by the preceding break.  This makes every
-      // subsequent higher high/lower low a BOS, even when no new pivot has
-      // formed between consecutive expansion candles.
-      bool bullish_continuation=structure>0 && have_continuation_high &&
-                                rates[i].close>continuation_high;
-      bool bearish_continuation=structure<0 && have_continuation_low &&
-                                rates[i].close<continuation_low;
-      if(bullish_continuation && bull_bos)
-        {
-         DrawSignal("BOS",1,continuation_high_time,continuation_high,rates[i]);
-         continuation_high=rates[i].high;
-         continuation_high_time=rates[i].time;
-         newest_signal="BOS bullish"; newest_signal_time=rates[i].time;
-        }
-      else if(bullish_break && structure<=0)
+      // Only confirmed pivots are valid structure levels.  Expansion beyond
+      // an unconfirmed candle extreme must not produce lower-timeframe BOS
+      // noise on the analysis timeframe.
+      if(bullish_break)
         {
          high_broken=true;
-         if((structure>=0 && bull_bos) || (structure<0 && bull_choch))
+         if(structure<0 && bull_choch)
            {
-            string kind=structure>=0?"BOS":"CHoCH";
-            DrawSignal(kind,1,last_high_time,last_high,rates[i]); structure=1;
-            continuation_high=rates[i].high;
-            continuation_high_time=rates[i].time;
-            have_continuation_high=true;
-            have_continuation_low=false;
-            newest_signal=kind+" bullish"; newest_signal_time=rates[i].time;
+            DrawSignal("CHoCH",1,last_high_time,last_high,rates[i]);
+            structure=1;
+            choch_confirmed=true;
+            newest_signal="CHoCH bullish"; newest_signal_time=rates[i].time;
            }
+         else if(structure>0 && choch_confirmed && bull_bos)
+           {
+            DrawSignal("BOS",1,last_high_time,last_high,rates[i]);
+            newest_signal="BOS bullish"; newest_signal_time=rates[i].time;
+           }
+         else if(structure==0)
+            structure=1;
         }
-      if(bearish_continuation && bear_bos)
-        {
-         DrawSignal("BOS",-1,continuation_low_time,continuation_low,rates[i]);
-         continuation_low=rates[i].low;
-         continuation_low_time=rates[i].time;
-         newest_signal="BOS bearish"; newest_signal_time=rates[i].time;
-        }
-      else if(bearish_break && structure>=0)
+      if(bearish_break)
         {
          low_broken=true;
-         if((structure<=0 && bear_bos) || (structure>0 && bear_choch))
+         if(structure>0 && bear_choch)
            {
-            string kind=structure<=0?"BOS":"CHoCH";
-            DrawSignal(kind,-1,last_low_time,last_low,rates[i]); structure=-1;
-            continuation_low=rates[i].low;
-            continuation_low_time=rates[i].time;
-            have_continuation_low=true;
-            have_continuation_high=false;
-            newest_signal=kind+" bearish"; newest_signal_time=rates[i].time;
+            DrawSignal("CHoCH",-1,last_low_time,last_low,rates[i]);
+            structure=-1;
+            choch_confirmed=true;
+            newest_signal="CHoCH bearish"; newest_signal_time=rates[i].time;
            }
+         else if(structure<0 && choch_confirmed && bear_bos)
+           {
+            DrawSignal("BOS",-1,last_low_time,last_low,rates[i]);
+            newest_signal="BOS bearish"; newest_signal_time=rates[i].time;
+           }
+         else if(structure==0)
+            structure=-1;
         }
       if(i==total-1)
         {
