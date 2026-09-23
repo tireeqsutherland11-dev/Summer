@@ -18,6 +18,7 @@ input int Bars_To_Process=100;
 input group "Higher-Timeframe Support / Resistance"
 input bool Show_HTF_Support_Resistance=true;
 input ENUM_TIMEFRAMES SR_Timeframe=PERIOD_H4;
+input int Boundary_Lookback_Bars=50;
 input int SR_Pivot_Length=3;
 input ENUM_LINE_STYLE SR_Line_Style=STYLE_DOT;
 input int SR_Line_Width=2;
@@ -90,7 +91,6 @@ int g_ma_handle=INVALID_HANDLE;
 int g_htf_ma_handle=INVALID_HANDLE;
 int g_adx_handle=INVALID_HANDLE;
 int g_atr_handle=INVALID_HANDLE;
-const int MARKET_LOOKBACK_BARS=50;
 
 ENUM_TIMEFRAMES RoadTimeframe()
   {
@@ -203,18 +203,18 @@ void DrawSegment(const string id,const datetime from,const double from_price,
    ObjectSetInteger(0,name,OBJPROP_SELECTABLE,false);
   }
 
-// Market High is the highest confirmed swing high in the last 200 bars;
+// Market High is the highest confirmed swing high in the boundary lookback;
 // Market Low is the lowest confirmed swing low in those same bars.
 void DrawSignificantSR(const datetime chart_time,const double current_price)
   {
    if(!Show_HTF_Support_Resistance) return;
    int length=MathMax(1,MathMin(20,SR_Pivot_Length));
-   // Include older padding so a swing near the start of the 200-bar window
+   // Include older padding so a swing near the start of the lookback window
    // can still be identified without making the padding part of the search.
    MqlRates rates[]; ArraySetAsSeries(rates,false);
-   int total=CopyRates(_Symbol,SR_Timeframe,1,MARKET_LOOKBACK_BARS+length,rates);
-   if(total<MARKET_LOOKBACK_BARS+length) return;
-   int first=total-MARKET_LOOKBACK_BARS;
+   int total=CopyRates(_Symbol,SR_Timeframe,1,Boundary_Lookback_Bars+length,rates);
+   if(total<Boundary_Lookback_Bars+length) return;
+   int first=total-Boundary_Lookback_Bars;
 
    int high_index=-1,low_index=-1;
    double high_price=0.0,low_price=0.0;
@@ -468,6 +468,7 @@ int OnInit()
   {
    if(Swing_Detection_Length<1 || Swing_Detection_Length>50 || MA_Length<1 ||
       HTF_MA_Length<1 || ADX_Length<1 || ATR_Length<1 || Bars_To_Process<100 ||
+      Boundary_Lookback_Bars<1 || Boundary_Lookback_Bars>100000 ||
       SR_Pivot_Length<1 || SR_Pivot_Length>20)
       return INIT_PARAMETERS_INCORRECT;
    ENUM_TIMEFRAMES timeframe=RoadTimeframe();
