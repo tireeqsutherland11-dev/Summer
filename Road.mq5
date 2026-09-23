@@ -1,5 +1,5 @@
 #property copyright "Market Trend Analyser conversion"
-#property version   "1.24"
+#property version   "1.25"
 #property strict
 #property description "Road: MT5 port of the Market Trend Analyser Pine Script."
 #property description "Signal/visualisation EA only; the source indicator contains no trading rules."
@@ -203,9 +203,29 @@ void DrawSegment(const string id,const datetime from,const double from_price,
    ObjectSetInteger(0,name,OBJPROP_SELECTABLE,false);
   }
 
-// Draw only the highest confirmed swing high and lowest confirmed swing low
-// found in the configured number of closed higher-timeframe bars.
-void DrawSignificantSR(const datetime chart_time)
+// A market boundary can be any confirmed structure point.  For example, a
+// higher low above price is the current Market High, while a lower high below
+// price is the current Market Low.  Recency chooses between significant
+// (pivot-confirmed) structure points on the same side of the current price.
+void ConsiderMarketLevel(const MqlRates &rates[],const int index,const double price,
+                         const double current_price,int &high_index,double &high_price,
+                         int &low_index,double &low_price)
+  {
+   if(price>current_price && (high_index<0 || rates[index].time>rates[high_index].time))
+     {
+      high_index=index;
+      high_price=price;
+     }
+   else if(price<current_price && (low_index<0 || rates[index].time>rates[low_index].time))
+     {
+      low_index=index;
+      low_price=price;
+     }
+  }
+
+// Draw the most recent significant structure level on each side of price so
+// Market High and Market Low remain visible together.
+void DrawSignificantSR(const datetime chart_time,const double current_price)
   {
    if(!Show_HTF_Support_Resistance) return;
    int wanted=MathMax(50,MathMin(10000,SR_Lookback_Bars));
@@ -215,31 +235,36 @@ void DrawSignificantSR(const datetime chart_time)
    if(total<2*length+2) return;
 
    int high_index=-1,low_index=-1;
+   double high_price=0.0,low_price=0.0;
    for(int i=length;i<total-length;i++)
      {
-      if(PivotHigh(rates,total,i,length) &&
-         (high_index<0 || rates[i].high>rates[high_index].high)) high_index=i;
-      if(PivotLow(rates,total,i,length) &&
-         (low_index<0 || rates[i].low<rates[low_index].low)) low_index=i;
+      // Evaluate both kinds of structure point against price rather than
+      // assuming every pivot high is resistance and every pivot low support.
+      if(PivotHigh(rates,total,i,length))
+         ConsiderMarketLevel(rates,i,rates[i].high,current_price,
+                             high_index,high_price,low_index,low_price);
+      if(PivotLow(rates,total,i,length))
+         ConsiderMarketLevel(rates,i,rates[i].low,current_price,
+                             high_index,high_price,low_index,low_price);
      }
 
    if(high_index>=0)
      {
       string key="HTF_SR_MARKET_HIGH";
-      DrawSegment(key,rates[high_index].time,rates[high_index].high,chart_time,
-                  rates[high_index].high,clrBlack,SR_Line_Style,SR_Line_Width);
+      DrawSegment(key,rates[high_index].time,high_price,chart_time,
+                  high_price,clrBlack,SR_Line_Style,SR_Line_Width);
       ObjectSetInteger(0,g_prefix+key,OBJPROP_RAY_RIGHT,true);
       if(Show_SR_Labels)
-         DrawText(key+"_LABEL",chart_time,rates[high_index].high,"Market High",clrBlack,false,8);
+         DrawText(key+"_LABEL",chart_time,high_price,"Market High",clrBlack,false,8);
      }
    if(low_index>=0)
      {
       string key="HTF_SR_MARKET_LOW";
-      DrawSegment(key,rates[low_index].time,rates[low_index].low,chart_time,
-                  rates[low_index].low,clrBlack,SR_Line_Style,SR_Line_Width);
+      DrawSegment(key,rates[low_index].time,low_price,chart_time,
+                  low_price,clrBlack,SR_Line_Style,SR_Line_Width);
       ObjectSetInteger(0,g_prefix+key,OBJPROP_RAY_RIGHT,true);
       if(Show_SR_Labels)
-         DrawText(key+"_LABEL",chart_time,rates[low_index].low,"Market Low",clrBlack,true,8);
+         DrawText(key+"_LABEL",chart_time,low_price,"Market Low",clrBlack,true,8);
      }
   }
 
@@ -433,7 +458,7 @@ void Rebuild(const bool permit_alert)
    if(Show_Swing_Points && have_low)
       DrawSegment("LAST_LOW",last_low_time,last_low,rates[total-1].time,last_low,clrTeal,STYLE_DOT,1);
 
-   DrawSignificantSR(rates[total-1].time);
+   DrawSignificantSR(rates[total-1].time,rates[total-1].close);
 
    DrawDashboard(structure,have_high,last_high,have_low,last_low,dashboard_session,
                  adx[total-1],dashboard_adx,atr[total-1],dashboard_atr,rates[total-1].close,
