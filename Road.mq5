@@ -90,7 +90,7 @@ int g_ma_handle=INVALID_HANDLE;
 int g_htf_ma_handle=INVALID_HANDLE;
 int g_adx_handle=INVALID_HANDLE;
 int g_atr_handle=INVALID_HANDLE;
-const int MARKET_LOOKBACK_BARS=200;
+const int MARKET_LOOKBACK_BARS=50;
 
 ENUM_TIMEFRAMES RoadTimeframe()
   {
