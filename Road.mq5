@@ -1,5 +1,5 @@
 #property copyright "Market Trend Analyser conversion"
-#property version   "1.26"
+#property version   "1.27"
 #property strict
 #property description "Road: MT5 port of the Market Trend Analyser Pine Script."
 #property description "Signal/visualisation EA only; the source indicator contains no trading rules."
@@ -203,10 +203,11 @@ void DrawSegment(const string id,const datetime from,const double from_price,
    ObjectSetInteger(0,name,OBJPROP_SELECTABLE,false);
   }
 
-// Draw the extreme confirmed swing levels found inside the configured HTF
-// lookback.  Market High is exclusively the highest swing high, and Market Low
-// is exclusively the lowest swing low; their positions relative to the current
-// price do not alter the selection.
+// Draw the nearest confirmed HTF swing level on either side of the current
+// price.  Classifying by position (rather than by pivot type) guarantees that
+// Market High is above price and Market Low is below price.  Using the nearest
+// level also prevents an old extreme elsewhere in the lookback from expanding
+// the chart scale and hiding the observed price action.
 void DrawSignificantSR(const datetime chart_time)
   {
    if(!Show_HTF_Support_Resistance) return;
@@ -216,21 +217,42 @@ void DrawSignificantSR(const datetime chart_time)
    int length=MathMax(1,MathMin(20,SR_Pivot_Length));
    if(total<2*length+2) return;
 
+   double current_price=SymbolInfoDouble(_Symbol,SYMBOL_BID);
+   if(current_price<=0.0)
+      current_price=iClose(_Symbol,RoadTimeframe(),0);
+   if(current_price<=0.0) return;
+
    int high_index=-1,low_index=-1;
    double high_price=0.0,low_price=0.0;
    for(int i=length;i<total-length;i++)
      {
-      if(PivotHigh(rates,total,i,length) &&
-         (high_index<0 || rates[i].high>high_price))
+      if(PivotHigh(rates,total,i,length))
         {
-         high_index=i;
-         high_price=rates[i].high;
+         double level=rates[i].high;
+         if(level>current_price && (high_index<0 || level<high_price))
+           {
+            high_index=i;
+            high_price=level;
+           }
+         else if(level<current_price && (low_index<0 || level>low_price))
+           {
+            low_index=i;
+            low_price=level;
+           }
         }
-      if(PivotLow(rates,total,i,length) &&
-         (low_index<0 || rates[i].low<low_price))
+      if(PivotLow(rates,total,i,length))
         {
-         low_index=i;
-         low_price=rates[i].low;
+         double level=rates[i].low;
+         if(level>current_price && (high_index<0 || level<high_price))
+           {
+            high_index=i;
+            high_price=level;
+           }
+         else if(level<current_price && (low_index<0 || level>low_price))
+           {
+            low_index=i;
+            low_price=level;
+           }
         }
      }
 
