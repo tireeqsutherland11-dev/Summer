@@ -1,5 +1,5 @@
 #property copyright "Market Trend Analyser conversion"
-#property version   "1.30"
+#property version   "1.20"
 #property strict
 #property description "Road: MT5 port of the Market Trend Analyser Pine Script."
 #property description "Signal/visualisation EA only; the source indicator contains no trading rules."
@@ -56,6 +56,8 @@ input bool Use_MA_Filter=true;
 input int MA_Length=50;
 input ROAD_MA_TYPE MA_Type=ROAD_EMA;
 input ROAD_MA_FILTER_MODE MA_Filter_Mode=ROAD_PRICE_ABOVE_BELOW;
+input bool Show_MA_Line=false;
+input color MA_Color=clrBlue;
 
 input group "MA Filter (HTF)"
 input bool Use_HTF_MA_Filter=true;
@@ -63,6 +65,8 @@ input ENUM_TIMEFRAMES HTF_Timeframe=PERIOD_H1;
 input int HTF_MA_Length=100;
 input ROAD_MA_TYPE HTF_MA_Type=ROAD_EMA;
 input ROAD_MA_FILTER_MODE HTF_MA_Filter_Mode=ROAD_PRICE_ABOVE_BELOW;
+input bool Show_HTF_MA_Line=false;
+input color HTF_MA_Color=clrOrange;
 
 input group "Session Filter"
 input bool Use_Session_Filter=false;
@@ -390,14 +394,6 @@ void DrawSignal(const string kind,const int direction,const datetime swing_time,
       DrawSegment(key+"_LINE",swing_time,level,bar.time,level,clr,Line_Style,Line_Width);
   }
 
-void DrawStructurePoint(const string kind,const datetime time,const double price)
-  {
-   if(!Show_Swing_Points) return;
-   bool low=kind=="HL" || kind=="LL";
-   color clr=low?clrTeal:clrIndianRed;
-   DrawText("STRUCTURE_"+kind+"_"+(string)time,time,price,kind,clr,low,(int)Label_Size);
-  }
-
 void SendRoadAlert(const string signal,const datetime bar_time)
   {
    static datetime last_alert=0;
@@ -452,13 +448,8 @@ void Rebuild(const bool permit_alert)
 
    ObjectsDeleteAll(0,g_prefix);
    bool have_high=false,have_low=false,high_broken=false,low_broken=false;
-   bool have_structure_high=false,have_structure_low=false;
-   double break_high=0.0,break_low=0.0,last_high=0.0,last_low=0.0,last_htf_ma=0.0;
-   datetime break_high_time=0,break_low_time=0,last_high_time=0,last_low_time=0,newest_signal_time=0;
-   // Break pivots are only trigger levels.  Structural swings come from the
-   // full price leg between accepted BOS/CHoCH events.
-   double leg_high=rates[0].high,leg_low=rates[0].low;
-   datetime leg_high_time=rates[0].time,leg_low_time=rates[0].time;
+   double last_high=0.0,last_low=0.0,last_htf_ma=0.0;
+   datetime last_high_time=0,last_low_time=0,newest_signal_time=0;
    int structure=0;
    string newest_signal="";
    bool dashboard_bull_bos=false,dashboard_bear_bos=false;
@@ -470,15 +461,14 @@ void Rebuild(const bool permit_alert)
       int pivot=i-length;
       if(PivotHigh(rates,total,pivot,length))
         {
-         have_high=true; break_high=rates[pivot].high; break_high_time=rates[pivot].time; high_broken=false;
+         have_high=true; last_high=rates[pivot].high; last_high_time=rates[pivot].time; high_broken=false;
+         if(Show_Swing_Points) DrawText("SWING_HIGH_"+(string)rates[pivot].time,rates[pivot].time,last_high,"◆",clrIndianRed,false,7);
         }
       if(PivotLow(rates,total,pivot,length))
         {
-         have_low=true; break_low=rates[pivot].low; break_low_time=rates[pivot].time; low_broken=false;
+         have_low=true; last_low=rates[pivot].low; last_low_time=rates[pivot].time; low_broken=false;
+         if(Show_Swing_Points) DrawText("SWING_LOW_"+(string)rates[pivot].time,rates[pivot].time,last_low,"◆",clrTeal,true,7);
         }
-
-      if(rates[i].high>leg_high) { leg_high=rates[i].high; leg_high_time=rates[i].time; }
-      if(rates[i].low<leg_low) { leg_low=rates[i].low; leg_low_time=rates[i].time; }
 
       bool ma_long=true,ma_short=true;
       if(Use_MA_Filter)
@@ -512,21 +502,15 @@ void Rebuild(const bool permit_alert)
       bool bull_choch=long_direction && choch_adx && atr_pass;
       bool bear_choch=short_direction && choch_adx && atr_pass;
 
-      bool bullish_break=have_high && !high_broken && rates[i].close>break_high && rates[i-1].close<=break_high;
-      bool bearish_break=have_low && !low_broken && rates[i].close<break_low && rates[i-1].close>=break_low;
+      bool bullish_break=have_high && !high_broken && rates[i].close>last_high && rates[i-1].close<=last_high;
+      bool bearish_break=have_low && !low_broken && rates[i].close<last_low && rates[i-1].close>=last_low;
       if(bullish_break)
         {
          high_broken=true;
          if((structure>=0 && bull_bos) || (structure<0 && bull_choch))
            {
             string kind=structure>=0?"BOS":"CHoCH";
-            DrawSignal(kind,1,break_high_time,break_high,rates[i]);
-            if(structure>0) DrawStructurePoint("HH",leg_high_time,leg_high);
-            last_low=leg_low; last_low_time=leg_low_time; have_structure_low=true;
-            DrawStructurePoint("HL",last_low_time,last_low);
-            structure=1;
-            leg_high=rates[i].high; leg_low=rates[i].low;
-            leg_high_time=rates[i].time; leg_low_time=rates[i].time;
+            DrawSignal(kind,1,last_high_time,last_high,rates[i]); structure=1;
             newest_signal=kind+" bullish"; newest_signal_time=rates[i].time;
            }
         }
@@ -536,13 +520,7 @@ void Rebuild(const bool permit_alert)
          if((structure<=0 && bear_bos) || (structure>0 && bear_choch))
            {
             string kind=structure<=0?"BOS":"CHoCH";
-            DrawSignal(kind,-1,break_low_time,break_low,rates[i]);
-            if(structure<0) DrawStructurePoint("LL",leg_low_time,leg_low);
-            last_high=leg_high; last_high_time=leg_high_time; have_structure_high=true;
-            DrawStructurePoint("LH",last_high_time,last_high);
-            structure=-1;
-            leg_high=rates[i].high; leg_low=rates[i].low;
-            leg_high_time=rates[i].time; leg_low_time=rates[i].time;
+            DrawSignal(kind,-1,last_low_time,last_low,rates[i]); structure=-1;
             newest_signal=kind+" bearish"; newest_signal_time=rates[i].time;
            }
         }
@@ -554,24 +532,24 @@ void Rebuild(const bool permit_alert)
         }
      }
 
-   if(structure>0)
-     {
-      last_high=leg_high; last_high_time=leg_high_time; have_structure_high=true;
-      DrawStructurePoint("HH",last_high_time,last_high);
-     }
-   else if(structure<0)
-     {
-      last_low=leg_low; last_low_time=leg_low_time; have_structure_low=true;
-      DrawStructurePoint("LL",last_low_time,last_low);
-     }
-   if(Show_Swing_Points && have_structure_high)
+   int first=MathMax(1,total-500);
+   if(Show_MA_Line && Use_MA_Filter)
+      for(int i=first;i<total;i++) DrawSegment("MA_"+(string)rates[i].time,rates[i-1].time,ma[i-1],rates[i].time,ma[i],MA_Color,STYLE_SOLID,2);
+   if(Show_HTF_MA_Line && Use_HTF_MA_Filter)
+      for(int i=first;i<total;i++)
+        {
+         double a=0,o=0,c=0,b=0;
+         if(HTFValues(rates[i-1].time,a,o,c) && HTFValues(rates[i].time,b,o,c))
+            DrawSegment("HTF_MA_"+(string)rates[i].time,rates[i-1].time,a,rates[i].time,b,HTF_MA_Color,STYLE_SOLID,2);
+        }
+   if(Show_Swing_Points && have_high)
       DrawSegment("LAST_HIGH",last_high_time,last_high,rates[total-1].time,last_high,clrIndianRed,STYLE_DOT,1);
-   if(Show_Swing_Points && have_structure_low)
+   if(Show_Swing_Points && have_low)
       DrawSegment("LAST_LOW",last_low_time,last_low,rates[total-1].time,last_low,clrTeal,STYLE_DOT,1);
 
    DrawSignificantSR(rates[total-1].close,rates[total-1].time);
 
-   DrawDashboard(structure,have_structure_high,last_high,have_structure_low,last_low,dashboard_session,
+   DrawDashboard(structure,have_high,last_high,have_low,last_low,dashboard_session,
                  adx[total-1],dashboard_adx,atr[total-1],dashboard_atr,rates[total-1].close,
                  ma[total-1],last_htf_ma,dashboard_bull_bos,dashboard_bear_bos,
                  dashboard_bull_choch,dashboard_bear_choch);
@@ -629,3 +607,5 @@ void CheckForBar()
 
 void OnTick() { CheckForBar(); }
 void OnTimer() { CheckForBar(); }
+
+
