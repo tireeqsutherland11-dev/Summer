@@ -1,5 +1,5 @@
 #property copyright "Market Trend Analyser conversion"
-#property version   "1.28"
+#property version   "1.29"
 #property strict
 #property description "Road: MT5 port of the Market Trend Analyser Pine Script."
 #property description "Signal/visualisation EA only; the source indicator contains no trading rules."
@@ -205,7 +205,7 @@ void DrawSegment(const string id,const datetime from,const double from_price,
 
 // Market High is the highest confirmed swing high in the last 200 bars;
 // Market Low is the lowest confirmed swing low in those same bars.
-void DrawSignificantSR(const datetime chart_time)
+void DrawSignificantSR(const datetime chart_time,const double current_price)
   {
    if(!Show_HTF_Support_Resistance) return;
    int length=MathMax(1,MathMin(20,SR_Pivot_Length));
@@ -240,7 +240,7 @@ void DrawSignificantSR(const datetime chart_time)
         }
      }
 
-   if(high_index>=0)
+   if(high_index>=0 && high_price>current_price)
      {
       string key="HTF_SR_MARKET_HIGH";
       DrawSegment(key,rates[high_index].time,high_price,chart_time,
@@ -249,7 +249,7 @@ void DrawSignificantSR(const datetime chart_time)
       if(Show_SR_Labels)
          DrawText(key+"_LABEL",chart_time,high_price,"Market High",clrBlack,false,8);
      }
-   if(low_index>=0)
+   if(low_index>=0 && low_price<current_price)
      {
       string key="HTF_SR_MARKET_LOW";
       DrawSegment(key,rates[low_index].time,low_price,chart_time,
@@ -450,7 +450,10 @@ void Rebuild(const bool permit_alert)
    if(Show_Swing_Points && have_low)
       DrawSegment("LAST_LOW",last_low_time,last_low,rates[total-1].time,last_low,clrTeal,STYLE_DOT,1);
 
-   DrawSignificantSR(rates[total-1].time);
+   MqlTick current_tick;
+   double current_price=SymbolInfoTick(_Symbol,current_tick) && current_tick.bid>0.0
+                        ?current_tick.bid:rates[total-1].close;
+   DrawSignificantSR(rates[total-1].time,current_price);
 
    DrawDashboard(structure,have_high,last_high,have_low,last_low,dashboard_session,
                  adx[total-1],dashboard_adx,atr[total-1],dashboard_atr,rates[total-1].close,
