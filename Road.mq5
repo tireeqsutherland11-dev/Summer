@@ -13,12 +13,12 @@ enum ROAD_LABEL_SIZE { ROAD_TINY=7, ROAD_SMALL=9, ROAD_NORMAL=11, ROAD_LARGE=14 
 
 input group "General"
 input ENUM_TIMEFRAMES Analysis_Timeframe=PERIOD_CURRENT;
-input int Bars_To_Process=1000;
+input int Bars_To_Process=100;
 
 input group "Higher-Timeframe Support / Resistance"
 input bool Show_HTF_Support_Resistance=true;
-input ENUM_TIMEFRAMES SR_Timeframe=PERIOD_H1;
-input int SR_Lookback_Bars=500;
+input ENUM_TIMEFRAMES SR_Timeframe=PERIOD_H4;
+input int SR_Lookback_Bars=200;
 input int SR_Pivot_Length=3;
 input int SR_ATR_Length=14;
 input double SR_Merge_Distance_ATR=0.25;
