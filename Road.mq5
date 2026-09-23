@@ -1,5 +1,5 @@
 #property copyright "Market Trend Analyser conversion"
-#property version   "1.27"
+#property version   "1.28"
 #property strict
 #property description "Road: MT5 port of the Market Trend Analyser Pine Script."
 #property description "Signal/visualisation EA only; the source indicator contains no trading rules."
@@ -18,7 +18,6 @@ input int Bars_To_Process=100;
 input group "Higher-Timeframe Support / Resistance"
 input bool Show_HTF_Support_Resistance=true;
 input ENUM_TIMEFRAMES SR_Timeframe=PERIOD_H4;
-input int SR_Lookback_Bars=200;
 input int SR_Pivot_Length=3;
 input ENUM_LINE_STYLE SR_Line_Style=STYLE_DOT;
 input int SR_Line_Width=2;
@@ -91,6 +90,7 @@ int g_ma_handle=INVALID_HANDLE;
 int g_htf_ma_handle=INVALID_HANDLE;
 int g_adx_handle=INVALID_HANDLE;
 int g_atr_handle=INVALID_HANDLE;
+const int MARKET_LOOKBACK_BARS=200;
 
 ENUM_TIMEFRAMES RoadTimeframe()
   {
@@ -203,52 +203,36 @@ void DrawSegment(const string id,const datetime from,const double from_price,
    ObjectSetInteger(0,name,OBJPROP_SELECTABLE,false);
   }
 
-// Draw the nearest confirmed HTF swing level on either side of the current
-// price.  Classifying by position (rather than by pivot type) guarantees that
-// Market High is above price and Market Low is below price.  Using the nearest
-// level also prevents an old extreme elsewhere in the lookback from expanding
-// the chart scale and hiding the observed price action.
+// Market High is the highest confirmed swing high in the last 200 bars;
+// Market Low is the lowest confirmed swing low in those same bars.
 void DrawSignificantSR(const datetime chart_time)
   {
    if(!Show_HTF_Support_Resistance) return;
-   int wanted=MathMax(50,MathMin(10000,SR_Lookback_Bars));
-   MqlRates rates[]; ArraySetAsSeries(rates,false);
-   int total=CopyRates(_Symbol,SR_Timeframe,1,wanted,rates);
    int length=MathMax(1,MathMin(20,SR_Pivot_Length));
-   if(total<2*length+2) return;
-
-   double current_price=SymbolInfoDouble(_Symbol,SYMBOL_BID);
-   if(current_price<=0.0)
-      current_price=iClose(_Symbol,RoadTimeframe(),0);
-   if(current_price<=0.0) return;
+   // Include older padding so a swing near the start of the 200-bar window
+   // can still be identified without making the padding part of the search.
+   MqlRates rates[]; ArraySetAsSeries(rates,false);
+   int total=CopyRates(_Symbol,SR_Timeframe,1,MARKET_LOOKBACK_BARS+length,rates);
+   if(total<MARKET_LOOKBACK_BARS+length) return;
+   int first=total-MARKET_LOOKBACK_BARS;
 
    int high_index=-1,low_index=-1;
    double high_price=0.0,low_price=0.0;
-   for(int i=length;i<total-length;i++)
+   for(int i=first;i<total-length;i++)
      {
       if(PivotHigh(rates,total,i,length))
         {
          double level=rates[i].high;
-         if(level>current_price && (high_index<0 || level<high_price))
+         if(high_index<0 || level>high_price)
            {
             high_index=i;
             high_price=level;
-           }
-         else if(level<current_price && (low_index<0 || level>low_price))
-           {
-            low_index=i;
-            low_price=level;
            }
         }
       if(PivotLow(rates,total,i,length))
         {
          double level=rates[i].low;
-         if(level>current_price && (high_index<0 || level<high_price))
-           {
-            high_index=i;
-            high_price=level;
-           }
-         else if(level<current_price && (low_index<0 || level>low_price))
+         if(low_index<0 || level<low_price)
            {
             low_index=i;
             low_price=level;
@@ -481,7 +465,7 @@ int OnInit()
   {
    if(Swing_Detection_Length<1 || Swing_Detection_Length>50 || MA_Length<1 ||
       HTF_MA_Length<1 || ADX_Length<1 || ATR_Length<1 || Bars_To_Process<100 ||
-      SR_Lookback_Bars<50 || SR_Pivot_Length<1 || SR_Pivot_Length>20)
+      SR_Pivot_Length<1 || SR_Pivot_Length>20)
       return INIT_PARAMETERS_INCORRECT;
    ENUM_TIMEFRAMES timeframe=RoadTimeframe();
    g_prefix="Road_"+(string)ChartID()+"_";
