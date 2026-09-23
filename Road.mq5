@@ -1,5 +1,5 @@
 #property copyright "Market Trend Analyser conversion"
-#property version   "1.22"
+#property version   "1.23"
 #property strict
 #property description "Road: MT5 port of the Market Trend Analyser Pine Script."
 #property description "Signal/visualisation EA only; the source indicator contains no trading rules."
@@ -108,6 +108,8 @@ struct ROAD_SR_LEVEL
    int touches;
    datetime first_time;
    datetime last_time;
+   datetime representative_time;
+   double reaction_strength;
    double score;
    int structure_mask;
    bool strong_origin;
@@ -254,6 +256,8 @@ void AddSRLevel(ROAD_SR_LEVEL &levels[],const double price,const datetime time,
       levels[count].touches=1;
       levels[count].first_time=time;
       levels[count].last_time=time;
+      levels[count].representative_time=time;
+      levels[count].reaction_strength=importance;
       levels[count].score=0.0;
       levels[count].structure_mask=structure_type;
       levels[count].strong_origin=strong_origin;
@@ -262,7 +266,16 @@ void AddSRLevel(ROAD_SR_LEVEL &levels[],const double price,const datetime time,
       return;
      }
    double combined=levels[match].weight+importance;
-   levels[match].price=(levels[match].price*levels[match].weight+price*importance)/combined;
+   // Keep a nearby cluster on an actual pivot instead of inventing a weighted
+   // average price.  The strongest rejection/impulse is representative; when
+   // reactions are equal, the newer pivot wins.
+   if(importance>levels[match].reaction_strength ||
+      (importance==levels[match].reaction_strength && time>levels[match].representative_time))
+     {
+      levels[match].price=price;
+      levels[match].representative_time=time;
+      levels[match].reaction_strength=importance;
+     }
    levels[match].weight=combined;
    levels[match].touches++;
    levels[match].structure_mask|=structure_type;
@@ -335,7 +348,8 @@ void BuildSRSide(const MqlRates &rates[],const double &atr[],const int total,
       levels[i].score=(levels[i].significant_extreme?4000.0:0.0)+
                       (confirmed_touches?3000.0:0.0)+
                       (levels[i].strong_origin?2000.0:0.0)+
-                      levels[i].strong_touches*100.0+levels[i].weight*10.0-recency*0.01;
+                      levels[i].strong_touches*100.0+levels[i].reaction_strength*10.0+
+                      levels[i].weight-recency*0.01;
      }
   }
 
@@ -367,8 +381,8 @@ void DrawSRSide(const ROAD_SR_LEVEL &levels[],const bool resistance,const double
       int selected=BestSRLevel(levels,used,resistance,market_price);
       if(selected<0) break;
       used[selected]=true;
-      string key="HTF_SR_"+side+"_"+(string)levels[selected].first_time;
-      DrawSegment(key,levels[selected].first_time,levels[selected].price,
+      string key="HTF_SR_"+side+"_"+(string)levels[selected].representative_time;
+      DrawSegment(key,levels[selected].representative_time,levels[selected].price,
                   chart_time,levels[selected].price,clr,SR_Line_Style,SR_Line_Width);
       string object_name=g_prefix+key;
       if(ObjectFind(0,object_name)>=0) ObjectSetInteger(0,object_name,OBJPROP_RAY_RIGHT,true);
