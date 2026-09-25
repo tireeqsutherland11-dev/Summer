@@ -1,5 +1,5 @@
 #property copyright "Market Trend Analyser conversion"
-#property version   "1.36"
+#property version   "1.37"
 #property strict
 #property description "Road: MT5 port of the Market Trend Analyser Pine Script."
 #property description "Signal/visualisation EA only; the source indicator contains no trading rules."
@@ -448,6 +448,7 @@ void DrawDashboard(const int structure,const bool have_high,const double last_hi
                    const bool have_low,const double last_low,const bool in_session,
                    const double adx,const bool adx_pass,const double atr,const bool atr_pass,
                    const double close,const double ma,const double htf_ma,
+                   const bool tradeable,
                    const bool bull_bos_pass,const bool bear_bos_pass,
                    const bool bull_choch_pass,const bool bear_choch_pass)
   {
@@ -460,7 +461,9 @@ void DrawDashboard(const int structure,const bool have_high,const double last_hi
    bool bos_pass=(structure>=0 && bull_bos_pass)||(structure<=0 && bear_bos_pass);
    bool choch_pass=(structure<=0 && bull_choch_pass)||(structure>=0 && bear_choch_pass);
    Comment("ROAD — Market Trend Analyser\n",
-           "Market Bias: ",bias,"\nLast High: ",PriceText(have_high,last_high),
+           "Market Bias: ",bias,
+           "\nMarket Tradeability: ",tradeable?"TRADEABLE":"NOT TRADEABLE (TRANSITION)",
+           "\nLast High: ",PriceText(have_high,last_high),
            "\nLast Low: ",PriceText(have_low,last_low),"\nSession: ",session,
            "\nADX: ",adx_text,"\nADX Scope: ",!Use_ADX_Filter?"OFF":Apply_ADX_Filter_To==ROAD_BOS_AND_CHOCH?"BOS+CHoCH":"BOS Only",
            "\nATR: ",atr_text,"\nMA (LTF): ",ltf,"\nMA (HTF): ",htf,
@@ -490,6 +493,8 @@ void Rebuild(const bool permit_alert)
    double last_high=0.0,last_low=0.0,last_htf_ma=0.0;
    datetime last_high_time=0,last_low_time=0,newest_signal_time=0;
    int structure=0;
+   int last_break_direction=0;
+   bool last_break_was_bos=false;
    string newest_signal="";
    bool dashboard_bull_bos=false,dashboard_bear_bos=false;
    bool dashboard_bull_choch=false,dashboard_bear_choch=false;
@@ -552,11 +557,11 @@ void Rebuild(const bool permit_alert)
       bool bull_choch=long_direction && choch_adx && atr_pass;
       bool bear_choch=short_direction && choch_adx && atr_pass;
 
-      // Market structure is broken as soon as price trades through the
-      // relevant point.  Requiring a candle close can omit a genuine HH/LL
-      // (and therefore its CHoCH/BOS) when only the wick crosses the level.
-      bool bullish_break=have_high && last_high_kind!=0 && !high_broken && rates[i].high>last_high;
-      bool bearish_break=have_low && last_low_kind!=0 && !low_broken && rates[i].low<last_low;
+      // A structure break is confirmed only by a candle body closing beyond
+      // the level.  A wick through a swing is a liquidity sweep, not a BOS or
+      // CHoCH, and must leave the level available for a later confirmed close.
+      bool bullish_break=have_high && last_high_kind!=0 && !high_broken && rates[i].close>last_high;
+      bool bearish_break=have_low && last_low_kind!=0 && !low_broken && rates[i].close<last_low;
       // Only confirmed pivots are valid structure levels.  Expansion beyond
       // an unconfirmed candle extreme must not produce lower-timeframe BOS
       // noise on the analysis timeframe.  Breaking an LH/HL changes
@@ -568,22 +573,20 @@ void Rebuild(const bool permit_alert)
          // made by breaking an HH is bullish continuation (BOS).
          if(last_high_kind<0)
            {
-            if(bull_choch)
-               DrawSignal("CHoCH",1,last_high_time,last_high,rates[i]);
+            // Structure events are facts of price action and must always be
+            // drawn.  MA/session/ADX/ATR qualify a setup; they cannot erase a
+            // confirmed CHoCH from the market-structure history.
+            DrawSignal("CHoCH",1,last_high_time,last_high,rates[i]);
             structure=1;
-            if(bull_choch)
-              {
-               newest_signal="CHoCH bullish"; newest_signal_time=rates[i].time;
-              }
+            last_break_direction=1; last_break_was_bos=false;
+            newest_signal="CHoCH bullish"; newest_signal_time=rates[i].time;
            }
          else
            {
-            if(bull_bos)
-              {
-               DrawSignal("BOS",1,last_high_time,last_high,rates[i]);
-               newest_signal="BOS bullish"; newest_signal_time=rates[i].time;
-              }
+            DrawSignal("BOS",1,last_high_time,last_high,rates[i]);
             structure=1;
+            last_break_direction=1; last_break_was_bos=true;
+            newest_signal="BOS bullish"; newest_signal_time=rates[i].time;
            }
         }
       if(bearish_break)
@@ -593,22 +596,17 @@ void Rebuild(const bool permit_alert)
          // made by breaking an LL is bearish continuation (BOS).
          if(last_low_kind<0)
            {
-            if(bear_choch)
-               DrawSignal("CHoCH",-1,last_low_time,last_low,rates[i]);
+            DrawSignal("CHoCH",-1,last_low_time,last_low,rates[i]);
             structure=-1;
-            if(bear_choch)
-              {
-               newest_signal="CHoCH bearish"; newest_signal_time=rates[i].time;
-              }
+            last_break_direction=-1; last_break_was_bos=false;
+            newest_signal="CHoCH bearish"; newest_signal_time=rates[i].time;
            }
          else
            {
-            if(bear_bos)
-              {
-               DrawSignal("BOS",-1,last_low_time,last_low,rates[i]);
-               newest_signal="BOS bearish"; newest_signal_time=rates[i].time;
-              }
+            DrawSignal("BOS",-1,last_low_time,last_low,rates[i]);
             structure=-1;
+            last_break_direction=-1; last_break_was_bos=true;
+            newest_signal="BOS bearish"; newest_signal_time=rates[i].time;
            }
         }
       if(i==total-1)
@@ -640,10 +638,19 @@ void Rebuild(const bool permit_alert)
    DrawSignificantSR(rates[total-1].time,current_price);
    DrawTrendlineZones();
 
+   // A directional bias alone is not tradeable.  Require the latest break to
+   // be a continuation BOS and both most-recent confirmed pivots to form the
+   // clean HH/HL or LH/LL sequence for that direction.  Any mixed sequence
+   // (for example LH, LL, HH, HL, LH) is explicitly treated as transition.
+   bool tradeable=(structure>0 && last_break_direction>0 && last_break_was_bos &&
+                   last_high_kind>0 && last_low_kind<0) ||
+                  (structure<0 && last_break_direction<0 && last_break_was_bos &&
+                   last_high_kind<0 && last_low_kind>0);
    DrawDashboard(structure,have_high,last_high,have_low,last_low,dashboard_session,
                  Use_ADX_Filter?adx[total-1]:0.0,dashboard_adx,
                  Use_ATR_Filter?atr[total-1]:0.0,dashboard_atr,rates[total-1].close,
-                 Use_MA_Filter?ma[total-1]:0.0,last_htf_ma,dashboard_bull_bos,dashboard_bear_bos,
+                 Use_MA_Filter?ma[total-1]:0.0,last_htf_ma,tradeable,
+                 dashboard_bull_bos,dashboard_bear_bos,
                  dashboard_bull_choch,dashboard_bear_choch);
    if(permit_alert && newest_signal_time==rates[total-1].time && newest_signal!="")
       SendRoadAlert(newest_signal,newest_signal_time);
