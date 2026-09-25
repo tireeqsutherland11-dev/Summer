@@ -1,5 +1,5 @@
 #property copyright "Market Trend Analyser conversion"
-#property version   "1.30"
+#property version   "1.31"
 #property strict
 #property description "Road: MT5 port of the Market Trend Analyser Pine Script."
 #property description "Signal/visualisation EA only; the source indicator contains no trading rules."
@@ -336,7 +336,9 @@ void Rebuild(const bool permit_alert)
 
    ObjectsDeleteAll(0,g_prefix);
    bool have_high=false,have_low=false,high_broken=false,low_broken=false;
-   bool last_high_is_hh=false,last_low_is_ll=false;
+   // 1 means HH/LL, -1 means LH/HL, and 0 means that the first pivot in the
+   // processed range has no preceding pivot against which it can be typed.
+   int last_high_kind=0,last_low_kind=0;
    double last_high=0.0,last_low=0.0,last_htf_ma=0.0;
    datetime last_high_time=0,last_low_time=0,newest_signal_time=0;
    int structure=0;
@@ -351,20 +353,24 @@ void Rebuild(const bool permit_alert)
       if(PivotHigh(rates,total,pivot,length))
         {
          double swing_high=rates[pivot].high;
-         // Compare each confirmed high with the preceding confirmed high.
-         // The first visible high seeds the processed range as an HH.
-         last_high_is_hh=!have_high || swing_high>last_high;
+         // A high can only be called HH or LH when both pivots are inside the
+         // processed range.  Treating its first high as an HH would create a
+         // false BOS without evidence of an earlier high.
+         int high_kind=!have_high?0:(swing_high>last_high?1:-1);
          have_high=true; last_high=swing_high; last_high_time=rates[pivot].time; high_broken=false;
-         DrawStructurePoint(last_high_is_hh?"HH":"LH",last_high_time,last_high);
+         last_high_kind=high_kind;
+         if(high_kind!=0)
+            DrawStructurePoint(high_kind>0?"HH":"LH",last_high_time,last_high);
         }
       if(PivotLow(rates,total,pivot,length))
         {
          double swing_low=rates[pivot].low;
-         // Compare each confirmed low with the preceding confirmed low.
-         // The first visible low seeds the processed range as an LL.
-         last_low_is_ll=!have_low || swing_low<last_low;
+         // As with highs, do not invent a type for the first visible low.
+         int low_kind=!have_low?0:(swing_low<last_low?1:-1);
          have_low=true; last_low=swing_low; last_low_time=rates[pivot].time; low_broken=false;
-         DrawStructurePoint(last_low_is_ll?"LL":"HL",last_low_time,last_low);
+         last_low_kind=low_kind;
+         if(low_kind!=0)
+            DrawStructurePoint(low_kind>0?"LL":"HL",last_low_time,last_low);
         }
 
       bool ma_long=true,ma_short=true;
@@ -399,8 +405,11 @@ void Rebuild(const bool permit_alert)
       bool bull_choch=long_direction && choch_adx && atr_pass;
       bool bear_choch=short_direction && choch_adx && atr_pass;
 
-      bool bullish_break=have_high && !high_broken && rates[i].close>last_high && rates[i-1].close<=last_high;
-      bool bearish_break=have_low && !low_broken && rates[i].close<last_low && rates[i-1].close>=last_low;
+      // Market structure is broken as soon as price trades through the
+      // relevant point.  Requiring a candle close can omit a genuine HH/LL
+      // (and therefore its CHoCH/BOS) when only the wick crosses the level.
+      bool bullish_break=have_high && last_high_kind!=0 && !high_broken && rates[i].high>last_high;
+      bool bearish_break=have_low && last_low_kind!=0 && !low_broken && rates[i].low<last_low;
       // Only confirmed pivots are valid structure levels.  Expansion beyond
       // an unconfirmed candle extreme must not produce lower-timeframe BOS
       // noise on the analysis timeframe.  Breaking an LH/HL changes
@@ -408,7 +417,9 @@ void Rebuild(const bool permit_alert)
       if(bullish_break)
         {
          high_broken=true;
-         if(!last_high_is_hh)
+         // An HH made after an LH is a bullish change of character.  An HH
+         // made by breaking an HH is bullish continuation (BOS).
+         if(last_high_kind<0)
            {
             if(bull_choch)
                DrawSignal("CHoCH",1,last_high_time,last_high,rates[i]);
@@ -431,7 +442,9 @@ void Rebuild(const bool permit_alert)
       if(bearish_break)
         {
          low_broken=true;
-         if(!last_low_is_ll)
+         // An LL made after an HL is a bearish change of character.  An LL
+         // made by breaking an LL is bearish continuation (BOS).
+         if(last_low_kind<0)
            {
             if(bear_choch)
                DrawSignal("CHoCH",-1,last_low_time,last_low,rates[i]);
