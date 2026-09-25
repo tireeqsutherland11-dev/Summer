@@ -1,5 +1,5 @@
 #property copyright "Market Trend Analyser conversion"
-#property version   "1.31"
+#property version   "1.32"
 #property strict
 #property description "Road: MT5 port of the Market Trend Analyser Pine Script."
 #property description "Signal/visualisation EA only; the source indicator contains no trading rules."
@@ -10,6 +10,7 @@ enum ROAD_SESSION { ROAD_NEW_YORK=0, ROAD_LONDON=1, ROAD_TOKYO=2, ROAD_SYDNEY=3,
 enum ROAD_ADX_SCOPE { ROAD_BOS_ONLY=0, ROAD_BOS_AND_CHOCH=1 };
 enum ROAD_ATR_MODE { ROAD_ATR_MINIMUM=0, ROAD_ATR_MAXIMUM=1, ROAD_ATR_RANGE=2 };
 enum ROAD_LABEL_SIZE { ROAD_TINY=7, ROAD_SMALL=9, ROAD_NORMAL=11, ROAD_LARGE=14 };
+enum ROAD_TREND_PIVOT_SOURCE { ROAD_TREND_HIGH_LOW=0, ROAD_TREND_CLOSE=1 };
 
 input group "General"
 input ENUM_TIMEFRAMES Analysis_Timeframe=PERIOD_CURRENT;
@@ -23,6 +24,16 @@ input int SR_Pivot_Length=3;
 input ENUM_LINE_STYLE SR_Line_Style=STYLE_DOT;
 input int SR_Line_Width=2;
 input bool Show_SR_Labels=true;
+
+input group "Trendline Zones"
+input bool Show_Trendline_Zones=true;
+input int Trendline_Bars_To_Apply=300;
+input ROAD_TREND_PIVOT_SOURCE Trendline_Pivot_Source=ROAD_TREND_HIGH_LOW;
+input int Trendline_Pivot_Strength=10;
+input int Trendline_Min_Pivot_Confirmation=3;
+input color Trendline_Resistance_Color=clrRed;
+input color Trendline_Support_Color=clrGreen;
+input int Trendline_Zone_Transparency=50;
 
 input group "Swing Detection"
 input int Swing_Detection_Length=5;
@@ -201,6 +212,132 @@ void DrawSegment(const string id,const datetime from,const double from_price,
    ObjectSetInteger(0,name,OBJPROP_STYLE,style);
    ObjectSetInteger(0,name,OBJPROP_WIDTH,MathMax(1,MathMin(4,width)));
    ObjectSetInteger(0,name,OBJPROP_SELECTABLE,false);
+  }
+
+bool TrendPivot(const MqlRates &rates[],const int total,const int index,
+                const int strength,const bool high)
+  {
+   if(index-strength<0 || index+strength>=total) return false;
+   double value=Trendline_Pivot_Source==ROAD_TREND_CLOSE?rates[index].close:
+                (high?rates[index].high:rates[index].low);
+   for(int i=index-strength;i<=index+strength;i++)
+     {
+      if(i==index) continue;
+      double other=Trendline_Pivot_Source==ROAD_TREND_CLOSE?rates[i].close:
+                   (high?rates[i].high:rates[i].low);
+      if((high && other>=value) || (!high && other<=value)) return false;
+     }
+   return true;
+  }
+
+color TrendZoneColor(const color base,const int transparency)
+  {
+   int opacity=(int)MathRound(255.0*(100-MathMax(0,MathMin(100,transparency)))/100.0);
+   return (color)ColorToARGB(base,(uchar)opacity);
+  }
+
+void DrawTrendZone(const string id,const datetime from_time,const double from_top,
+                   const double from_bottom,const datetime to_time,const double to_top,
+                   const double to_bottom,const color clr)
+  {
+   string channel=g_prefix+"TREND_ZONE_"+id;
+   if(ObjectCreate(0,channel,OBJ_CHANNEL,0,from_time,from_bottom,to_time,to_bottom,
+                   from_time,from_top))
+     {
+      ObjectSetInteger(0,channel,OBJPROP_COLOR,TrendZoneColor(clr,Trendline_Zone_Transparency));
+      ObjectSetInteger(0,channel,OBJPROP_FILL,true);
+      ObjectSetInteger(0,channel,OBJPROP_RAY_RIGHT,true);
+      ObjectSetInteger(0,channel,OBJPROP_BACK,true);
+      ObjectSetInteger(0,channel,OBJPROP_SELECTABLE,false);
+     }
+   DrawSegment("TREND_TOP_"+id,from_time,from_top,to_time,to_top,
+               TrendZoneColor(clr,50),STYLE_SOLID,1);
+   DrawSegment("TREND_BOTTOM_"+id,from_time,from_bottom,to_time,to_bottom,
+               TrendZoneColor(clr,50),STYLE_SOLID,1);
+   ObjectSetInteger(0,g_prefix+"TREND_TOP_"+id,OBJPROP_RAY_RIGHT,true);
+   ObjectSetInteger(0,g_prefix+"TREND_BOTTOM_"+id,OBJPROP_RAY_RIGHT,true);
+  }
+
+void FindClosestTrendZone(const MqlRates &rates[],const int total,const double threshold,
+                          const bool resistance)
+  {
+   int strength=MathMax(5,MathMin(15,Trendline_Pivot_Strength));
+   int first=MathMax(strength,total-1-Trendline_Bars_To_Apply);
+   int prices_count=0;
+   double prices[];
+   int indices[];
+   for(int i=first;i<total-strength;i++)
+      if(TrendPivot(rates,total,i,strength,resistance))
+        {
+         ArrayResize(prices,prices_count+1);
+         ArrayResize(indices,prices_count+1);
+         prices[prices_count]=Trendline_Pivot_Source==ROAD_TREND_CLOSE?rates[i].close:
+                              (resistance?rates[i].high:rates[i].low);
+         indices[prices_count++]=i;
+        }
+
+   int required=MathMax(2,MathMin(8,Trendline_Min_Pivot_Confirmation));
+   if(prices_count<required || threshold<=0.0) return;
+   double nearest=DBL_MAX,best_y=0.0,best_slope=0.0,best_up=0.0,best_down=0.0;
+   int best_index=-1;
+   // The newest five bars form the same stability buffer as the Pine source.
+   int stability=total-1-5;
+   for(int i=0;i<prices_count-1;i++)
+      for(int j=i+1;j<prices_count;j++)
+        {
+         int span=indices[j]-indices[i];
+         if(span<=0) continue;
+         double slope=(prices[j]-prices[i])/span;
+         int touches=0;
+         bool broken=false;
+         double max_up=0.0,max_down=0.0;
+         for(int k=0;k<prices_count;k++)
+           {
+            if(indices[k]<indices[i]) continue;
+            double expected=prices[i]+slope*(indices[k]-indices[i]);
+            double difference=prices[k]-expected;
+            if(MathAbs(difference)<=threshold)
+              {
+               touches++;
+               if(difference>max_up) max_up=difference;
+               if(difference<max_down) max_down=difference;
+              }
+            if(indices[k]<stability &&
+               ((resistance && difference>threshold) || (!resistance && difference<-threshold)))
+              {
+               broken=true;
+               break;
+              }
+           }
+         if(touches<required || broken) continue;
+         double projected=prices[i]+slope*(total-1-indices[i]);
+         double distance=MathAbs(projected-rates[total-1].close);
+         if(distance<nearest)
+           {
+            nearest=distance; best_index=indices[i]; best_y=prices[i]; best_slope=slope;
+            best_up=max_up; best_down=max_down;
+           }
+        }
+   if(best_index<0) return;
+   double end_y=best_y+best_slope*(total-1-best_index);
+   DrawTrendZone(resistance?"RESISTANCE":"SUPPORT",rates[best_index].time,
+                 best_y+best_up,best_y+best_down,rates[total-1].time,
+                 end_y+best_up,end_y+best_down,
+                 resistance?Trendline_Resistance_Color:Trendline_Support_Color);
+  }
+
+void DrawTrendlineZones(const double atr)
+  {
+   if(!Show_Trendline_Zones || atr==EMPTY_VALUE) return;
+   int wanted=Trendline_Bars_To_Apply+2*Trendline_Pivot_Strength+1;
+   MqlRates rates[];
+   ArraySetAsSeries(rates,false);
+   int total=CopyRates(_Symbol,RoadTimeframe(),1,wanted,rates);
+   if(total<2*Trendline_Pivot_Strength+1) return;
+   const double fixed_atr_multiplier=0.5;
+   double threshold=atr*fixed_atr_multiplier;
+   FindClosestTrendZone(rates,total,threshold,true);
+   FindClosestTrendZone(rates,total,threshold,false);
   }
 
 // Market High is the highest confirmed swing high in the boundary lookback;
@@ -491,6 +628,7 @@ void Rebuild(const bool permit_alert)
    double current_price=SymbolInfoTick(_Symbol,current_tick) && current_tick.bid>0.0
                         ?current_tick.bid:rates[total-1].close;
    DrawSignificantSR(rates[total-1].time,current_price);
+   DrawTrendlineZones(atr[total-1]);
 
    DrawDashboard(structure,have_high,last_high,have_low,last_low,dashboard_session,
                  adx[total-1],dashboard_adx,atr[total-1],dashboard_atr,rates[total-1].close,
@@ -506,7 +644,11 @@ int OnInit()
    if(Swing_Detection_Length<1 || Swing_Detection_Length>50 || MA_Length<1 ||
       HTF_MA_Length<1 || ADX_Length<1 || ATR_Length<1 || Bars_To_Process<100 ||
       Boundary_Lookback_Bars<1 || Boundary_Lookback_Bars>100000 ||
-      SR_Pivot_Length<1 || SR_Pivot_Length>20)
+      SR_Pivot_Length<1 || SR_Pivot_Length>20 ||
+      Trendline_Bars_To_Apply<50 || Trendline_Bars_To_Apply>100000 ||
+      Trendline_Pivot_Strength<5 || Trendline_Pivot_Strength>15 ||
+      Trendline_Min_Pivot_Confirmation<2 || Trendline_Min_Pivot_Confirmation>8 ||
+      Trendline_Zone_Transparency<0 || Trendline_Zone_Transparency>100)
       return INIT_PARAMETERS_INCORRECT;
    ENUM_TIMEFRAMES timeframe=RoadTimeframe();
    g_prefix="Road_"+(string)ChartID()+"_";
