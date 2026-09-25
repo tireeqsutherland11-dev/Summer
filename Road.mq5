@@ -1,5 +1,5 @@
 #property copyright "Market Trend Analyser conversion"
-#property version   "1.32"
+#property version   "1.33"
 #property strict
 #property description "Road: MT5 port of the Market Trend Analyser Pine Script."
 #property description "Signal/visualisation EA only; the source indicator contains no trading rules."
@@ -16,7 +16,7 @@ input group "General"
 input ENUM_TIMEFRAMES Analysis_Timeframe=PERIOD_CURRENT;
 input int Bars_To_Process=100;
 
-input group "Higher-Timeframe Support / Resistance"
+input group "Market Boundaries — Higher-Timeframe Support / Resistance"
 input bool Show_HTF_Support_Resistance=true;
 input ENUM_TIMEFRAMES SR_Timeframe=PERIOD_H4;
 input int Boundary_Lookback_Bars=50;
@@ -25,7 +25,7 @@ input ENUM_LINE_STYLE SR_Line_Style=STYLE_DOT;
 input int SR_Line_Width=2;
 input bool Show_SR_Labels=true;
 
-input group "Trendline Zones"
+input group "Market Boundaries — 4H Trendline Zones"
 input bool Show_Trendline_Zones=true;
 input int Trendline_Bars_To_Apply=300;
 input ROAD_TREND_PIVOT_SOURCE Trendline_Pivot_Source=ROAD_TREND_HIGH_LOW;
@@ -102,6 +102,14 @@ int g_ma_handle=INVALID_HANDLE;
 int g_htf_ma_handle=INVALID_HANDLE;
 int g_adx_handle=INVALID_HANDLE;
 int g_atr_handle=INVALID_HANDLE;
+int g_trend_atr_handle=INVALID_HANDLE;
+
+// Trendline identification is a market-boundary calculation.  Keep it on a
+// stable 4H data set regardless of the chart or structure-analysis timeframe.
+ENUM_TIMEFRAMES TrendlineTimeframe()
+  {
+   return PERIOD_H4;
+  }
 
 ENUM_TIMEFRAMES RoadTimeframe()
   {
@@ -326,16 +334,19 @@ void FindClosestTrendZone(const MqlRates &rates[],const int total,const double t
                  resistance?Trendline_Resistance_Color:Trendline_Support_Color);
   }
 
-void DrawTrendlineZones(const double atr)
+void DrawTrendlineZones()
   {
-   if(!Show_Trendline_Zones || atr==EMPTY_VALUE) return;
+   if(!Show_Trendline_Zones) return;
+   double trend_atr[];
+   if(!CopyIndicator(g_trend_atr_handle,0,1,trend_atr) || trend_atr[0]==EMPTY_VALUE)
+      return;
    int wanted=Trendline_Bars_To_Apply+2*Trendline_Pivot_Strength+1;
    MqlRates rates[];
    ArraySetAsSeries(rates,false);
-   int total=CopyRates(_Symbol,RoadTimeframe(),1,wanted,rates);
+   int total=CopyRates(_Symbol,TrendlineTimeframe(),1,wanted,rates);
    if(total<2*Trendline_Pivot_Strength+1) return;
    const double fixed_atr_multiplier=0.5;
-   double threshold=atr*fixed_atr_multiplier;
+   double threshold=trend_atr[0]*fixed_atr_multiplier;
    FindClosestTrendZone(rates,total,threshold,true);
    FindClosestTrendZone(rates,total,threshold,false);
   }
@@ -628,7 +639,7 @@ void Rebuild(const bool permit_alert)
    double current_price=SymbolInfoTick(_Symbol,current_tick) && current_tick.bid>0.0
                         ?current_tick.bid:rates[total-1].close;
    DrawSignificantSR(rates[total-1].time,current_price);
-   DrawTrendlineZones(atr[total-1]);
+   DrawTrendlineZones();
 
    DrawDashboard(structure,have_high,last_high,have_low,last_low,dashboard_session,
                  adx[total-1],dashboard_adx,atr[total-1],dashboard_atr,rates[total-1].close,
@@ -656,8 +667,10 @@ int OnInit()
    g_htf_ma_handle=iMA(_Symbol,HTF_Timeframe,HTF_MA_Length,0,RoadMAMethod(HTF_MA_Type),PRICE_CLOSE);
    g_adx_handle=iADX(_Symbol,timeframe,ADX_Length);
    g_atr_handle=iATR(_Symbol,timeframe,ATR_Length);
+   g_trend_atr_handle=iATR(_Symbol,TrendlineTimeframe(),ATR_Length);
    if(g_ma_handle==INVALID_HANDLE || g_htf_ma_handle==INVALID_HANDLE ||
-      g_adx_handle==INVALID_HANDLE || g_atr_handle==INVALID_HANDLE) return INIT_FAILED;
+      g_adx_handle==INVALID_HANDLE || g_atr_handle==INVALID_HANDLE ||
+      g_trend_atr_handle==INVALID_HANDLE) return INIT_FAILED;
    EventSetTimer(2);
    Rebuild(false);
    return INIT_SUCCEEDED;
@@ -670,6 +683,7 @@ void OnDeinit(const int reason)
    if(g_htf_ma_handle!=INVALID_HANDLE) IndicatorRelease(g_htf_ma_handle);
    if(g_adx_handle!=INVALID_HANDLE) IndicatorRelease(g_adx_handle);
    if(g_atr_handle!=INVALID_HANDLE) IndicatorRelease(g_atr_handle);
+   if(g_trend_atr_handle!=INVALID_HANDLE) IndicatorRelease(g_trend_atr_handle);
    ObjectsDeleteAll(0,g_prefix);
    Comment("");
   }
