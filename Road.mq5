@@ -1,5 +1,5 @@
 #property copyright "Market Trend Analyser conversion"
-#property version   "1.39"
+#property version   "1.40"
 #property strict
 #property description "Road: MT5 port of the Market Trend Analyser Pine Script."
 #property description "Signal/visualisation EA only; the source indicator contains no trading rules."
@@ -12,13 +12,16 @@ enum ROAD_ATR_MODE { ROAD_ATR_MINIMUM=0, ROAD_ATR_MAXIMUM=1, ROAD_ATR_RANGE=2 };
 enum ROAD_LABEL_SIZE { ROAD_TINY=7, ROAD_SMALL=9, ROAD_NORMAL=11, ROAD_LARGE=14 };
 enum ROAD_TREND_PIVOT_SOURCE { ROAD_TREND_HIGH_LOW=0, ROAD_TREND_CLOSE=1 };
 
-input group "System Timeframes"
-input ENUM_TIMEFRAMES Boundary_Timeframe=PERIOD_H4;
-input ENUM_TIMEFRAMES Structure_Timeframe=PERIOD_H1;
-input ENUM_TIMEFRAMES Setup_Entry_Timeframe=PERIOD_M15;
-
 input group "Structure Processing"
+input ENUM_TIMEFRAMES Structure_Timeframe=PERIOD_H1;
 input int Bars_To_Process=100;
+
+input group "Swing Detection"
+input int Swing_Detection_Length=5;
+input bool Show_Swing_Points=true;
+
+input group "Market Boundaries — Shared Settings"
+input ENUM_TIMEFRAMES Boundary_Timeframe=PERIOD_H4;
 
 input group "Market Boundaries — Higher-Timeframe Support / Resistance"
 input bool Show_HTF_Support_Resistance=true;
@@ -37,10 +40,6 @@ input int Trendline_Min_Pivot_Confirmation=3;
 input color Trendline_Resistance_Color=clrRed;
 input color Trendline_Support_Color=clrGreen;
 input int Trendline_Zone_Transparency=50;
-
-input group "Swing Detection"
-input int Swing_Detection_Length=5;
-input bool Show_Swing_Points=true;
 
 input group "BOS Display"
 input bool Show_BOS_Labels=true;
@@ -102,6 +101,9 @@ input double Maximum_Extension_ATR=3.0;
 input int Volume_Average_Length=20;
 input double Volume_Minimum_Ratio=0.50;
 input double Volume_Maximum_Ratio=2.00;
+
+input group "Setup and Entry"
+input ENUM_TIMEFRAMES Setup_Entry_Timeframe=PERIOD_M15;
 
 input group "Alerts"
 input bool Enable_Popup_Alerts=true;
