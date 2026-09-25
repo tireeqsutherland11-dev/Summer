@@ -1,0 +1,505 @@
+ROAD — SYSTEM OPERATING ROADMAP
+================================
+
+Purpose and scope
+-----------------
+Road.mq5 is a MetaTrader 5 Expert Advisor used for analysis, chart drawing, and
+alerts. It does not place, modify, or close orders. On each newly detected bar
+of the selected analysis timeframe it rebuilds its view from closed candles,
+classifies market structure, draws enabled overlays, updates the dashboard, and
+optionally alerts on a structure event confirmed by the most recently closed
+bar. Both OnTick and a two-second timer check for a new bar, so a quiet market
+can still trigger a refresh.
+
+The processing pipeline is:
+
+  1. Resolve PERIOD_CURRENT inputs and load closed analysis candles.
+  2. Load any enabled MA, ADX, and ATR indicator buffers.
+  3. Delete Road's existing chart objects and replay the selected history.
+  4. Confirm and classify swing highs/lows.
+  5. Detect close-confirmed BOS/CHoCH events and reconstruct current bias.
+  6. Calculate session, MA, ADX, and ATR qualification states.
+  7. Draw optional MA lines, current swing levels, higher-timeframe market
+     boundaries, and trendline zones.
+  8. Decide whether the structure is clean enough to be called tradeable.
+  9. Render the dashboard, send any eligible alert, and redraw the chart.
+
+All signals are based on closed candles (CopyRates starts at shift 1). A wick
+through a level is intentionally not a break; the candle must close beyond it.
+
+
+1. GENERAL / REFRESH SYSTEM
+---------------------------
+
+Analysis_Timeframe (default PERIOD_CURRENT)
+  The timeframe used for swings, BOS/CHoCH, LTF MA, ADX, ATR, dashboard close,
+  and new-bar detection. PERIOD_CURRENT means the chart timeframe. A lower
+  timeframe produces more frequent, noisier structure and refreshes; a higher
+  timeframe produces fewer, broader signals. It does not change the separately
+  selected SR, trendline, or HTF-MA timeframes.
+
+Bars_To_Process (default 100; valid 100 or greater)
+  Requested count of closed analysis candles replayed on every rebuild. The
+  runtime caps it at 100,000. More bars expose more historical pivots/signals
+  and give the state machine more context, but cost more processing and chart
+  objects. Fewer bars are faster but may change the first known pivots and thus
+  the reconstructed structure. Initialization rejects values below 100.
+
+Result
+  Road refreshes only when the opening time of analysis bar 0 changes. The
+  first initialization rebuild never alerts; later new-bar rebuilds may alert.
+  Its object prefix contains the chart ID, isolating its objects per chart.
+
+
+2. SWING-DETECTION AND STRUCTURE SYSTEM
+---------------------------------------
+
+Swing_Detection_Length (default 5; valid 1..50)
+  A pivot high must be strictly higher than every high in the N bars before
+  and N bars after it. A pivot low must be strictly lower than every low in
+  that same window. Because N future closed bars are required, confirmation is
+  delayed by N bars. Increasing N finds fewer, larger and later-confirmed
+  swings; decreasing N finds more, smaller and noisier swings.
+
+Show_Swing_Points (default true)
+  Shows or hides HH, LH, LL, and HL text and the dotted LAST_HIGH/LAST_LOW
+  segments. It does not alter pivot detection, break detection, bias, alerts,
+  or tradeability.
+
+Classification and state
+  * The first high and first low in the replay window are deliberately
+    untyped because no prior same-side pivot exists.
+  * A later high above the previous high is HH; otherwise it is LH. Equality
+    is therefore treated as LH.
+  * A later low below the previous low is LL; otherwise it is HL. Equality is
+    therefore treated as HL.
+  * last_high/last_low and their times store the newest confirmed levels.
+  * high_broken/low_broken allow each level to generate at most one break.
+  * A newly confirmed pivot resets the corresponding broken flag.
+
+Break classification
+  * Close above a typed HH -> bullish BOS and bullish structure.
+  * Close above a typed LH -> bullish CHoCH and bullish structure.
+  * Close below a typed LL -> bearish BOS and bearish structure.
+  * Close below a typed HL -> bearish CHoCH and bearish structure.
+  * An untyped first pivot cannot be broken for a signal.
+  * The bullish and bearish tests are independent; an unusually wide candle
+    could confirm both in the same replay iteration, with the bearish block
+    running second and therefore becoming the final stored bias/event state.
+
+Outputs
+  Structure events produce optional text and level segments, set dashboard
+  market bias, participate in tradeability, and can produce alerts. Crucially,
+  MA/session/ADX/ATR filters do not suppress historical BOS or CHoCH drawing
+  and do not suppress alerts: they describe whether the setup direction passes
+  qualification, while structure events remain facts of price action.
+
+
+3. BOS, CHoCH, LABEL, AND LINE DISPLAY SYSTEM
+---------------------------------------------
+
+Show_BOS_Labels / Show_CHoCH_Labels (defaults true)
+  Control drawing of the corresponding signal. Turning one off suppresses both
+  its text and its structure segment because DrawSignal exits immediately. It
+  does not suppress event classification, market bias, tradeability, or alert.
+
+Bullish_BOS_Color / Bearish_BOS_Color (defaults teal/red)
+Bullish_CHoCH_Color / Bearish_CHoCH_Color (defaults lime/magenta)
+  Set text and segment color for each direction/type; visual effect only.
+
+Label_Size (default ROAD_SMALL)
+  Font size enumeration: TINY=7, SMALL=9, NORMAL=11, LARGE=14. It affects
+  BOS/CHoCH and swing-point text, but not fixed-size Market High/Low labels.
+
+Show_Structure_Lines (default true)
+  Draws a horizontal segment from the broken pivot to its confirming candle.
+  It has no analytical effect. It only applies when that event's label display
+  is also enabled.
+
+Line_Style (default STYLE_DASH) / Line_Width (default 1)
+  Style the BOS/CHoCH segments. Width is clamped at drawing time to 1..4;
+  changing either is visual only.
+
+Result
+  Bullish labels are anchored below the confirming candle at its low; bearish
+  labels are anchored above it at its high. Object IDs include event type,
+  direction, and confirming time to avoid duplicates within a rebuild.
+
+
+4. LOWER-TIMEFRAME MOVING-AVERAGE QUALIFICATION
+-----------------------------------------------
+
+Use_MA_Filter (default true)
+  Enables an MA calculated on Analysis_Timeframe and directional qualification.
+  Disabling it makes both long and short LTF tests pass and reports LTF MA OFF.
+
+MA_Length (default 50; valid 1 or greater)
+  Number of closes used by the MA. Larger values make a smoother, slower filter;
+  smaller values respond faster and change qualification more often.
+
+MA_Type (default ROAD_EMA)
+  ROAD_EMA weights recent closes more heavily and reacts faster; ROAD_SMA gives
+  each close equal weight and is generally smoother/slower at the same length.
+
+MA_Filter_Mode (default ROAD_PRICE_ABOVE_BELOW)
+  PRICE_ABOVE_BELOW: long passes when analysis close > MA; short passes when
+  close < MA. Equality passes neither direction.
+  FULL_BODY_CLOSE: long requires open and close above MA plus a bullish candle;
+  short requires open and close below MA plus a bearish candle. This is stricter
+  and normally produces fewer passing setups.
+
+Show_MA_Line (default false) / MA_Color (default blue)
+  When the filter is enabled, draws up to the latest 500 bars as solid width-2
+  segments. Show_MA_Line does nothing if Use_MA_Filter is false. Color and
+  visibility are visual only.
+
+Result
+  The LTF state contributes to bull/bear BOS and CHoCH filter results displayed
+  on the dashboard. It does not change detection/drawing/alerts.
+
+
+5. HIGHER-TIMEFRAME MOVING-AVERAGE QUALIFICATION
+------------------------------------------------
+
+Use_HTF_MA_Filter (default true)
+  Enables directional confirmation from a separate timeframe. Disabling it
+  makes both HTF direction tests pass and reports HTF MA OFF.
+
+HTF_Timeframe (default PERIOD_H1)
+  Timeframe for the HTF MA and, in full-body mode, its candle open/close. A
+  higher selection changes more slowly and filters more short-lived moves; a
+  lower selection reacts sooner. Unlike the other timeframe helpers, this
+  input is used directly; PERIOD_CURRENT is handled by MT5 as the current chart
+  period for the indicator/series calls.
+
+HTF_MA_Length (default 100; valid 1 or greater)
+HTF_MA_Type (default ROAD_EMA)
+  Control smoothing exactly like their LTF counterparts, but on HTF bars.
+
+HTF_MA_Filter_Mode (default ROAD_PRICE_ABOVE_BELOW)
+  PRICE_ABOVE_BELOW compares the analysis candle close with the HTF MA.
+  FULL_BODY_CLOSE requires the completed HTF candle's open and close on the
+  correct side of its MA and the HTF candle color to match the direction.
+
+Lookahead protection
+  When an analysis candle lies inside an HTF candle that was not yet complete,
+  Road shifts to the preceding completed HTF candle. This avoids historical
+  future leakage. If HTF data cannot be obtained while enabled, both HTF
+  directions stay false and qualification is blocked for that analysis bar.
+
+Show_HTF_MA_Line (default false) / HTF_MA_Color (default orange)
+  Draw up to 500 bars of the completed-value HTF MA as solid width-2 segments.
+  They require the filter to be enabled and affect presentation only.
+
+
+6. SESSION QUALIFICATION SYSTEM
+-------------------------------
+
+Use_Session_Filter (default false)
+  When false all bars pass and the dashboard reports OFF. When true, the
+  confirming candle's server timestamp is converted to the selected session's
+  local clock and tested against a half-open [start, end) interval.
+
+Session_Preset (default ROAD_NEW_YORK)
+  NEW_YORK: 09:30-16:00 at fixed UTC-5 (offset -300 minutes).
+  LONDON:    08:00-17:00 at UTC+0.
+  TOKYO:     09:00-15:00 at UTC+9 (+540).
+  SYDNEY:    08:00-17:00 at UTC+10 (+600).
+  CUSTOM:    uses Custom_Session and Custom_UTC_Offset_Minutes.
+  24X7:      every timestamp passes.
+
+  Preset offsets are fixed: daylight-saving time is not automatically applied.
+  Users must adjust relevant offsets/configuration when seasonal time changes
+  matter.
+
+Custom_Session (default "0930-1600")
+  CUSTOM-only HHMM-HHMM interval. Invalid shape or invalid hours/minutes makes
+  every checked bar fail. Overnight ranges are supported (for example,
+  2200-0600). Equal start/end means all day.
+
+Custom_UTC_Offset_Minutes (default 0)
+  UTC offset of the custom session clock. Positive values are east of UTC.
+
+Server_UTC_Offset_Minutes (default 0)
+  UTC offset of broker server timestamps. Conversion is:
+    local time = server time + (session offset - server offset).
+  A wrong value shifts the tested window and can incorrectly pass/block bars.
+
+Result
+  Session pass is combined with both MA directions. It affects dashboard filter
+  qualification only, not structure drawing or alerts.
+
+
+7. ADX STRENGTH QUALIFICATION SYSTEM
+------------------------------------
+
+Use_ADX_Filter (default true)
+  Enables the main ADX buffer on Analysis_Timeframe. Disabling it passes all
+  ADX tests and reports OFF.
+
+ADX_Length (default 14; valid 1 or greater)
+  ADX lookback. A shorter length reacts more quickly and erratically; a longer
+  length is smoother and slower. ADX measures strength, not bull/bear direction.
+
+ADX_Minimum (default 25.0)
+  A bar passes when ADX is valid and >= this value. Raising it requires stronger
+  trends and blocks more setups; lowering it admits weaker/ranging conditions.
+  No explicit range validation is performed for this threshold.
+
+Apply_ADX_Filter_To (default ROAD_BOS_ONLY)
+  BOS_ONLY: ADX applies to BOS qualification; CHoCH ignores ADX.
+  BOS_AND_CHOCH: both event types require the ADX pass.
+  ATR, MA, and session requirements remain independent.
+
+Result
+  ADX status and scope appear on the dashboard and feed its BOS/CHoCH filter
+  rows. They do not suppress confirmed event drawings or alerts.
+
+
+8. ATR VOLATILITY QUALIFICATION SYSTEM
+--------------------------------------
+
+Use_ATR_Filter (default true)
+  Enables ATR on Analysis_Timeframe. Disabling it passes volatility checks and
+  reports OFF. The separate trend-zone system can still use an ATR handle when
+  trendline zones are enabled.
+
+ATR_Length (default 14; valid 1 or greater)
+  ATR lookback. Shorter reacts faster to volatility changes; longer is smoother.
+  The same length is also used for trend-zone ATR on Trendline_Timeframe.
+
+ATR_Filter_Mode (default ROAD_ATR_MINIMUM)
+  MINIMUM: passes ATR >= ATR_Minimum.
+  MAXIMUM: passes ATR <= ATR_Maximum.
+  RANGE:   passes ATR_Minimum <= ATR <= ATR_Maximum.
+
+ATR_Minimum (default 1.0) / ATR_Maximum (default 10.0)
+  Raw symbol-price values, not points, pips, or percentages. Increasing the
+  minimum rejects quieter bars; decreasing it admits them. Decreasing the
+  maximum rejects more volatile bars; increasing it admits them. In RANGE mode,
+  a minimum above the maximum makes all valid ATR values fail. Thresholds have
+  no explicit initialization validation.
+
+Result
+  ATR qualification applies to both BOS and CHoCH dashboard filter results,
+  regardless of ADX scope. It does not suppress event drawing or alerts.
+
+
+9. HIGHER-TIMEFRAME MARKET HIGH / MARKET LOW SYSTEM
+---------------------------------------------------
+
+Show_HTF_Support_Resistance (default true)
+  Enables horizontal market-boundary discovery and drawing. Disabling it has no
+  effect on analysis-timeframe structure.
+
+SR_Timeframe (default PERIOD_H4)
+  Timeframe used to find boundary pivots. Higher values create broader, slower
+  boundaries; lower values create more local boundaries.
+
+Boundary_Lookback_Bars (default 50; valid 1..100000)
+  Number of recent closed SR bars searched. Older padding is loaded only so a
+  pivot near the start can be confirmed. A larger lookback can find more distant
+  extremes but costs processing; the chosen Market High is the highest
+  confirmed pivot high and Market Low is the lowest confirmed pivot low in the
+  actual lookback.
+
+SR_Pivot_Length (default 3; valid 1..20)
+  Number of closed SR bars required on both sides of a strict pivot. Increasing
+  it selects fewer/more prominent boundaries and increases confirmation delay;
+  decreasing it accepts more local levels.
+
+SR_Line_Style (default STYLE_DOT) / SR_Line_Width (default 2)
+  Visual style. Width is clamped to 1..4 by the common segment drawer.
+
+Show_SR_Labels (default true)
+  Toggles fixed-size (8) "Market High" and "Market Low" labels only. Boundary
+  lines remain when false.
+
+Result
+  Market High is drawn only if above the current bid (or latest closed analysis
+  close if no usable bid); Market Low only if below it. Each black horizontal
+  level starts at its pivot and rays right. A boundary on the wrong side of
+  current price is omitted rather than relabeled. These levels do not affect
+  signal, filter, bias, tradeability, or alert calculations.
+
+
+10. TRENDLINE-ZONE SYSTEM
+-------------------------
+
+Show_Trendline_Zones (default true)
+  Enables one nearest valid resistance zone and one nearest valid support zone.
+  It also controls creation of the trend-timeframe ATR handle.
+
+Trendline_Timeframe (default PERIOD_H4)
+  Source timeframe; PERIOD_CURRENT resolves to the chart timeframe. Higher
+  values create broader and slower zones; lower values create more local zones.
+
+Trendline_Bars_To_Apply (default 300; valid 50..100000)
+  Historical region searched for trend pivots. Larger values provide more line
+  candidates and processing cost; smaller values focus on recent structure.
+
+Trendline_Pivot_Source (default ROAD_TREND_HIGH_LOW)
+  HIGH_LOW uses highs for resistance pivots and lows for support pivots.
+  CLOSE uses closes for both, generally reducing wick influence and moving zone
+  anchors toward candle bodies.
+
+Trendline_Pivot_Strength (default 10; valid 5..15)
+  Strict bars-on-each-side pivot window. Higher strength yields fewer, more
+  prominent and later-confirmed anchors; lower strength yields more candidates.
+
+Trendline_Min_Pivot_Confirmation (default 3; valid 2..8)
+  Minimum candidate pivots that must touch a proposed line within the threshold.
+  Raising it makes zones rarer and more strongly corroborated; lowering it makes
+  them easier to form. Runtime also clamps this value to 2..8.
+
+Trendline_Resistance_Color (default red)
+Trendline_Support_Color (default green)
+Trendline_Zone_Transparency (default 50; valid 0..100)
+  Visual settings. Transparency 0 is opaque and 100 is invisible. Boundary
+  lines use a fixed 50% transparency derived from the chosen color.
+
+Algorithm and result
+  * Road loads closed trend-timeframe rates plus pivot padding.
+  * A fixed, non-input tolerance of 0.5 times the latest trend-timeframe ATR is
+    used for both touch matching and break rejection.
+  * Every pair of pivots defines a candidate slope. Later pivots within the ATR
+    tolerance count as touches and set the zone's observed upper/lower spread.
+  * A resistance candidate is rejected if an eligible older pivot exceeds it by
+    more than tolerance; support is rejected for the opposite violation. The
+    newest five bars form a stability buffer and do not invalidate a candidate.
+  * Among candidates meeting the touch minimum, the projected line closest to
+    the latest trend close wins independently for resistance and support.
+  * The output is a filled, right-rayed sloped channel plus right-rayed top and
+    bottom boundaries. Zones are analytical overlays only and do not qualify or
+    create structure signals.
+
+ATR_Length indirectly changes the zone tolerance. Larger/smoother ATR windows
+usually make its width/tolerance less reactive; higher current ATR expands the
+allowed touch/break distance, while lower ATR tightens it.
+
+
+11. MARKET TRADEABILITY SYSTEM
+------------------------------
+
+Market bias
+  The last replayed confirmed break sets BULLISH or BEARISH. With no break it is
+  UNDEFINED. A CHoCH changes bias, but bias alone is not considered tradeable.
+
+Tradeable is true only for one of these exact clean-continuation states:
+
+  Bullish: last break direction is up, last break was BOS, latest high is HH,
+           and latest low is HL.
+  Bearish: last break direction is down, last break was BOS, latest high is LH,
+           and latest low is LL.
+
+All mixed sequences and every latest CHoCH are reported as NOT TRADEABLE
+(TRANSITION). This flag is structural only: MA, session, ADX, and ATR do not
+enter the tradeable formula. It is information, not an order instruction.
+
+
+12. DASHBOARD SYSTEM
+--------------------
+
+The chart Comment displays:
+  * Market Bias and structural Market Tradeability.
+  * Most recent confirmed high and low, or "-" when unavailable.
+  * Session OFF/IN/OUT.
+  * ADX value, configured minimum, pass/block, and scope.
+  * ATR value and pass/block.
+  * Whether the latest close is above/below each enabled MA.
+  * Aggregate BOS and CHoCH filter pass/block states.
+
+Directional aggregation is bias-aware:
+  * For bullish/undefined structure, BOS displays the bullish BOS qualification;
+    for bearish/undefined structure it displays bearish qualification. At
+    undefined structure either passing side can produce PASS.
+  * CHoCH checks the reversal direction: bullish qualification while current
+    structure is bearish/undefined, or bearish qualification while current
+    structure is bullish/undefined.
+
+The MA dashboard words use close > MA for ABOVE and otherwise BELOW, even when
+full-body mode is selected. Thus the word is positional information, while the
+aggregate filter row carries the stricter full-body result. The source currently
+prints the "BOS Filters" row twice; this is duplicated presentation only.
+
+
+13. ALERT SYSTEM
+----------------
+
+Enable_Popup_Alerts (default true)
+  Calls MT5 Alert with "<symbol> <analysis timeframe> <signal>".
+
+Enable_Push_Notifications (default false)
+  Sends the same text through SendNotification; terminal notification settings
+  must also be configured for delivery.
+
+Eligibility and deduplication
+  Alerts occur only after initialization, only during a new-bar rebuild, and
+  only when the newest replayed event belongs to the most recently closed bar.
+  A static last-alert time prevents another alert for the same/older timestamp.
+  Display toggles and all qualification filters do not gate alerts. If both
+  directions occurred on one bar, the later stored bearish event is the one
+  alerted. Disabling both channels performs no delivery, though the event is
+  still internally considered by the alert routine.
+
+
+14. INTERNAL VARIABLES AND RESOURCE LIFECYCLE
+---------------------------------------------
+
+Persistent globals
+  g_prefix             Unique "Road_<chart ID>_" object-name prefix.
+  g_last_bar           Current open analysis bar time used for new-bar gating.
+  g_ma_handle          LTF MA indicator handle, or INVALID_HANDLE.
+  g_htf_ma_handle      HTF MA indicator handle, or INVALID_HANDLE.
+  g_adx_handle         Analysis-timeframe ADX handle, or INVALID_HANDLE.
+  g_atr_handle         Analysis-timeframe ATR handle, or INVALID_HANDLE.
+  g_trend_atr_handle   Trend-timeframe ATR handle, or INVALID_HANDLE.
+
+Key rebuild-local variables
+  rates/ma/adx/atr     Closed-bar price and enabled indicator histories.
+  have_high/have_low   Whether a confirmed pivot of each side exists.
+  last_high_kind       +1 HH, -1 LH, 0 untyped.
+  last_low_kind        +1 LL, -1 HL, 0 untyped.
+  high_broken/low_broken
+                       One-signal-per-current-pivot guards.
+  structure            +1 bullish, -1 bearish, 0 undefined.
+  last_break_direction +1 up, -1 down, 0 none.
+  last_break_was_bos   Distinguishes continuation from transition.
+  newest_signal/time   Candidate alert text and confirming timestamp.
+  dashboard_*          Latest-bar qualification snapshots.
+
+Changing globals directly is not a supported user control; they are derived
+state. On initialization, Road validates bounded inputs, creates only required
+indicator handles, starts a two-second timer, and performs a non-alerting build.
+If required handles/data are unavailable, initialization or that rebuild stops
+rather than operating on partial enabled-filter data. On deinitialization it
+kills the timer, releases every created handle, deletes only prefixed objects,
+and clears the chart comment.
+
+
+15. PRACTICAL INTERACTION MAP
+-----------------------------
+
+  Change structure frequency:
+    Analysis_Timeframe, Swing_Detection_Length, Bars_To_Process.
+
+  Change whether the latest directional setup qualifies:
+    MA and HTF-MA settings, session settings, ADX settings, ATR settings.
+
+  Change the structural TRADEABLE result:
+    Only incoming confirmed pivot/break sequence (indirectly affected by the
+    analysis timeframe, swing length, and available replay history).
+
+  Change boundary overlays:
+    SR settings for horizontal Market High/Low; trendline settings and ATR_Length
+    for sloped support/resistance zones.
+
+  Change visuals only:
+    Show toggles, colors, label size, line styles/widths, transparency.
+
+  Change notifications only:
+    Enable_Popup_Alerts and Enable_Push_Notifications.
+
+No parameter turns Road into an automated trading system. Its results are chart
+objects, dashboard text, and optional notifications; execution decisions and
+risk management remain outside this EA.
