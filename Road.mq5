@@ -1,5 +1,5 @@
 #property copyright "Market Trend Analyser conversion"
-#property version   "1.33"
+#property version   "1.34"
 #property strict
 #property description "Road: MT5 port of the Market Trend Analyser Pine Script."
 #property description "Signal/visualisation EA only; the source indicator contains no trading rules."
@@ -25,8 +25,9 @@ input ENUM_LINE_STYLE SR_Line_Style=STYLE_DOT;
 input int SR_Line_Width=2;
 input bool Show_SR_Labels=true;
 
-input group "Market Boundaries — 4H Trendline Zones"
+input group "Market Boundaries — Trendline Zones"
 input bool Show_Trendline_Zones=true;
+input ENUM_TIMEFRAMES Trendline_Timeframe=PERIOD_H4;
 input int Trendline_Bars_To_Apply=300;
 input ROAD_TREND_PIVOT_SOURCE Trendline_Pivot_Source=ROAD_TREND_HIGH_LOW;
 input int Trendline_Pivot_Strength=10;
@@ -104,11 +105,9 @@ int g_adx_handle=INVALID_HANDLE;
 int g_atr_handle=INVALID_HANDLE;
 int g_trend_atr_handle=INVALID_HANDLE;
 
-// Trendline identification is a market-boundary calculation.  Keep it on a
-// stable 4H data set regardless of the chart or structure-analysis timeframe.
 ENUM_TIMEFRAMES TrendlineTimeframe()
   {
-   return PERIOD_H4;
+   return Trendline_Timeframe==PERIOD_CURRENT?(ENUM_TIMEFRAMES)_Period:Trendline_Timeframe;
   }
 
 ENUM_TIMEFRAMES RoadTimeframe()
