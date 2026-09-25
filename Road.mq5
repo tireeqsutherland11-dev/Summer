@@ -1,5 +1,5 @@
 #property copyright "Market Trend Analyser conversion"
-#property version   "1.33"
+#property version   "1.32"
 #property strict
 #property description "Road: MT5 port of the Market Trend Analyser Pine Script."
 #property description "Signal/visualisation EA only; the source indicator contains no trading rules."
@@ -347,7 +347,6 @@ void Rebuild(const bool permit_alert)
    ObjectsDeleteAll(0,g_prefix);
    bool have_high=false,have_low=false,high_broken=false,low_broken=false;
    bool last_high_is_hh=false,last_low_is_ll=false;
-   bool high_is_classified=false,low_is_classified=false;
    double last_high=0.0,last_low=0.0,last_htf_ma=0.0;
    datetime last_high_time=0,last_low_time=0,newest_signal_time=0;
    int structure=0;
@@ -367,7 +366,6 @@ void Rebuild(const bool permit_alert)
          double swing_high=rates[pivot].high;
          // Seed the observed range as a HH; every later high is classified
          // against the preceding confirmed swing high.
-         high_is_classified=have_high;
          last_high_is_hh=!have_high || swing_high>last_high;
          have_high=true; last_high=swing_high; last_high_time=rates[pivot].time; high_broken=false;
          if(pivot>=display_first || (historical_choch_time>0 &&
@@ -379,7 +377,6 @@ void Rebuild(const bool permit_alert)
          double swing_low=rates[pivot].low;
          // Seed the observed range as a LL; every later low is classified
          // against the preceding confirmed swing low.
-         low_is_classified=have_low;
          last_low_is_ll=!have_low || swing_low<last_low;
          have_low=true; last_low=swing_low; last_low_time=rates[pivot].time; low_broken=false;
          if(pivot>=display_first || (historical_choch_time>0 &&
@@ -421,33 +418,23 @@ void Rebuild(const bool permit_alert)
 
       bool bullish_break=have_high && !high_broken && rates[i].close>last_high && rates[i-1].close<=last_high;
       bool bearish_break=have_low && !low_broken && rates[i].close<last_low && rates[i-1].close>=last_low;
-      // Establish the initial trend only from a coherent pair of classified
-      // swings.  HH + HL defines an uptrend; LH + LL defines a downtrend.
-      // Once established, only a CHoCH is allowed to reverse this state.
-      if(structure==0 && high_is_classified && low_is_classified)
-        {
-         if(last_high_is_hh && !last_low_is_ll) structure=1;
-         else if(!last_high_is_hh && last_low_is_ll) structure=-1;
-        }
-
-      // Only confirmed pivots are valid structure levels.  A BOS breaks the
-      // outer continuation level in the current trend (HH/LL); a CHoCH breaks
-      // the opposing protection level (LH in a downtrend, HL in an uptrend).
+      // Only confirmed pivots are valid structure levels.  Expansion beyond
+      // an unconfirmed candle extreme must not produce lower-timeframe BOS
+      // noise on the analysis timeframe.
       if(bullish_break)
         {
          high_broken=true;
-         bool bullish_bos=structure>0 && last_high_is_hh;
-         bool bullish_choch=structure<0 && !last_high_is_hh;
-         if(bullish_bos)
+         // A break above a HH is continuation (BOS) regardless of whether a
+         // CHoCH happened earlier in the loaded history.  A bearish LH break
+         // remains a bullish change of character.
+         if(last_high_is_hh && bull_bos)
            {
-            if(bull_bos)
-              {
-               if(i>=display_first || historical_choch_time>0)
-                  DrawSignal("BOS",1,last_high_time,last_high,rates[i]);
-               newest_signal="BOS bullish"; newest_signal_time=rates[i].time;
-              }
+            if(i>=display_first || historical_choch_time>0)
+               DrawSignal("BOS",1,last_high_time,last_high,rates[i]);
+            structure=1;
+            newest_signal="BOS bullish"; newest_signal_time=rates[i].time;
            }
-         else if(bullish_choch)
+         else if(!last_high_is_hh && structure<0 && bull_choch)
            {
             choch_found=true;
             if(i<display_first)
@@ -458,29 +445,26 @@ void Rebuild(const bool permit_alert)
                ObjectsDeleteAll(0,g_prefix);
                historical_choch_time=rates[i].time;
               }
-            if(bull_choch)
-              {
-               DrawSignal("CHoCH",1,last_high_time,last_high,rates[i]);
-               newest_signal="CHoCH bullish"; newest_signal_time=rates[i].time;
-              }
+            DrawSignal("CHoCH",1,last_high_time,last_high,rates[i]);
             structure=1;
+            newest_signal="CHoCH bullish"; newest_signal_time=rates[i].time;
            }
+         else if(structure==0)
+            structure=1;
         }
       if(bearish_break)
         {
          low_broken=true;
-         bool bearish_bos=structure<0 && last_low_is_ll;
-         bool bearish_choch=structure>0 && !last_low_is_ll;
-         if(bearish_bos)
+         // Likewise, each confirmed break below a LL is bearish BOS without
+         // requiring a CHoCH to arm continuation signals first.
+         if(last_low_is_ll && bear_bos)
            {
-            if(bear_bos)
-              {
-               if(i>=display_first || historical_choch_time>0)
-                  DrawSignal("BOS",-1,last_low_time,last_low,rates[i]);
-               newest_signal="BOS bearish"; newest_signal_time=rates[i].time;
-              }
+            if(i>=display_first || historical_choch_time>0)
+               DrawSignal("BOS",-1,last_low_time,last_low,rates[i]);
+            structure=-1;
+            newest_signal="BOS bearish"; newest_signal_time=rates[i].time;
            }
-         else if(bearish_choch)
+         else if(!last_low_is_ll && structure>0 && bear_choch)
            {
             choch_found=true;
             if(i<display_first)
@@ -490,13 +474,12 @@ void Rebuild(const bool permit_alert)
                ObjectsDeleteAll(0,g_prefix);
                historical_choch_time=rates[i].time;
               }
-            if(bear_choch)
-              {
-               DrawSignal("CHoCH",-1,last_low_time,last_low,rates[i]);
-               newest_signal="CHoCH bearish"; newest_signal_time=rates[i].time;
-              }
+            DrawSignal("CHoCH",-1,last_low_time,last_low,rates[i]);
             structure=-1;
+            newest_signal="CHoCH bearish"; newest_signal_time=rates[i].time;
            }
+         else if(structure==0)
+            structure=-1;
         }
       if(i==total-1)
         {
