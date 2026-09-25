@@ -1,5 +1,5 @@
 #property copyright "Market Trend Analyser conversion"
-#property version   "1.31"
+#property version   "1.32"
 #property strict
 #property description "Road: MT5 port of the Market Trend Analyser Pine Script."
 #property description "Signal/visualisation EA only; the source indicator contains no trading rules."
@@ -355,7 +355,7 @@ void Rebuild(const bool permit_alert)
    bool dashboard_bull_choch=false,dashboard_bear_choch=false;
    bool dashboard_session=true,dashboard_adx=false,dashboard_atr=false;
    bool choch_found=false;
-   string historical_choch_key="";
+   datetime historical_choch_time=0;
    int display_first=MathMax(0,total-display_bars);
 
    for(int i=length;i<total;i++)
@@ -368,7 +368,8 @@ void Rebuild(const bool permit_alert)
          // against the preceding confirmed swing high.
          last_high_is_hh=!have_high || swing_high>last_high;
          have_high=true; last_high=swing_high; last_high_time=rates[pivot].time; high_broken=false;
-         if(pivot>=display_first)
+         if(pivot>=display_first || (historical_choch_time>0 &&
+            last_high_time>historical_choch_time))
             DrawStructurePoint(last_high_is_hh?"HH":"LH",last_high_time,last_high);
         }
       if(PivotLow(rates,total,pivot,length))
@@ -378,7 +379,8 @@ void Rebuild(const bool permit_alert)
          // against the preceding confirmed swing low.
          last_low_is_ll=!have_low || swing_low<last_low;
          have_low=true; last_low=swing_low; last_low_time=rates[pivot].time; low_broken=false;
-         if(pivot>=display_first)
+         if(pivot>=display_first || (historical_choch_time>0 &&
+            last_low_time>historical_choch_time))
             DrawStructurePoint(last_low_is_ll?"LL":"HL",last_low_time,last_low);
         }
 
@@ -427,7 +429,7 @@ void Rebuild(const bool permit_alert)
          // remains a bullish change of character.
          if(last_high_is_hh && bull_bos)
            {
-            if(i>=display_first)
+            if(i>=display_first || historical_choch_time>0)
                DrawSignal("BOS",1,last_high_time,last_high,rates[i]);
             structure=1;
             newest_signal="BOS bullish"; newest_signal_time=rates[i].time;
@@ -435,14 +437,15 @@ void Rebuild(const bool permit_alert)
          else if(!last_high_is_hh && structure<0 && bull_choch)
            {
             choch_found=true;
-            if(i<display_first && historical_choch_key!="")
+            if(i<display_first)
               {
-               ObjectDelete(0,g_prefix+historical_choch_key);
-               ObjectDelete(0,g_prefix+historical_choch_key+"_LINE");
+               // A newer off-screen CHoCH supersedes the earlier starting
+               // point.  Clear its drawings, then retain this CHoCH and every
+               // identifiable structure event that follows it.
+               ObjectsDeleteAll(0,g_prefix);
+               historical_choch_time=rates[i].time;
               }
             DrawSignal("CHoCH",1,last_high_time,last_high,rates[i]);
-            if(i<display_first)
-               historical_choch_key="CHoCH_UP_"+(string)rates[i].time;
             structure=1;
             newest_signal="CHoCH bullish"; newest_signal_time=rates[i].time;
            }
@@ -456,7 +459,7 @@ void Rebuild(const bool permit_alert)
          // requiring a CHoCH to arm continuation signals first.
          if(last_low_is_ll && bear_bos)
            {
-            if(i>=display_first)
+            if(i>=display_first || historical_choch_time>0)
                DrawSignal("BOS",-1,last_low_time,last_low,rates[i]);
             structure=-1;
             newest_signal="BOS bearish"; newest_signal_time=rates[i].time;
@@ -464,14 +467,14 @@ void Rebuild(const bool permit_alert)
          else if(!last_low_is_ll && structure>0 && bear_choch)
            {
             choch_found=true;
-            if(i<display_first && historical_choch_key!="")
+            if(i<display_first)
               {
-               ObjectDelete(0,g_prefix+historical_choch_key);
-               ObjectDelete(0,g_prefix+historical_choch_key+"_LINE");
+               // Keep the historical context anchored to the most recent
+               // off-screen CHoCH, not to an older change of character.
+               ObjectsDeleteAll(0,g_prefix);
+               historical_choch_time=rates[i].time;
               }
             DrawSignal("CHoCH",-1,last_low_time,last_low,rates[i]);
-            if(i<display_first)
-               historical_choch_key="CHoCH_DOWN_"+(string)rates[i].time;
             structure=-1;
             newest_signal="CHoCH bearish"; newest_signal_time=rates[i].time;
            }
