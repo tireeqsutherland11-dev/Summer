@@ -1,5 +1,5 @@
 #property copyright "Market Trend Analyser conversion"
-#property version   "1.30"
+#property version   "1.29"
 #property strict
 #property description "Road: MT5 port of the Market Trend Analyser Pine Script."
 #property description "Signal/visualisation EA only; the source indicator contains no trading rules."
@@ -274,14 +274,6 @@ void DrawSignal(const string kind,const int direction,const datetime swing_time,
       DrawSegment(key+"_LINE",swing_time,level,bar.time,level,clr,Line_Style,Line_Width);
   }
 
-void DrawStructurePoint(const string kind,const datetime time,const double price)
-  {
-   if(!Show_Swing_Points) return;
-   bool low=kind=="HL" || kind=="LL";
-   color clr=low?clrTeal:clrIndianRed;
-   DrawText("STRUCTURE_"+kind+"_"+(string)time,time,price,kind,clr,low,(int)Label_Size);
-  }
-
 void SendRoadAlert(const string signal,const datetime bar_time)
   {
    static datetime last_alert=0;
@@ -336,10 +328,13 @@ void Rebuild(const bool permit_alert)
 
    ObjectsDeleteAll(0,g_prefix);
    bool have_high=false,have_low=false,high_broken=false,low_broken=false;
-   bool last_high_is_hh=false,last_low_is_ll=false;
    double last_high=0.0,last_low=0.0,last_htf_ma=0.0;
    datetime last_high_time=0,last_low_time=0,newest_signal_time=0;
    int structure=0;
+   // The first confirmed swing break establishes an initial bias.  BOS is
+   // armed only after an opposite swing break has confirmed a CHoCH, so an
+   // incomplete history cannot manufacture a continuation signal.
+   bool choch_confirmed=false;
    string newest_signal="";
    bool dashboard_bull_bos=false,dashboard_bear_bos=false;
    bool dashboard_bull_choch=false,dashboard_bear_choch=false;
@@ -350,21 +345,13 @@ void Rebuild(const bool permit_alert)
       int pivot=i-length;
       if(PivotHigh(rates,total,pivot,length))
         {
-         double swing_high=rates[pivot].high;
-         // Seed the observed range as a HH; every later high is classified
-         // against the preceding confirmed swing high.
-         last_high_is_hh=!have_high || swing_high>last_high;
-         have_high=true; last_high=swing_high; last_high_time=rates[pivot].time; high_broken=false;
-         DrawStructurePoint(last_high_is_hh?"HH":"LH",last_high_time,last_high);
+         have_high=true; last_high=rates[pivot].high; last_high_time=rates[pivot].time; high_broken=false;
+         if(Show_Swing_Points) DrawText("SWING_HIGH_"+(string)rates[pivot].time,rates[pivot].time,last_high,"◆",clrIndianRed,false,7);
         }
       if(PivotLow(rates,total,pivot,length))
         {
-         double swing_low=rates[pivot].low;
-         // Seed the observed range as a LL; every later low is classified
-         // against the preceding confirmed swing low.
-         last_low_is_ll=!have_low || swing_low<last_low;
-         have_low=true; last_low=swing_low; last_low_time=rates[pivot].time; low_broken=false;
-         DrawStructurePoint(last_low_is_ll?"LL":"HL",last_low_time,last_low);
+         have_low=true; last_low=rates[pivot].low; last_low_time=rates[pivot].time; low_broken=false;
+         if(Show_Swing_Points) DrawText("SWING_LOW_"+(string)rates[pivot].time,rates[pivot].time,last_low,"◆",clrTeal,true,7);
         }
 
       bool ma_long=true,ma_short=true;
@@ -407,20 +394,17 @@ void Rebuild(const bool permit_alert)
       if(bullish_break)
         {
          high_broken=true;
-         // A break above a HH is continuation (BOS) regardless of whether a
-         // CHoCH happened earlier in the loaded history.  A bearish LH break
-         // remains a bullish change of character.
-         if(last_high_is_hh && bull_bos)
-           {
-            DrawSignal("BOS",1,last_high_time,last_high,rates[i]);
-            structure=1;
-            newest_signal="BOS bullish"; newest_signal_time=rates[i].time;
-           }
-         else if(!last_high_is_hh && structure<0 && bull_choch)
+         if(structure<0 && bull_choch)
            {
             DrawSignal("CHoCH",1,last_high_time,last_high,rates[i]);
             structure=1;
+            choch_confirmed=true;
             newest_signal="CHoCH bullish"; newest_signal_time=rates[i].time;
+           }
+         else if(structure>0 && choch_confirmed && bull_bos)
+           {
+            DrawSignal("BOS",1,last_high_time,last_high,rates[i]);
+            newest_signal="BOS bullish"; newest_signal_time=rates[i].time;
            }
          else if(structure==0)
             structure=1;
@@ -428,19 +412,17 @@ void Rebuild(const bool permit_alert)
       if(bearish_break)
         {
          low_broken=true;
-         // Likewise, each confirmed break below a LL is bearish BOS without
-         // requiring a CHoCH to arm continuation signals first.
-         if(last_low_is_ll && bear_bos)
-           {
-            DrawSignal("BOS",-1,last_low_time,last_low,rates[i]);
-            structure=-1;
-            newest_signal="BOS bearish"; newest_signal_time=rates[i].time;
-           }
-         else if(!last_low_is_ll && structure>0 && bear_choch)
+         if(structure>0 && bear_choch)
            {
             DrawSignal("CHoCH",-1,last_low_time,last_low,rates[i]);
             structure=-1;
+            choch_confirmed=true;
             newest_signal="CHoCH bearish"; newest_signal_time=rates[i].time;
+           }
+         else if(structure<0 && choch_confirmed && bear_bos)
+           {
+            DrawSignal("BOS",-1,last_low_time,last_low,rates[i]);
+            newest_signal="BOS bearish"; newest_signal_time=rates[i].time;
            }
          else if(structure==0)
             structure=-1;
