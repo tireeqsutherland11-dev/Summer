@@ -1,5 +1,5 @@
 #property copyright "Market Trend Analyser conversion"
-#property version   "1.34"
+#property version   "1.36"
 #property strict
 #property description "Road: MT5 port of the Market Trend Analyser Pine Script."
 #property description "Signal/visualisation EA only; the source indicator contains no trading rules."
@@ -475,11 +475,12 @@ void Rebuild(const bool permit_alert)
    MqlRates rates[]; ArraySetAsSeries(rates,false);
    int total=CopyRates(_Symbol,timeframe,1,wanted,rates);
    int length=MathMax(1,MathMin(50,Swing_Detection_Length));
-   if(total<MathMax(2*length+2,MathMax(MA_Length,2*ADX_Length)+2)) return;
+   if(total<2*length+2) return;
 
    double ma[],adx[],atr[];
-   if(!CopyIndicator(g_ma_handle,0,total,ma) || !CopyIndicator(g_adx_handle,0,total,adx) ||
-      !CopyIndicator(g_atr_handle,0,total,atr)) return;
+   if((Use_MA_Filter && !CopyIndicator(g_ma_handle,0,total,ma)) ||
+      (Use_ADX_Filter && !CopyIndicator(g_adx_handle,0,total,adx)) ||
+      (Use_ATR_Filter && !CopyIndicator(g_atr_handle,0,total,atr))) return;
 
    ObjectsDeleteAll(0,g_prefix);
    bool have_high=false,have_low=false,high_broken=false,low_broken=false;
@@ -529,9 +530,8 @@ void Rebuild(const bool permit_alert)
                    :rates[i].close<ma[i] && rates[i].open<ma[i] && rates[i].close<rates[i].open;
         }
       double htf_ma=0.0,htf_open=0.0,htf_close=0.0;
-      bool htf_ready=HTFValues(rates[i].time,htf_ma,htf_open,htf_close);
       bool htf_long=!Use_HTF_MA_Filter,htf_short=!Use_HTF_MA_Filter;
-      if(Use_HTF_MA_Filter && htf_ready)
+      if(Use_HTF_MA_Filter && HTFValues(rates[i].time,htf_ma,htf_open,htf_close))
         {
          htf_long=HTF_MA_Filter_Mode==ROAD_PRICE_ABOVE_BELOW?rates[i].close>htf_ma
                    :htf_close>htf_ma && htf_open>htf_ma && htf_close>htf_open;
@@ -641,8 +641,9 @@ void Rebuild(const bool permit_alert)
    DrawTrendlineZones();
 
    DrawDashboard(structure,have_high,last_high,have_low,last_low,dashboard_session,
-                 adx[total-1],dashboard_adx,atr[total-1],dashboard_atr,rates[total-1].close,
-                 ma[total-1],last_htf_ma,dashboard_bull_bos,dashboard_bear_bos,
+                 Use_ADX_Filter?adx[total-1]:0.0,dashboard_adx,
+                 Use_ATR_Filter?atr[total-1]:0.0,dashboard_atr,rates[total-1].close,
+                 Use_MA_Filter?ma[total-1]:0.0,last_htf_ma,dashboard_bull_bos,dashboard_bear_bos,
                  dashboard_bull_choch,dashboard_bear_choch);
    if(permit_alert && newest_signal_time==rates[total-1].time && newest_signal!="")
       SendRoadAlert(newest_signal,newest_signal_time);
@@ -662,14 +663,11 @@ int OnInit()
       return INIT_PARAMETERS_INCORRECT;
    ENUM_TIMEFRAMES timeframe=RoadTimeframe();
    g_prefix="Road_"+(string)ChartID()+"_";
-   g_ma_handle=iMA(_Symbol,timeframe,MA_Length,0,RoadMAMethod(MA_Type),PRICE_CLOSE);
-   g_htf_ma_handle=iMA(_Symbol,HTF_Timeframe,HTF_MA_Length,0,RoadMAMethod(HTF_MA_Type),PRICE_CLOSE);
-   g_adx_handle=iADX(_Symbol,timeframe,ADX_Length);
-   g_atr_handle=iATR(_Symbol,timeframe,ATR_Length);
-   g_trend_atr_handle=iATR(_Symbol,TrendlineTimeframe(),ATR_Length);
-   if(g_ma_handle==INVALID_HANDLE || g_htf_ma_handle==INVALID_HANDLE ||
-      g_adx_handle==INVALID_HANDLE || g_atr_handle==INVALID_HANDLE ||
-      g_trend_atr_handle==INVALID_HANDLE) return INIT_FAILED;
+   if(Use_MA_Filter && (g_ma_handle=iMA(_Symbol,timeframe,MA_Length,0,RoadMAMethod(MA_Type),PRICE_CLOSE))==INVALID_HANDLE) return INIT_FAILED;
+   if(Use_HTF_MA_Filter && (g_htf_ma_handle=iMA(_Symbol,HTF_Timeframe,HTF_MA_Length,0,RoadMAMethod(HTF_MA_Type),PRICE_CLOSE))==INVALID_HANDLE) return INIT_FAILED;
+   if(Use_ADX_Filter && (g_adx_handle=iADX(_Symbol,timeframe,ADX_Length))==INVALID_HANDLE) return INIT_FAILED;
+   if(Use_ATR_Filter && (g_atr_handle=iATR(_Symbol,timeframe,ATR_Length))==INVALID_HANDLE) return INIT_FAILED;
+   if(Show_Trendline_Zones && (g_trend_atr_handle=iATR(_Symbol,TrendlineTimeframe(),ATR_Length))==INVALID_HANDLE) return INIT_FAILED;
    EventSetTimer(2);
    Rebuild(false);
    return INIT_SUCCEEDED;
