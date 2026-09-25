@@ -22,7 +22,9 @@ The processing pipeline is:
   7. Draw optional MA lines, current swing levels, higher-timeframe market
      boundaries, and trendline zones.
   8. Decide whether the structure is clean enough to be called tradeable.
-  9. Render the dashboard, send any eligible alert, and redraw the chart.
+  9. Combine bias, boundary clearance, extension, and relative volume in the
+     Optimal Conditions Meter.
+ 10. Render the dashboard, send any eligible alert, and redraw the chart.
 
 All signals are based on closed candles (CopyRates starts at shift 1). A wick
 through a level is intentionally not a break; the candle must close beyond it.
@@ -320,7 +322,9 @@ Result
   close if no usable bid); Market Low only if below it. Each black horizontal
   level starts at its pivot and rays right. A boundary on the wrong side of
   current price is omitted rather than relabeled. These levels do not affect
-  signal, filter, bias, tradeability, or alert calculations.
+  signal, filter, bias, tradeability, or alert calculations. The levels are
+  still measured by the Optimal Conditions Meter when its display overlay is
+  disabled.
 
 
 10. TRENDLINE-ZONE SYSTEM
@@ -370,8 +374,9 @@ Algorithm and result
   * Among candidates meeting the touch minimum, the projected line closest to
     the latest trend close wins independently for resistance and support.
   * The output is a filled, right-rayed sloped channel plus right-rayed top and
-    bottom boundaries. Zones are analytical overlays only and do not qualify or
-    create structure signals.
+    bottom boundaries. Zones do not create structure signals, but their latest
+    projected bounds are used by the Optimal Conditions Meter. Zone discovery
+    therefore continues when the overlay is hidden and the meter is enabled.
 
 ATR_Length indirectly changes the zone tolerance. Larger/smoother ATR windows
 usually make its width/tolerance less reactive; higher current ATR expands the
@@ -408,6 +413,8 @@ The chart Comment displays:
   * ATR value and pass/block.
   * Whether the latest close is above/below each enabled MA.
   * Aggregate BOS and CHoCH filter pass/block states.
+  * The Optimal Conditions result, each of its four requirement states, the
+    latest volume-to-average ratio, and a specific failure-reason list.
 
 Directional aggregation is bias-aware:
   * For bullish/undefined structure, BOS displays the bullish BOS qualification;
@@ -419,8 +426,51 @@ Directional aggregation is bias-aware:
 
 The MA dashboard words use close > MA for ABOVE and otherwise BELOW, even when
 full-body mode is selected. Thus the word is positional information, while the
-aggregate filter row carries the stricter full-body result. The source currently
-prints the "BOS Filters" row twice; this is duplicated presentation only.
+aggregate filter row carries the stricter full-body result.
+
+
+12A. OPTIMAL CONDITIONS METER
+-----------------------------
+
+Use_Optimal_Conditions_Meter (default true)
+  Enables the final, informational gate. OPTIMAL is printed only when all four
+  requirements below pass simultaneously. Turning it off prints OFF; it does
+  not change structure, filters, chart signals, or alerts.
+
+Definite Market Bias
+  Uses the strict Market Tradeability result: the latest break must be a BOS
+  in the active direction and the newest confirmed pivots must be HH/HL for a
+  bullish trend or LH/LL for a bearish trend. A CHoCH, undefined direction, or
+  mixed structure blocks this requirement.
+
+Clear Technical Space
+  The latest price must be farther than Boundary_Clearance_ATR (default 1.0)
+  analysis-timeframe ATR from every available higher-timeframe Market High,
+  Market Low, resistance trendline zone, and support trendline zone. Being
+  inside a trendline zone also blocks it. The dashboard identifies the first
+  nearby boundary. A missing/invalid ATR blocks the requirement.
+
+Healthy Extension
+  In a bullish trend, extension is measured from the newest corrective low to
+  the latest close; in a bearish trend it is measured from the newest
+  corrective high. The distance must be non-negative and no greater than
+  Maximum_Extension_ATR (default 3.0) ATR. Strict tradeability independently
+  ensures that the anchor is an HL or LH, so both a correction and a controlled
+  post-correction run are required.
+
+Good Market Volume
+  The newest closed candle's tick volume is divided by the average of the
+  preceding Volume_Average_Length candles (default 20). It passes from
+  Volume_Minimum_Ratio (default 0.50) through Volume_Maximum_Ratio (default
+  2.00), inclusive. This rejects both inactive conditions and volume spikes.
+  MT5 tick volume is used because centralized real volume is not consistently
+  available across instruments.
+
+Failure reasons
+  NOT OPTIMAL is accompanied by every failed category: absent continuation
+  bias, the nearby boundary name, excessive/invalid extension, and volume that
+  is too low or too high. This makes the final result diagnostic rather than a
+  bare pass/fail flag.
 
 
 13. ALERT SYSTEM
@@ -485,6 +535,10 @@ and clears the chart comment.
 
   Change whether the latest directional setup qualifies:
     MA and HTF-MA settings, session settings, ADX settings, ATR settings.
+
+  Change the Optimal Conditions result:
+    Incoming clean structure, Boundary_Clearance_ATR,
+    Maximum_Extension_ATR, Volume_Average_Length, and the volume ratio bounds.
 
   Change the structural TRADEABLE result:
     Only incoming confirmed pivot/break sequence (indirectly affected by the

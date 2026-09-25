@@ -1,5 +1,5 @@
 #property copyright "Market Trend Analyser conversion"
-#property version   "1.37"
+#property version   "1.38"
 #property strict
 #property description "Road: MT5 port of the Market Trend Analyser Pine Script."
 #property description "Signal/visualisation EA only; the source indicator contains no trading rules."
@@ -92,6 +92,14 @@ input int ATR_Length=14;
 input ROAD_ATR_MODE ATR_Filter_Mode=ROAD_ATR_MINIMUM;
 input double ATR_Minimum=1.0;
 input double ATR_Maximum=10.0;
+
+input group "Optimal Conditions Meter"
+input bool Use_Optimal_Conditions_Meter=true;
+input double Boundary_Clearance_ATR=1.0;
+input double Maximum_Extension_ATR=3.0;
+input int Volume_Average_Length=20;
+input double Volume_Minimum_Ratio=0.50;
+input double Volume_Maximum_Ratio=2.00;
 
 input group "Alerts"
 input bool Enable_Popup_Alerts=true;
@@ -265,8 +273,8 @@ void DrawTrendZone(const string id,const datetime from_time,const double from_to
    ObjectSetInteger(0,g_prefix+"TREND_BOTTOM_"+id,OBJPROP_RAY_RIGHT,true);
   }
 
-void FindClosestTrendZone(const MqlRates &rates[],const int total,const double threshold,
-                          const bool resistance)
+bool FindClosestTrendZone(const MqlRates &rates[],const int total,const double threshold,
+                          const bool resistance,double &projected_top,double &projected_bottom)
   {
    int strength=MathMax(5,MathMin(15,Trendline_Pivot_Strength));
    int first=MathMax(strength,total-1-Trendline_Bars_To_Apply);
@@ -284,7 +292,7 @@ void FindClosestTrendZone(const MqlRates &rates[],const int total,const double t
         }
 
    int required=MathMax(2,MathMin(8,Trendline_Min_Pivot_Confirmation));
-   if(prices_count<required || threshold<=0.0) return;
+   if(prices_count<required || threshold<=0.0) return false;
    double nearest=DBL_MAX,best_y=0.0,best_slope=0.0,best_up=0.0,best_down=0.0;
    int best_index=-1;
    // The newest five bars form the same stability buffer as the Pine source.
@@ -325,17 +333,25 @@ void FindClosestTrendZone(const MqlRates &rates[],const int total,const double t
             best_up=max_up; best_down=max_down;
            }
         }
-   if(best_index<0) return;
+   if(best_index<0) return false;
    double end_y=best_y+best_slope*(total-1-best_index);
-   DrawTrendZone(resistance?"RESISTANCE":"SUPPORT",rates[best_index].time,
-                 best_y+best_up,best_y+best_down,rates[total-1].time,
-                 end_y+best_up,end_y+best_down,
-                 resistance?Trendline_Resistance_Color:Trendline_Support_Color);
+   projected_top=end_y+best_up;
+   projected_bottom=end_y+best_down;
+   if(Show_Trendline_Zones)
+      DrawTrendZone(resistance?"RESISTANCE":"SUPPORT",rates[best_index].time,
+                    best_y+best_up,best_y+best_down,rates[total-1].time,
+                    projected_top,projected_bottom,
+                    resistance?Trendline_Resistance_Color:Trendline_Support_Color);
+   return true;
   }
 
-void DrawTrendlineZones()
+void EvaluateTrendlineZones(bool &have_resistance,double &resistance_top,
+                            double &resistance_bottom,bool &have_support,
+                            double &support_top,double &support_bottom)
   {
-   if(!Show_Trendline_Zones) return;
+   have_resistance=false;
+   have_support=false;
+   if(!Show_Trendline_Zones && !Use_Optimal_Conditions_Meter) return;
    double trend_atr[];
    if(!CopyIndicator(g_trend_atr_handle,0,1,trend_atr) || trend_atr[0]==EMPTY_VALUE)
       return;
@@ -346,15 +362,18 @@ void DrawTrendlineZones()
    if(total<2*Trendline_Pivot_Strength+1) return;
    const double fixed_atr_multiplier=0.5;
    double threshold=trend_atr[0]*fixed_atr_multiplier;
-   FindClosestTrendZone(rates,total,threshold,true);
-   FindClosestTrendZone(rates,total,threshold,false);
+   have_resistance=FindClosestTrendZone(rates,total,threshold,true,resistance_top,resistance_bottom);
+   have_support=FindClosestTrendZone(rates,total,threshold,false,support_top,support_bottom);
   }
 
 // Market High is the highest confirmed swing high in the boundary lookback;
 // Market Low is the lowest confirmed swing low in those same bars.
-void DrawSignificantSR(const datetime chart_time,const double current_price)
+void EvaluateSignificantSR(const datetime chart_time,const double current_price,
+                           bool &have_market_high,double &market_high,
+                           bool &have_market_low,double &market_low)
   {
-   if(!Show_HTF_Support_Resistance) return;
+   have_market_high=false;
+   have_market_low=false;
    int length=MathMax(1,MathMin(20,SR_Pivot_Length));
    // Include older padding so a swing near the start of the lookback window
    // can still be identified without making the padding part of the search.
@@ -389,21 +408,31 @@ void DrawSignificantSR(const datetime chart_time,const double current_price)
 
    if(high_index>=0 && high_price>current_price)
      {
-      string key="HTF_SR_MARKET_HIGH";
-      DrawSegment(key,rates[high_index].time,high_price,chart_time,
-                  high_price,clrBlack,SR_Line_Style,SR_Line_Width);
-      ObjectSetInteger(0,g_prefix+key,OBJPROP_RAY_RIGHT,true);
-      if(Show_SR_Labels)
-         DrawText(key+"_LABEL",chart_time,high_price,"Market High",clrBlack,false,8);
+      have_market_high=true;
+      market_high=high_price;
+      if(Show_HTF_Support_Resistance)
+        {
+         string key="HTF_SR_MARKET_HIGH";
+         DrawSegment(key,rates[high_index].time,high_price,chart_time,
+                     high_price,clrBlack,SR_Line_Style,SR_Line_Width);
+         ObjectSetInteger(0,g_prefix+key,OBJPROP_RAY_RIGHT,true);
+         if(Show_SR_Labels)
+            DrawText(key+"_LABEL",chart_time,high_price,"Market High",clrBlack,false,8);
+        }
      }
    if(low_index>=0 && low_price<current_price)
      {
-      string key="HTF_SR_MARKET_LOW";
-      DrawSegment(key,rates[low_index].time,low_price,chart_time,
-                  low_price,clrBlack,SR_Line_Style,SR_Line_Width);
-      ObjectSetInteger(0,g_prefix+key,OBJPROP_RAY_RIGHT,true);
-      if(Show_SR_Labels)
-         DrawText(key+"_LABEL",chart_time,low_price,"Market Low",clrBlack,true,8);
+      have_market_low=true;
+      market_low=low_price;
+      if(Show_HTF_Support_Resistance)
+        {
+         string key="HTF_SR_MARKET_LOW";
+         DrawSegment(key,rates[low_index].time,low_price,chart_time,
+                     low_price,clrBlack,SR_Line_Style,SR_Line_Width);
+         ObjectSetInteger(0,g_prefix+key,OBJPROP_RAY_RIGHT,true);
+         if(Show_SR_Labels)
+            DrawText(key+"_LABEL",chart_time,low_price,"Market Low",clrBlack,true,8);
+        }
      }
   }
 
@@ -450,7 +479,9 @@ void DrawDashboard(const int structure,const bool have_high,const double last_hi
                    const double close,const double ma,const double htf_ma,
                    const bool tradeable,
                    const bool bull_bos_pass,const bool bear_bos_pass,
-                   const bool bull_choch_pass,const bool bear_choch_pass)
+                   const bool bull_choch_pass,const bool bear_choch_pass,
+                   const bool optimal,const bool clear_space,const bool healthy_extension,
+                   const bool good_volume,const double volume_ratio,const string optimal_reason)
   {
    string bias=structure>0?"BULLISH":structure<0?"BEARISH":"UNDEFINED";
    string session=!Use_Session_Filter?"OFF":in_session?"IN":"OUT";
@@ -468,7 +499,13 @@ void DrawDashboard(const int structure,const bool have_high,const double last_hi
            "\nADX: ",adx_text,"\nADX Scope: ",!Use_ADX_Filter?"OFF":Apply_ADX_Filter_To==ROAD_BOS_AND_CHOCH?"BOS+CHoCH":"BOS Only",
            "\nATR: ",atr_text,"\nMA (LTF): ",ltf,"\nMA (HTF): ",htf,
            "\nBOS Filters: ",bos_pass?"PASS":"BLOCKED",
-           "\nCHoCH Filters: ",choch_pass?"PASS":"BLOCKED");
+           "\nCHoCH Filters: ",choch_pass?"PASS":"BLOCKED",
+           "\n\nOptimal Conditions: ",!Use_Optimal_Conditions_Meter?"OFF":optimal?"OPTIMAL":"NOT OPTIMAL",
+           "\n  Definite Bias: ",tradeable?"PASS":"BLOCKED",
+           "\n  Technical Space: ",clear_space?"PASS":"BLOCKED",
+           "\n  Healthy Extension: ",healthy_extension?"PASS":"BLOCKED",
+           "\n  Market Volume: ",good_volume?"PASS":"BLOCKED"," (",DoubleToString(volume_ratio,2),"x average)",
+           !Use_Optimal_Conditions_Meter?"":"\nReason: "+optimal_reason);
   }
 
 void Rebuild(const bool permit_alert)
@@ -483,7 +520,7 @@ void Rebuild(const bool permit_alert)
    double ma[],adx[],atr[];
    if((Use_MA_Filter && !CopyIndicator(g_ma_handle,0,total,ma)) ||
       (Use_ADX_Filter && !CopyIndicator(g_adx_handle,0,total,adx)) ||
-      (Use_ATR_Filter && !CopyIndicator(g_atr_handle,0,total,atr))) return;
+      ((Use_ATR_Filter || Use_Optimal_Conditions_Meter) && !CopyIndicator(g_atr_handle,0,total,atr))) return;
 
    ObjectsDeleteAll(0,g_prefix);
    bool have_high=false,have_low=false,high_broken=false,low_broken=false;
@@ -635,8 +672,14 @@ void Rebuild(const bool permit_alert)
    MqlTick current_tick;
    double current_price=SymbolInfoTick(_Symbol,current_tick) && current_tick.bid>0.0
                         ?current_tick.bid:rates[total-1].close;
-   DrawSignificantSR(rates[total-1].time,current_price);
-   DrawTrendlineZones();
+   bool have_market_high=false,have_market_low=false;
+   double market_high=0.0,market_low=0.0;
+   EvaluateSignificantSR(rates[total-1].time,current_price,have_market_high,market_high,
+                         have_market_low,market_low);
+   bool have_resistance=false,have_support=false;
+   double resistance_top=0.0,resistance_bottom=0.0,support_top=0.0,support_bottom=0.0;
+   EvaluateTrendlineZones(have_resistance,resistance_top,resistance_bottom,
+                          have_support,support_top,support_bottom);
 
    // A directional bias alone is not tradeable.  Require the latest break to
    // be a continuation BOS and both most-recent confirmed pivots to form the
@@ -646,12 +689,56 @@ void Rebuild(const bool permit_alert)
                    last_high_kind>0 && last_low_kind<0) ||
                   (structure<0 && last_break_direction<0 && last_break_was_bos &&
                    last_high_kind<0 && last_low_kind>0);
+
+   double latest_atr=(Use_ATR_Filter || Use_Optimal_Conditions_Meter)?atr[total-1]:0.0;
+   double clearance=latest_atr*Boundary_Clearance_ATR;
+   bool clear_space=latest_atr!=EMPTY_VALUE && latest_atr>0.0;
+   string space_reason="";
+   if(clear_space && have_market_high && market_high-current_price<=clearance)
+     { clear_space=false; space_reason="too close to Market High"; }
+   if(clear_space && have_market_low && current_price-market_low<=clearance)
+     { clear_space=false; space_reason="too close to Market Low"; }
+   if(clear_space && have_resistance &&
+      current_price>=resistance_bottom-clearance && current_price<=resistance_top+clearance)
+     { clear_space=false; space_reason="too close to resistance trendline"; }
+   if(clear_space && have_support &&
+      current_price>=support_bottom-clearance && current_price<=support_top+clearance)
+     { clear_space=false; space_reason="too close to support trendline"; }
+
+   double extension=DBL_MAX;
+   if(latest_atr!=EMPTY_VALUE && latest_atr>0.0)
+     {
+      if(structure>0 && have_low) extension=(rates[total-1].close-last_low)/latest_atr;
+      else if(structure<0 && have_high) extension=(last_high-rates[total-1].close)/latest_atr;
+     }
+   bool healthy_extension=latest_atr!=EMPTY_VALUE && latest_atr>0.0 && extension>=0.0 &&
+                          extension<=Maximum_Extension_ATR;
+
+   int volume_length=MathMin(Volume_Average_Length,total-1);
+   double average_volume=0.0;
+   for(int i=total-1-volume_length;i<total-1;i++) average_volume+=(double)rates[i].tick_volume;
+   if(volume_length>0) average_volume/=volume_length;
+   double volume_ratio=average_volume>0.0?(double)rates[total-1].tick_volume/average_volume:0.0;
+   bool good_volume=average_volume>0.0 && volume_ratio>=Volume_Minimum_Ratio &&
+                    volume_ratio<=Volume_Maximum_Ratio;
+   bool optimal=tradeable && clear_space && healthy_extension && good_volume;
+   string optimal_reason="All four requirements are met";
+   if(!optimal)
+     {
+      optimal_reason="";
+      if(!tradeable) optimal_reason="no definite continuation bias";
+      if(!clear_space) optimal_reason+=(optimal_reason==""?"":"; ")+space_reason;
+      if(!healthy_extension) optimal_reason+=(optimal_reason==""?"":"; ")+"price is overextended or lacks a valid corrective anchor";
+      if(!good_volume) optimal_reason+=(optimal_reason==""?"":"; ")+
+                         (volume_ratio<Volume_Minimum_Ratio?"volume is too low":"volume is too high");
+     }
    DrawDashboard(structure,have_high,last_high,have_low,last_low,dashboard_session,
                  Use_ADX_Filter?adx[total-1]:0.0,dashboard_adx,
                  Use_ATR_Filter?atr[total-1]:0.0,dashboard_atr,rates[total-1].close,
                  Use_MA_Filter?ma[total-1]:0.0,last_htf_ma,tradeable,
                  dashboard_bull_bos,dashboard_bear_bos,
-                 dashboard_bull_choch,dashboard_bear_choch);
+                 dashboard_bull_choch,dashboard_bear_choch,optimal,clear_space,
+                 healthy_extension,good_volume,volume_ratio,optimal_reason);
    if(permit_alert && newest_signal_time==rates[total-1].time && newest_signal!="")
       SendRoadAlert(newest_signal,newest_signal_time);
    ChartRedraw();
@@ -666,15 +753,20 @@ int OnInit()
       Trendline_Bars_To_Apply<50 || Trendline_Bars_To_Apply>100000 ||
       Trendline_Pivot_Strength<5 || Trendline_Pivot_Strength>15 ||
       Trendline_Min_Pivot_Confirmation<2 || Trendline_Min_Pivot_Confirmation>8 ||
-      Trendline_Zone_Transparency<0 || Trendline_Zone_Transparency>100)
+      Trendline_Zone_Transparency<0 || Trendline_Zone_Transparency>100 ||
+      Boundary_Clearance_ATR<0.0 || Maximum_Extension_ATR<=0.0 ||
+      Volume_Average_Length<1 || Volume_Minimum_Ratio<0.0 ||
+      Volume_Maximum_Ratio<Volume_Minimum_Ratio)
       return INIT_PARAMETERS_INCORRECT;
    ENUM_TIMEFRAMES timeframe=RoadTimeframe();
    g_prefix="Road_"+(string)ChartID()+"_";
    if(Use_MA_Filter && (g_ma_handle=iMA(_Symbol,timeframe,MA_Length,0,RoadMAMethod(MA_Type),PRICE_CLOSE))==INVALID_HANDLE) return INIT_FAILED;
    if(Use_HTF_MA_Filter && (g_htf_ma_handle=iMA(_Symbol,HTF_Timeframe,HTF_MA_Length,0,RoadMAMethod(HTF_MA_Type),PRICE_CLOSE))==INVALID_HANDLE) return INIT_FAILED;
    if(Use_ADX_Filter && (g_adx_handle=iADX(_Symbol,timeframe,ADX_Length))==INVALID_HANDLE) return INIT_FAILED;
-   if(Use_ATR_Filter && (g_atr_handle=iATR(_Symbol,timeframe,ATR_Length))==INVALID_HANDLE) return INIT_FAILED;
-   if(Show_Trendline_Zones && (g_trend_atr_handle=iATR(_Symbol,TrendlineTimeframe(),ATR_Length))==INVALID_HANDLE) return INIT_FAILED;
+   if((Use_ATR_Filter || Use_Optimal_Conditions_Meter) &&
+      (g_atr_handle=iATR(_Symbol,timeframe,ATR_Length))==INVALID_HANDLE) return INIT_FAILED;
+   if((Show_Trendline_Zones || Use_Optimal_Conditions_Meter) &&
+      (g_trend_atr_handle=iATR(_Symbol,TrendlineTimeframe(),ATR_Length))==INVALID_HANDLE) return INIT_FAILED;
    EventSetTimer(2);
    Rebuild(false);
    return INIT_SUCCEEDED;
