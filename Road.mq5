@@ -1,5 +1,5 @@
 #property copyright "Market Trend Analyser conversion"
-#property version   "1.30"
+#property version   "1.31"
 #property strict
 #property description "Road: MT5 port of the Market Trend Analyser Pine Script."
 #property description "Signal/visualisation EA only; the source indicator contains no trading rules."
@@ -91,6 +91,7 @@ int g_ma_handle=INVALID_HANDLE;
 int g_htf_ma_handle=INVALID_HANDLE;
 int g_adx_handle=INVALID_HANDLE;
 int g_atr_handle=INVALID_HANDLE;
+int g_rebuild_bars=0;
 
 ENUM_TIMEFRAMES RoadTimeframe()
   {
@@ -324,15 +325,24 @@ void DrawDashboard(const int structure,const bool have_high,const double last_hi
 void Rebuild(const bool permit_alert)
   {
    ENUM_TIMEFRAMES timeframe=RoadTimeframe();
-   int wanted=MathMax(100,MathMin(Bars_To_Process,100000));
+   int display_bars=MathMax(100,MathMin(Bars_To_Process,100000));
+   int wanted=g_rebuild_bars>0?g_rebuild_bars:display_bars;
    MqlRates rates[]; ArraySetAsSeries(rates,false);
    int total=CopyRates(_Symbol,timeframe,1,wanted,rates);
    int length=MathMax(1,MathMin(50,Swing_Detection_Length));
-   if(total<MathMax(2*length+2,MathMax(MA_Length,2*ADX_Length)+2)) return;
+   if(total<MathMax(2*length+2,MathMax(MA_Length,2*ADX_Length)+2))
+     {
+      g_rebuild_bars=0;
+      return;
+     }
 
    double ma[],adx[],atr[];
    if(!CopyIndicator(g_ma_handle,0,total,ma) || !CopyIndicator(g_adx_handle,0,total,adx) ||
-      !CopyIndicator(g_atr_handle,0,total,atr)) return;
+      !CopyIndicator(g_atr_handle,0,total,atr))
+     {
+      g_rebuild_bars=0;
+      return;
+     }
 
    ObjectsDeleteAll(0,g_prefix);
    bool have_high=false,have_low=false,high_broken=false,low_broken=false;
@@ -344,6 +354,9 @@ void Rebuild(const bool permit_alert)
    bool dashboard_bull_bos=false,dashboard_bear_bos=false;
    bool dashboard_bull_choch=false,dashboard_bear_choch=false;
    bool dashboard_session=true,dashboard_adx=false,dashboard_atr=false;
+   bool choch_found=false;
+   string historical_choch_key="";
+   int display_first=MathMax(0,total-display_bars);
 
    for(int i=length;i<total;i++)
      {
@@ -355,7 +368,8 @@ void Rebuild(const bool permit_alert)
          // against the preceding confirmed swing high.
          last_high_is_hh=!have_high || swing_high>last_high;
          have_high=true; last_high=swing_high; last_high_time=rates[pivot].time; high_broken=false;
-         DrawStructurePoint(last_high_is_hh?"HH":"LH",last_high_time,last_high);
+         if(pivot>=display_first)
+            DrawStructurePoint(last_high_is_hh?"HH":"LH",last_high_time,last_high);
         }
       if(PivotLow(rates,total,pivot,length))
         {
@@ -364,7 +378,8 @@ void Rebuild(const bool permit_alert)
          // against the preceding confirmed swing low.
          last_low_is_ll=!have_low || swing_low<last_low;
          have_low=true; last_low=swing_low; last_low_time=rates[pivot].time; low_broken=false;
-         DrawStructurePoint(last_low_is_ll?"LL":"HL",last_low_time,last_low);
+         if(pivot>=display_first)
+            DrawStructurePoint(last_low_is_ll?"LL":"HL",last_low_time,last_low);
         }
 
       bool ma_long=true,ma_short=true;
@@ -412,13 +427,22 @@ void Rebuild(const bool permit_alert)
          // remains a bullish change of character.
          if(last_high_is_hh && bull_bos)
            {
-            DrawSignal("BOS",1,last_high_time,last_high,rates[i]);
+            if(i>=display_first)
+               DrawSignal("BOS",1,last_high_time,last_high,rates[i]);
             structure=1;
             newest_signal="BOS bullish"; newest_signal_time=rates[i].time;
            }
          else if(!last_high_is_hh && structure<0 && bull_choch)
            {
+            choch_found=true;
+            if(i<display_first && historical_choch_key!="")
+              {
+               ObjectDelete(0,g_prefix+historical_choch_key);
+               ObjectDelete(0,g_prefix+historical_choch_key+"_LINE");
+              }
             DrawSignal("CHoCH",1,last_high_time,last_high,rates[i]);
+            if(i<display_first)
+               historical_choch_key="CHoCH_UP_"+(string)rates[i].time;
             structure=1;
             newest_signal="CHoCH bullish"; newest_signal_time=rates[i].time;
            }
@@ -432,13 +456,22 @@ void Rebuild(const bool permit_alert)
          // requiring a CHoCH to arm continuation signals first.
          if(last_low_is_ll && bear_bos)
            {
-            DrawSignal("BOS",-1,last_low_time,last_low,rates[i]);
+            if(i>=display_first)
+               DrawSignal("BOS",-1,last_low_time,last_low,rates[i]);
             structure=-1;
             newest_signal="BOS bearish"; newest_signal_time=rates[i].time;
            }
          else if(!last_low_is_ll && structure>0 && bear_choch)
            {
+            choch_found=true;
+            if(i<display_first && historical_choch_key!="")
+              {
+               ObjectDelete(0,g_prefix+historical_choch_key);
+               ObjectDelete(0,g_prefix+historical_choch_key+"_LINE");
+              }
             DrawSignal("CHoCH",-1,last_low_time,last_low,rates[i]);
+            if(i<display_first)
+               historical_choch_key="CHoCH_DOWN_"+(string)rates[i].time;
             structure=-1;
             newest_signal="CHoCH bearish"; newest_signal_time=rates[i].time;
            }
@@ -452,6 +485,23 @@ void Rebuild(const bool permit_alert)
          dashboard_bull_choch=bull_choch; dashboard_bear_choch=bear_choch;
         }
      }
+
+   // If the configured window contains no CHoCH, progressively extend the
+   // calculation history.  Stop as soon as a window containing a CHoCH is
+   // found; signals outside the configured window are suppressed above except
+   // for the single most recent historical CHoCH.
+   int available=MathMax(0,Bars(_Symbol,timeframe)-1);
+   if(Show_CHoCH_Labels && !choch_found && total>=wanted && wanted<available && wanted<100000)
+     {
+      int next_wanted=MathMin(100000,MathMin(available,MathMax(wanted+100,wanted*2)));
+      if(next_wanted>wanted)
+        {
+         g_rebuild_bars=next_wanted;
+         Rebuild(permit_alert);
+         return;
+        }
+     }
+   g_rebuild_bars=0;
 
    int first=MathMax(1,total-500);
    if(Show_MA_Line && Use_MA_Filter)
