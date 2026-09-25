@@ -1,5 +1,5 @@
 #property copyright "Market Trend Analyser conversion"
-#property version   "1.32"
+#property version   "1.33"
 #property strict
 #property description "Road: MT5 port of the Market Trend Analyser Pine Script."
 #property description "Signal/visualisation EA only; the source indicator contains no trading rules."
@@ -424,17 +424,22 @@ void Rebuild(const bool permit_alert)
       if(bullish_break)
         {
          high_broken=true;
-         // A break above a HH is continuation (BOS) regardless of whether a
-         // CHoCH happened earlier in the loaded history.  A bearish LH break
-         // remains a bullish change of character.
-         if(last_high_is_hh && bull_bos)
+         // Once direction is known, the active structure decides the event:
+         // every high broken in a bullish leg is continuation, even when the
+         // pivot itself was classified as an LH relative to an older high.
+         // Requiring that pivot to be an HH hid otherwise valid post-CHoCH
+         // BOS signals.
+         if(structure>=0)
            {
-            if(i>=display_first || historical_choch_time>0)
-               DrawSignal("BOS",1,last_high_time,last_high,rates[i]);
+            if(bull_bos)
+              {
+               if(i>=display_first || historical_choch_time>0)
+                  DrawSignal("BOS",1,last_high_time,last_high,rates[i]);
+               newest_signal="BOS bullish"; newest_signal_time=rates[i].time;
+              }
             structure=1;
-            newest_signal="BOS bullish"; newest_signal_time=rates[i].time;
            }
-         else if(!last_high_is_hh && structure<0 && bull_choch)
+         else
            {
             choch_found=true;
             if(i<display_first)
@@ -445,26 +450,30 @@ void Rebuild(const bool permit_alert)
                ObjectsDeleteAll(0,g_prefix);
                historical_choch_time=rates[i].time;
               }
-            DrawSignal("CHoCH",1,last_high_time,last_high,rates[i]);
+            if(bull_choch)
+              {
+               DrawSignal("CHoCH",1,last_high_time,last_high,rates[i]);
+               newest_signal="CHoCH bullish"; newest_signal_time=rates[i].time;
+              }
             structure=1;
-            newest_signal="CHoCH bullish"; newest_signal_time=rates[i].time;
            }
-         else if(structure==0)
-            structure=1;
         }
       if(bearish_break)
         {
          low_broken=true;
-         // Likewise, each confirmed break below a LL is bearish BOS without
-         // requiring a CHoCH to arm continuation signals first.
-         if(last_low_is_ll && bear_bos)
+         // The mirrored rule keeps post-CHoCH bearish BOS detection from
+         // depending on whether the new pivot is below every earlier low.
+         if(structure<=0)
            {
-            if(i>=display_first || historical_choch_time>0)
-               DrawSignal("BOS",-1,last_low_time,last_low,rates[i]);
+            if(bear_bos)
+              {
+               if(i>=display_first || historical_choch_time>0)
+                  DrawSignal("BOS",-1,last_low_time,last_low,rates[i]);
+               newest_signal="BOS bearish"; newest_signal_time=rates[i].time;
+              }
             structure=-1;
-            newest_signal="BOS bearish"; newest_signal_time=rates[i].time;
            }
-         else if(!last_low_is_ll && structure>0 && bear_choch)
+         else
            {
             choch_found=true;
             if(i<display_first)
@@ -474,12 +483,13 @@ void Rebuild(const bool permit_alert)
                ObjectsDeleteAll(0,g_prefix);
                historical_choch_time=rates[i].time;
               }
-            DrawSignal("CHoCH",-1,last_low_time,last_low,rates[i]);
+            if(bear_choch)
+              {
+               DrawSignal("CHoCH",-1,last_low_time,last_low,rates[i]);
+               newest_signal="CHoCH bearish"; newest_signal_time=rates[i].time;
+              }
             structure=-1;
-            newest_signal="CHoCH bearish"; newest_signal_time=rates[i].time;
            }
-         else if(structure==0)
-            structure=-1;
         }
       if(i==total-1)
         {
