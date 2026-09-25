@@ -1,5 +1,5 @@
 #property copyright "Market Trend Analyser conversion"
-#property version   "1.38"
+#property version   "1.39"
 #property strict
 #property description "Road: MT5 port of the Market Trend Analyser Pine Script."
 #property description "Signal/visualisation EA only; the source indicator contains no trading rules."
@@ -12,13 +12,16 @@ enum ROAD_ATR_MODE { ROAD_ATR_MINIMUM=0, ROAD_ATR_MAXIMUM=1, ROAD_ATR_RANGE=2 };
 enum ROAD_LABEL_SIZE { ROAD_TINY=7, ROAD_SMALL=9, ROAD_NORMAL=11, ROAD_LARGE=14 };
 enum ROAD_TREND_PIVOT_SOURCE { ROAD_TREND_HIGH_LOW=0, ROAD_TREND_CLOSE=1 };
 
-input group "General"
-input ENUM_TIMEFRAMES Analysis_Timeframe=PERIOD_CURRENT;
+input group "System Timeframes"
+input ENUM_TIMEFRAMES Boundary_Timeframe=PERIOD_H4;
+input ENUM_TIMEFRAMES Structure_Timeframe=PERIOD_H1;
+input ENUM_TIMEFRAMES Setup_Entry_Timeframe=PERIOD_M15;
+
+input group "Structure Processing"
 input int Bars_To_Process=100;
 
 input group "Market Boundaries — Higher-Timeframe Support / Resistance"
 input bool Show_HTF_Support_Resistance=true;
-input ENUM_TIMEFRAMES SR_Timeframe=PERIOD_H4;
 input int Boundary_Lookback_Bars=50;
 input int SR_Pivot_Length=3;
 input ENUM_LINE_STYLE SR_Line_Style=STYLE_DOT;
@@ -27,7 +30,6 @@ input bool Show_SR_Labels=true;
 
 input group "Market Boundaries — Trendline Zones"
 input bool Show_Trendline_Zones=true;
-input ENUM_TIMEFRAMES Trendline_Timeframe=PERIOD_H4;
 input int Trendline_Bars_To_Apply=300;
 input ROAD_TREND_PIVOT_SOURCE Trendline_Pivot_Source=ROAD_TREND_HIGH_LOW;
 input int Trendline_Pivot_Strength=10;
@@ -113,14 +115,14 @@ int g_adx_handle=INVALID_HANDLE;
 int g_atr_handle=INVALID_HANDLE;
 int g_trend_atr_handle=INVALID_HANDLE;
 
-ENUM_TIMEFRAMES TrendlineTimeframe()
+ENUM_TIMEFRAMES BoundaryTimeframe()
   {
-   return Trendline_Timeframe==PERIOD_CURRENT?(ENUM_TIMEFRAMES)_Period:Trendline_Timeframe;
+   return Boundary_Timeframe==PERIOD_CURRENT?(ENUM_TIMEFRAMES)_Period:Boundary_Timeframe;
   }
 
 ENUM_TIMEFRAMES RoadTimeframe()
   {
-   return Analysis_Timeframe==PERIOD_CURRENT?(ENUM_TIMEFRAMES)_Period:Analysis_Timeframe;
+   return Structure_Timeframe==PERIOD_CURRENT?(ENUM_TIMEFRAMES)_Period:Structure_Timeframe;
   }
 
 ENUM_MA_METHOD RoadMAMethod(const ROAD_MA_TYPE value)
@@ -358,7 +360,7 @@ void EvaluateTrendlineZones(bool &have_resistance,double &resistance_top,
    int wanted=Trendline_Bars_To_Apply+2*Trendline_Pivot_Strength+1;
    MqlRates rates[];
    ArraySetAsSeries(rates,false);
-   int total=CopyRates(_Symbol,TrendlineTimeframe(),1,wanted,rates);
+   int total=CopyRates(_Symbol,BoundaryTimeframe(),1,wanted,rates);
    if(total<2*Trendline_Pivot_Strength+1) return;
    const double fixed_atr_multiplier=0.5;
    double threshold=trend_atr[0]*fixed_atr_multiplier;
@@ -378,7 +380,7 @@ void EvaluateSignificantSR(const datetime chart_time,const double current_price,
    // Include older padding so a swing near the start of the lookback window
    // can still be identified without making the padding part of the search.
    MqlRates rates[]; ArraySetAsSeries(rates,false);
-   int total=CopyRates(_Symbol,SR_Timeframe,1,Boundary_Lookback_Bars+length,rates);
+   int total=CopyRates(_Symbol,BoundaryTimeframe(),1,Boundary_Lookback_Bars+length,rates);
    if(total<Boundary_Lookback_Bars+length) return;
    int first=total-Boundary_Lookback_Bars;
 
@@ -458,6 +460,63 @@ void DrawStructurePoint(const string kind,const datetime time,const double price
    DrawText("STRUCTURE_"+kind+"_"+(string)time,time,price,kind,clr,low,(int)Label_Size);
   }
 
+// Structure drawings deliberately follow the chart period, while the state
+// used by the dashboard is calculated separately on Structure_Timeframe.
+// Preserve the same amount of elapsed history as Bars_To_Process represents
+// on the structure timeframe (for example, 100 H1 bars become 400 M15 bars).
+void DrawChartTimeframeStructure()
+  {
+   ENUM_TIMEFRAMES chart_timeframe=(ENUM_TIMEFRAMES)_Period;
+   int structure_seconds=PeriodSeconds(RoadTimeframe());
+   int chart_seconds=PeriodSeconds(chart_timeframe);
+   if(structure_seconds<=0 || chart_seconds<=0) return;
+   int wanted=(int)MathCeil((double)Bars_To_Process*structure_seconds/chart_seconds);
+   wanted=MathMax(2*Swing_Detection_Length+2,MathMin(wanted,100000));
+   MqlRates rates[]; ArraySetAsSeries(rates,false);
+   int total=CopyRates(_Symbol,chart_timeframe,1,wanted,rates);
+   int length=MathMax(1,MathMin(50,Swing_Detection_Length));
+   if(total<2*length+2) return;
+
+   bool have_high=false,have_low=false,high_broken=false,low_broken=false;
+   int last_high_kind=0,last_low_kind=0;
+   double last_high=0.0,last_low=0.0;
+   datetime last_high_time=0,last_low_time=0;
+   for(int i=length;i<total;i++)
+     {
+      int pivot=i-length;
+      if(PivotHigh(rates,total,pivot,length))
+        {
+         double value=rates[pivot].high;
+         int kind=!have_high?0:(value>last_high?1:-1);
+         have_high=true; last_high=value; last_high_time=rates[pivot].time;
+         last_high_kind=kind; high_broken=false;
+         if(kind!=0) DrawStructurePoint(kind>0?"HH":"LH",last_high_time,last_high);
+        }
+      if(PivotLow(rates,total,pivot,length))
+        {
+         double value=rates[pivot].low;
+         int kind=!have_low?0:(value<last_low?1:-1);
+         have_low=true; last_low=value; last_low_time=rates[pivot].time;
+         last_low_kind=kind; low_broken=false;
+         if(kind!=0) DrawStructurePoint(kind>0?"LL":"HL",last_low_time,last_low);
+        }
+      if(have_high && last_high_kind!=0 && !high_broken && rates[i].close>last_high)
+        {
+         high_broken=true;
+         DrawSignal(last_high_kind<0?"CHoCH":"BOS",1,last_high_time,last_high,rates[i]);
+        }
+      if(have_low && last_low_kind!=0 && !low_broken && rates[i].close<last_low)
+        {
+         low_broken=true;
+         DrawSignal(last_low_kind<0?"CHoCH":"BOS",-1,last_low_time,last_low,rates[i]);
+        }
+     }
+   if(Show_Swing_Points && have_high)
+      DrawSegment("LAST_HIGH",last_high_time,last_high,rates[total-1].time,last_high,clrIndianRed,STYLE_DOT,1);
+   if(Show_Swing_Points && have_low)
+      DrawSegment("LAST_LOW",last_low_time,last_low,rates[total-1].time,last_low,clrTeal,STYLE_DOT,1);
+  }
+
 void SendRoadAlert(const string signal,const datetime bar_time)
   {
    static datetime last_alert=0;
@@ -511,6 +570,7 @@ void DrawDashboard(const int structure,const bool have_high,const double last_hi
 void Rebuild(const bool permit_alert)
   {
    ENUM_TIMEFRAMES timeframe=RoadTimeframe();
+   bool draw_anchored_structure=timeframe==(ENUM_TIMEFRAMES)_Period;
    int wanted=MathMax(100,MathMin(Bars_To_Process,100000));
    MqlRates rates[]; ArraySetAsSeries(rates,false);
    int total=CopyRates(_Symbol,timeframe,1,wanted,rates);
@@ -549,7 +609,7 @@ void Rebuild(const bool permit_alert)
          int high_kind=!have_high?0:(swing_high>last_high?1:-1);
          have_high=true; last_high=swing_high; last_high_time=rates[pivot].time; high_broken=false;
          last_high_kind=high_kind;
-         if(high_kind!=0)
+         if(draw_anchored_structure && high_kind!=0)
             DrawStructurePoint(high_kind>0?"HH":"LH",last_high_time,last_high);
         }
       if(PivotLow(rates,total,pivot,length))
@@ -559,7 +619,7 @@ void Rebuild(const bool permit_alert)
          int low_kind=!have_low?0:(swing_low<last_low?1:-1);
          have_low=true; last_low=swing_low; last_low_time=rates[pivot].time; low_broken=false;
          last_low_kind=low_kind;
-         if(low_kind!=0)
+         if(draw_anchored_structure && low_kind!=0)
             DrawStructurePoint(low_kind>0?"LL":"HL",last_low_time,last_low);
         }
 
@@ -601,7 +661,7 @@ void Rebuild(const bool permit_alert)
       bool bearish_break=have_low && last_low_kind!=0 && !low_broken && rates[i].close<last_low;
       // Only confirmed pivots are valid structure levels.  Expansion beyond
       // an unconfirmed candle extreme must not produce lower-timeframe BOS
-      // noise on the analysis timeframe.  Breaking an LH/HL changes
+      // noise on the structure timeframe.  Breaking an LH/HL changes
       // character; breaking an HH/LL continues structure with a BOS.
       if(bullish_break)
         {
@@ -610,17 +670,17 @@ void Rebuild(const bool permit_alert)
          // made by breaking an HH is bullish continuation (BOS).
          if(last_high_kind<0)
            {
-            // Structure events are facts of price action and must always be
-            // drawn.  MA/session/ADX/ATR qualify a setup; they cannot erase a
-            // confirmed CHoCH from the market-structure history.
-            DrawSignal("CHoCH",1,last_high_time,last_high,rates[i]);
+            // Structure events are facts of price action. MA/session/ADX/ATR
+            // qualify a setup; they cannot erase a confirmed CHoCH from the
+            // analytical history or the separate chart-timeframe drawing.
+            if(draw_anchored_structure) DrawSignal("CHoCH",1,last_high_time,last_high,rates[i]);
             structure=1;
             last_break_direction=1; last_break_was_bos=false;
             newest_signal="CHoCH bullish"; newest_signal_time=rates[i].time;
            }
          else
            {
-            DrawSignal("BOS",1,last_high_time,last_high,rates[i]);
+            if(draw_anchored_structure) DrawSignal("BOS",1,last_high_time,last_high,rates[i]);
             structure=1;
             last_break_direction=1; last_break_was_bos=true;
             newest_signal="BOS bullish"; newest_signal_time=rates[i].time;
@@ -633,14 +693,14 @@ void Rebuild(const bool permit_alert)
          // made by breaking an LL is bearish continuation (BOS).
          if(last_low_kind<0)
            {
-            DrawSignal("CHoCH",-1,last_low_time,last_low,rates[i]);
+            if(draw_anchored_structure) DrawSignal("CHoCH",-1,last_low_time,last_low,rates[i]);
             structure=-1;
             last_break_direction=-1; last_break_was_bos=false;
             newest_signal="CHoCH bearish"; newest_signal_time=rates[i].time;
            }
          else
            {
-            DrawSignal("BOS",-1,last_low_time,last_low,rates[i]);
+            if(draw_anchored_structure) DrawSignal("BOS",-1,last_low_time,last_low,rates[i]);
             structure=-1;
             last_break_direction=-1; last_break_was_bos=true;
             newest_signal="BOS bearish"; newest_signal_time=rates[i].time;
@@ -664,10 +724,11 @@ void Rebuild(const bool permit_alert)
          if(HTFValues(rates[i-1].time,a,o,c) && HTFValues(rates[i].time,b,o,c))
             DrawSegment("HTF_MA_"+(string)rates[i].time,rates[i-1].time,a,rates[i].time,b,HTF_MA_Color,STYLE_SOLID,2);
         }
-   if(Show_Swing_Points && have_high)
+   if(draw_anchored_structure && Show_Swing_Points && have_high)
       DrawSegment("LAST_HIGH",last_high_time,last_high,rates[total-1].time,last_high,clrIndianRed,STYLE_DOT,1);
-   if(Show_Swing_Points && have_low)
+   if(draw_anchored_structure && Show_Swing_Points && have_low)
       DrawSegment("LAST_LOW",last_low_time,last_low,rates[total-1].time,last_low,clrTeal,STYLE_DOT,1);
+   if(!draw_anchored_structure) DrawChartTimeframeStructure();
 
    MqlTick current_tick;
    double current_price=SymbolInfoTick(_Symbol,current_tick) && current_tick.bid>0.0
@@ -766,7 +827,7 @@ int OnInit()
    if((Use_ATR_Filter || Use_Optimal_Conditions_Meter) &&
       (g_atr_handle=iATR(_Symbol,timeframe,ATR_Length))==INVALID_HANDLE) return INIT_FAILED;
    if((Show_Trendline_Zones || Use_Optimal_Conditions_Meter) &&
-      (g_trend_atr_handle=iATR(_Symbol,TrendlineTimeframe(),ATR_Length))==INVALID_HANDLE) return INIT_FAILED;
+      (g_trend_atr_handle=iATR(_Symbol,BoundaryTimeframe(),ATR_Length))==INVALID_HANDLE) return INIT_FAILED;
    EventSetTimer(2);
    Rebuild(false);
    return INIT_SUCCEEDED;

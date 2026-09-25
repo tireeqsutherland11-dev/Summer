@@ -5,7 +5,7 @@ Purpose and scope
 -----------------
 Road.mq5 is a MetaTrader 5 Expert Advisor used for analysis, chart drawing, and
 alerts. It does not place, modify, or close orders. On each newly detected bar
-of the selected analysis timeframe it rebuilds its view from closed candles,
+of the selected structure timeframe it rebuilds its view from closed candles,
 classifies market structure, draws enabled overlays, updates the dashboard, and
 optionally alerts on a structure event confirmed by the most recently closed
 bar. Both OnTick and a two-second timer check for a new bar, so a quiet market
@@ -13,10 +13,11 @@ can still trigger a refresh.
 
 The processing pipeline is:
 
-  1. Resolve PERIOD_CURRENT inputs and load closed analysis candles.
+  1. Resolve PERIOD_CURRENT inputs and load closed structure candles.
   2. Load any enabled MA, ADX, and ATR indicator buffers.
   3. Delete Road's existing chart objects and replay the selected history.
-  4. Confirm and classify swing highs/lows.
+  4. Confirm and classify structure-timeframe swing highs/lows for analytics,
+     then independently draw structure from the active chart timeframe.
   5. Detect close-confirmed BOS/CHoCH events and reconstruct current bias.
   6. Calculate session, MA, ADX, and ATR qualification states.
   7. Draw optional MA lines, current swing levels, higher-timeframe market
@@ -33,22 +34,32 @@ through a level is intentionally not a break; the candle must close beyond it.
 1. GENERAL / REFRESH SYSTEM
 ---------------------------
 
-Analysis_Timeframe (default PERIOD_CURRENT)
-  The timeframe used for swings, BOS/CHoCH, LTF MA, ADX, ATR, dashboard close,
-  and new-bar detection. PERIOD_CURRENT means the chart timeframe. A lower
-  timeframe produces more frequent, noisier structure and refreshes; a higher
-  timeframe produces fewer, broader signals. It does not change the separately
-  selected SR, trendline, or HTF-MA timeframes.
+Boundary_Timeframe (default PERIOD_H4)
+  The common higher timeframe for Market High/Low and trendline zones.
+  Boundary_Lookback_Bars and Trendline_Bars_To_Apply therefore always count H4
+  bars by default, regardless of the active chart timeframe.
+
+Structure_Timeframe (default PERIOD_H1)
+  The fixed timeframe used for analytical swings, BOS/CHoCH, Market Bias,
+  Market Tradeability, the Optimal Conditions Meter, LTF MA, ADX, ATR,
+  dashboard close, alerts, and new-bar detection. Changing the chart period
+  does not change these results. PERIOD_CURRENT remains available as an
+  explicit opt-in to chart-dependent analysis.
+
+Setup_Entry_Timeframe (default PERIOD_M15)
+  Reserved for the future setup and entry system. It is exposed now so the
+  three-timeframe model can be configured consistently, but it does not yet
+  affect calculations or drawings.
 
 Bars_To_Process (default 100; valid 100 or greater)
-  Requested count of closed analysis candles replayed on every rebuild. The
-  runtime caps it at 100,000. More bars expose more historical pivots/signals
+  Requested count of closed Structure_Timeframe candles replayed on every
+  rebuild. The runtime caps it at 100,000. More bars expose more historical pivots/signals
   and give the state machine more context, but cost more processing and chart
   objects. Fewer bars are faster but may change the first known pivots and thus
   the reconstructed structure. Initialization rejects values below 100.
 
 Result
-  Road refreshes only when the opening time of analysis bar 0 changes. The
+  Road refreshes only when the opening time of structure bar 0 changes. The
   first initialization rebuild never alerts; later new-bar rebuilds may alert.
   Its object prefix contains the chart ID, isolating its objects per chart.
 
@@ -90,8 +101,12 @@ Break classification
     running second and therefore becoming the final stored bias/event state.
 
 Outputs
-  Structure events produce optional text and level segments, set dashboard
-  market bias, participate in tradeability, and can produce alerts. Crucially,
+  Structure_Timeframe events set dashboard market bias, participate in
+  tradeability, and can produce alerts. Optional text and level segments are
+  independently reconstructed from the active chart timeframe, so changing
+  chart periods still reveals that period's more or less detailed structure.
+  The displayed history spans the same elapsed time as Bars_To_Process: 100 H1
+  structure bars, for example, draw 400 M15 chart bars. Crucially,
   MA/session/ADX/ATR filters do not suppress historical BOS or CHoCH drawing
   and do not suppress alerts: they describe whether the setup direction passes
   qualification, while structure events remain facts of price action.
@@ -132,7 +147,7 @@ Result
 -----------------------------------------------
 
 Use_MA_Filter (default true)
-  Enables an MA calculated on Analysis_Timeframe and directional qualification.
+  Enables an MA calculated on Structure_Timeframe and directional qualification.
   Disabling it makes both long and short LTF tests pass and reports LTF MA OFF.
 
 MA_Length (default 50; valid 1 or greater)
@@ -144,7 +159,7 @@ MA_Type (default ROAD_EMA)
   each close equal weight and is generally smoother/slower at the same length.
 
 MA_Filter_Mode (default ROAD_PRICE_ABOVE_BELOW)
-  PRICE_ABOVE_BELOW: long passes when analysis close > MA; short passes when
+  PRICE_ABOVE_BELOW: long passes when structure close > MA; short passes when
   close < MA. Equality passes neither direction.
   FULL_BODY_CLOSE: long requires open and close above MA plus a bullish candle;
   short requires open and close below MA plus a bearish candle. This is stricter
@@ -179,15 +194,15 @@ HTF_MA_Type (default ROAD_EMA)
   Control smoothing exactly like their LTF counterparts, but on HTF bars.
 
 HTF_MA_Filter_Mode (default ROAD_PRICE_ABOVE_BELOW)
-  PRICE_ABOVE_BELOW compares the analysis candle close with the HTF MA.
+  PRICE_ABOVE_BELOW compares the structure candle close with the HTF MA.
   FULL_BODY_CLOSE requires the completed HTF candle's open and close on the
   correct side of its MA and the HTF candle color to match the direction.
 
 Lookahead protection
-  When an analysis candle lies inside an HTF candle that was not yet complete,
+  When a structure candle lies inside an HTF candle that was not yet complete,
   Road shifts to the preceding completed HTF candle. This avoids historical
   future leakage. If HTF data cannot be obtained while enabled, both HTF
-  directions stay false and qualification is blocked for that analysis bar.
+  directions stay false and qualification is blocked for that structure bar.
 
 Show_HTF_MA_Line (default false) / HTF_MA_Color (default orange)
   Draw up to 500 bars of the completed-value HTF MA as solid width-2 segments.
@@ -236,7 +251,7 @@ Result
 ------------------------------------
 
 Use_ADX_Filter (default true)
-  Enables the main ADX buffer on Analysis_Timeframe. Disabling it passes all
+  Enables the main ADX buffer on Structure_Timeframe. Disabling it passes all
   ADX tests and reports OFF.
 
 ADX_Length (default 14; valid 1 or greater)
@@ -262,13 +277,13 @@ Result
 --------------------------------------
 
 Use_ATR_Filter (default true)
-  Enables ATR on Analysis_Timeframe. Disabling it passes volatility checks and
+  Enables ATR on Structure_Timeframe. Disabling it passes volatility checks and
   reports OFF. The separate trend-zone system can still use an ATR handle when
   trendline zones are enabled.
 
 ATR_Length (default 14; valid 1 or greater)
   ATR lookback. Shorter reacts faster to volatility changes; longer is smoother.
-  The same length is also used for trend-zone ATR on Trendline_Timeframe.
+  The same length is also used for trend-zone ATR on Boundary_Timeframe.
 
 ATR_Filter_Mode (default ROAD_ATR_MINIMUM)
   MINIMUM: passes ATR >= ATR_Minimum.
@@ -292,9 +307,9 @@ Result
 
 Show_HTF_Support_Resistance (default true)
   Enables horizontal market-boundary discovery and drawing. Disabling it has no
-  effect on analysis-timeframe structure.
+  effect on structure-timeframe structure.
 
-SR_Timeframe (default PERIOD_H4)
+Boundary_Timeframe (default PERIOD_H4)
   Timeframe used to find boundary pivots. Higher values create broader, slower
   boundaries; lower values create more local boundaries.
 
@@ -318,7 +333,7 @@ Show_SR_Labels (default true)
   lines remain when false.
 
 Result
-  Market High is drawn only if above the current bid (or latest closed analysis
+  Market High is drawn only if above the current bid (or latest closed structure
   close if no usable bid); Market Low only if below it. Each black horizontal
   level starts at its pivot and rays right. A boundary on the wrong side of
   current price is omitted rather than relabeled. These levels do not affect
@@ -334,7 +349,7 @@ Show_Trendline_Zones (default true)
   Enables one nearest valid resistance zone and one nearest valid support zone.
   It also controls creation of the trend-timeframe ATR handle.
 
-Trendline_Timeframe (default PERIOD_H4)
+Boundary_Timeframe (default PERIOD_H4)
   Source timeframe; PERIOD_CURRENT resolves to the chart timeframe. Higher
   values create broader and slower zones; lower values create more local zones.
 
@@ -445,7 +460,7 @@ Definite Market Bias
 
 Clear Technical Space
   The latest price must be farther than Boundary_Clearance_ATR (default 1.0)
-  analysis-timeframe ATR from every available higher-timeframe Market High,
+  structure-timeframe ATR from every available higher-timeframe Market High,
   Market Low, resistance trendline zone, and support trendline zone. Being
   inside a trendline zone also blocks it. The dashboard identifies the first
   nearby boundary. A missing/invalid ATR blocks the requirement.
@@ -477,7 +492,7 @@ Failure reasons
 ----------------
 
 Enable_Popup_Alerts (default true)
-  Calls MT5 Alert with "<symbol> <analysis timeframe> <signal>".
+  Calls MT5 Alert with "<symbol> <structure timeframe> <signal>".
 
 Enable_Push_Notifications (default false)
   Sends the same text through SendNotification; terminal notification settings
@@ -498,11 +513,11 @@ Eligibility and deduplication
 
 Persistent globals
   g_prefix             Unique "Road_<chart ID>_" object-name prefix.
-  g_last_bar           Current open analysis bar time used for new-bar gating.
+  g_last_bar           Current open structure bar time used for new-bar gating.
   g_ma_handle          LTF MA indicator handle, or INVALID_HANDLE.
   g_htf_ma_handle      HTF MA indicator handle, or INVALID_HANDLE.
-  g_adx_handle         Analysis-timeframe ADX handle, or INVALID_HANDLE.
-  g_atr_handle         Analysis-timeframe ATR handle, or INVALID_HANDLE.
+  g_adx_handle         Structure-timeframe ADX handle, or INVALID_HANDLE.
+  g_atr_handle         Structure-timeframe ATR handle, or INVALID_HANDLE.
   g_trend_atr_handle   Trend-timeframe ATR handle, or INVALID_HANDLE.
 
 Key rebuild-local variables
@@ -531,7 +546,7 @@ and clears the chart comment.
 -----------------------------
 
   Change structure frequency:
-    Analysis_Timeframe, Swing_Detection_Length, Bars_To_Process.
+    Structure_Timeframe, Swing_Detection_Length, Bars_To_Process.
 
   Change whether the latest directional setup qualifies:
     MA and HTF-MA settings, session settings, ADX settings, ATR settings.
@@ -542,10 +557,11 @@ and clears the chart comment.
 
   Change the structural TRADEABLE result:
     Only incoming confirmed pivot/break sequence (indirectly affected by the
-    analysis timeframe, swing length, and available replay history).
+    structure timeframe, swing length, and available replay history).
 
   Change boundary overlays:
-    SR settings for horizontal Market High/Low; trendline settings and ATR_Length
+    Boundary_Timeframe and SR settings for horizontal Market High/Low; trendline
+    settings and ATR_Length
     for sloped support/resistance zones.
 
   Change visuals only:
