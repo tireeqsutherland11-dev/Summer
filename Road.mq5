@@ -1,5 +1,5 @@
 #property copyright "Market Trend Analyser conversion"
-#property version   "1.60"
+#property version   "1.61"
 #property strict
 #property description "Road: MT5 port of the Market Trend Analyser Pine Script."
 #property description "Signal/visualisation EA only; the source indicator contains no trading rules."
@@ -192,10 +192,26 @@ bool DefiniteBias(const ROAD_STRUCTURE_STATE &state)
            state.last_high_kind<0 && state.last_low_kind>0);
   }
 
+bool DefiniteSetupBias(const ROAD_STRUCTURE_STATE &state)
+  {
+   // On the lower timeframe, CHoCH begins the transition and the next BOS
+   // completes it. Later pivot classifications cannot make it transitional
+   // again unless another CHoCH actually occurs.
+   return state.direction!=0 && state.last_break_was_bos;
+  }
+
 string BiasText(const ROAD_STRUCTURE_STATE &state)
   {
    if(state.direction==0) return "Consolidating";
    bool definite=DefiniteBias(state);
+   if(state.direction>0) return definite?"Bullish":"Bullish (Transition)";
+   return definite?"Bearish":"Bearish (Transition)";
+  }
+
+string SetupBiasText(const ROAD_STRUCTURE_STATE &state)
+  {
+   if(state.direction==0) return "Consolidating";
+   bool definite=DefiniteSetupBias(state);
    if(state.direction>0) return definite?"Bullish":"Bullish (Transition)";
    return definite?"Bearish":"Bearish (Transition)";
   }
@@ -859,9 +875,9 @@ void Rebuild(const bool permit_alert)
 
    // The HTF may be either established or transitional, but it must already
    // point in the same direction as a definite LTF BOS sequence.  The LTF is
-   // therefore the confirmation anchor (for example, bearish HTF transition
-   // plus an LTF LL break is a valid bearish correlation).
-   bool setup_definite=have_setup && DefiniteBias(setup_state);
+   // transitional only while its latest break is a CHoCH; a subsequent BOS
+   // completes that transition.
+   bool setup_definite=have_setup && DefiniteSetupBias(setup_state);
    bool bias_ready=setup_definite && structure!=0 && structure==setup_state.direction;
 
    double latest_atr=have_setup_atr?setup_atr_values[setup_total-1]:0.0;
@@ -930,10 +946,10 @@ void Rebuild(const bool permit_alert)
       else if(structure==0) tradeability_reason="structure timeframe is consolidating";
       else if(setup_state.direction==0) tradeability_reason="LTF/setup timeframe is consolidating";
       else if(structure!=setup_state.direction) tradeability_reason="structure and LTF biases conflict";
-      else if(!setup_definite) tradeability_reason="LTF bias is transitional (no clean BOS with HH/HL or LH/LL)";
+      else if(!setup_definite) tradeability_reason="LTF bias is transitional (CHoCH has no subsequent BOS)";
       else tradeability_reason=optimal_reason;
      }
-   DrawDashboard(structure,BiasText(structure_state),have_setup?BiasText(setup_state):"Consolidating",
+   DrawDashboard(structure,BiasText(structure_state),have_setup?SetupBiasText(setup_state):"Consolidating",
                  have_high,last_high,have_low,last_low,dashboard_session,
                  Use_ADX_Filter?adx[total-1]:0.0,dashboard_adx,
                  Use_ATR_Filter?atr[total-1]:0.0,dashboard_atr,rates[total-1].close,

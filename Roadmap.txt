@@ -402,7 +402,7 @@ allowed touch/break distance, while lower ATR tightens it.
 ------------------------------------------
 
 Road independently replays confirmed structure on Structure_Timeframe and
-Setup_Entry_Timeframe. Each bias is classified as follows:
+Setup_Entry_Timeframe. The structure-timeframe bias is classified as follows:
 
   Bullish:              latest break is bullish BOS and latest pivots are HH/HL.
   Bullish (Transition): bullish direction exists, but the latest break is CHoCH
@@ -412,10 +412,16 @@ Setup_Entry_Timeframe. Each bias is classified as follows:
                         or the latest pivot pair is not yet a clean LH/LL.
   Consolidating:        no confirmed directional break exists in replay history.
 
+The lower/setup timeframe uses the event sequence directly: it is transitional
+only when its latest break is a CHoCH. The first subsequent BOS completes the
+transition, and later pivot classifications cannot make it transitional again
+unless another CHoCH occurs.
+
 The timeframe biases correlate when they point in the same direction; an
 established or transitional structure-timeframe bias may correlate with the
-LTF. The LTF must additionally be definite (BOS plus HH/HL or LH/LL), making it
-the setup confirmation anchor.
+LTF. The LTF must additionally be definite: its most recent break must be a
+BOS. Thus a CHoCH makes the LTF transitional until a subsequent BOS, regardless
+of later pivot classifications, making the LTF the setup confirmation anchor.
 
 Market Tradeability prints Tradable only when the biases correlate, the LTF is
 definite, and every Optimal Conditions requirement passes. Otherwise it prints
@@ -481,7 +487,8 @@ Use_Optimal_Conditions_Meter (default true)
 Definite Market Bias
   Requires directional correlation between Structure_Timeframe and the LTF/setup
   timeframe. The structure bias may be established or transitional, while the
-  LTF must have a BOS and clean HH/HL (bullish) or LH/LL (bearish) pivots.
+  LTF's latest break must be a BOS. A CHoCH remains transitional until a later
+  BOS confirms continuation in the new direction.
 
 Clear Technical Space
   The latest price must be farther than Boundary_Clearance_ATR (default 1.0)
