@@ -1,5 +1,5 @@
 #property copyright "Market Trend Analyser conversion"
-#property version   "1.70"
+#property version   "1.71"
 #property strict
 #property description "Road: MT5 port of the Market Trend Analyser Pine Script."
 #property description "Signal/visualisation EA only; the source indicator contains no trading rules."
@@ -400,15 +400,78 @@ double LiquidityBarVolume(const MqlRates &bar,const datetime next_time,
    return volume;
   }
 
-// Port of LuxAlgo's Liquidity Swings overlay.  It is intentionally rendered
-// only while the chart itself is on Setup_Entry_Timeframe: the zones are an
-// entry-context overlay and must never leak onto the structure/HTF view.
+// Select only retracement swings that are subsequently validated by
+// continuation structure.  A bearish trend contributes its latest LH when
+// price closes below an LL (bearish BOS); a bullish trend contributes its
+// latest HL when price closes above an HH (bullish BOS).  Keeping this as a
+// separate replay lets the renderer wait for the BOS instead of exposing an
+// unconfirmed liquidity area in real time.
+void FindLiquidityBosOrigins(const MqlRates &rates[],const int total,const int length,
+                             bool &eligible_high[],bool &eligible_low[])
+  {
+   ArrayResize(eligible_high,total);
+   ArrayResize(eligible_low,total);
+   for(int i=0;i<total;i++) { eligible_high[i]=false; eligible_low[i]=false; }
+
+   bool have_high=false,have_low=false,high_broken=false,low_broken=false;
+   double last_high=0.0,last_low=0.0;
+   int last_high_kind=0,last_low_kind=0;
+   int candidate_lh=-1,candidate_hl=-1;
+   int trend=0;
+   for(int i=length;i<total;i++)
+     {
+      int pivot=i-length;
+      if(PivotHigh(rates,total,pivot,length))
+        {
+         double value=rates[pivot].high;
+         int kind=!have_high?0:(value>last_high?1:-1);
+         have_high=true; last_high=value; last_high_kind=kind; high_broken=false;
+         // An LH is a liquidity origin only when a bearish trend was already
+         // established. A later bearish BOS will validate this candidate.
+         candidate_lh=(kind<0 && trend<0)?pivot:-1;
+        }
+      if(PivotLow(rates,total,pivot,length))
+        {
+         double value=rates[pivot].low;
+         int kind=!have_low?0:(value<last_low?1:-1);
+         have_low=true; last_low=value; last_low_kind=kind; low_broken=false;
+         // The bullish counterpart is the latest HL formed in an established
+         // uptrend, pending a close-confirmed bullish BOS.
+         candidate_hl=(kind<0 && trend>0)?pivot:-1;
+        }
+
+      if(have_high && last_high_kind!=0 && !high_broken && rates[i].close>last_high)
+        {
+         high_broken=true;
+         if(last_high_kind>0 && trend>0 && candidate_hl>=0)
+            eligible_low[candidate_hl]=true;
+         trend=1;
+         candidate_hl=-1;
+         candidate_lh=-1;
+        }
+      if(have_low && last_low_kind!=0 && !low_broken && rates[i].close<last_low)
+        {
+         low_broken=true;
+         if(last_low_kind>0 && trend<0 && candidate_lh>=0)
+            eligible_high[candidate_lh]=true;
+         trend=-1;
+         candidate_lh=-1;
+         candidate_hl=-1;
+        }
+     }
+  }
+
+// BOS-confirmed liquidity swings are intentionally rendered only while the
+// chart itself is on Setup_Entry_Timeframe: the zones are an entry-context
+// overlay and must never leak onto the structure/HTF view.
 void DrawSetupLiquiditySwings(const MqlRates &rates[],const int total)
   {
    if(!Show_Liquidity_Swings || (ENUM_TIMEFRAMES)_Period!=SetupTimeframe()) return;
    int length=MathMax(1,MathMin(200,Liquidity_Pivot_Lookback));
    if(total<2*length+2) return;
    int seconds=MathMax(1,PeriodSeconds(SetupTimeframe()));
+   bool eligible_high[],eligible_low[];
+   FindLiquidityBosOrigins(rates,total,length,eligible_high,eligible_low);
 
    for(int side=0;side<2;side++)
      {
@@ -426,8 +489,9 @@ void DrawSetupLiquiditySwings(const MqlRates &rates[],const int total)
       for(int scan=2*length;scan<total;scan++)
         {
          int scan_pivot=scan-length;
-         if(high_side?PivotHigh(rates,total,scan_pivot,length):
-                      PivotLow(rates,total,scan_pivot,length)) pivots++;
+         bool found=high_side?PivotHigh(rates,total,scan_pivot,length):
+                              PivotLow(rates,total,scan_pivot,length);
+         if(found && (high_side?eligible_high[scan_pivot]:eligible_low[scan_pivot])) pivots++;
         }
       // Pine requests at most 500 boxes in total. Retaining 250 candidates on
       // each side gives the same hard ceiling without relying on MT5 cleanup.
@@ -437,6 +501,7 @@ void DrawSetupLiquiditySwings(const MqlRates &rates[],const int total)
         {
          int pivot=i-length;
          bool found=high_side?PivotHigh(rates,total,pivot,length):PivotLow(rates,total,pivot,length);
+         found=found && (high_side?eligible_high[pivot]:eligible_low[pivot]);
          if(found)
            {
             if(skip>0) { skip--; active=false; continue; }
