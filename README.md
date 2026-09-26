@@ -31,8 +31,9 @@ chart-specific prefix.
 - A reversal is not declared on a level break alone: bearish-to-bullish CHoCH
   requires an LH break followed by a confirmed HL, while bullish-to-bearish
   CHoCH requires an HL break followed by a confirmed LH.
-- **Tradable** requires all three directions to agree and the LTF's latest break
-  to be BOS. It is an analytical state, not an instruction to place a trade.
+- **Tradable** requires the enabled tradeability timeframe directions to agree.
+  When LTF participation is enabled, its latest break must be BOS. It is an
+  analytical state, not an instruction to place a trade.
 - **Optimal Conditions** additionally checks boundary clearance, extension,
   relative tick volume, and relative true-range momentum.
 - BOS/CHoCH alerts describe confirmed structure events and are intentionally
@@ -47,6 +48,10 @@ break; a candle must close beyond it.
   Start with the default 100 and raise it only when more context is needed.
 - The structure, setup, and LTF inputs are all monitored for new bars, so custom
   timeframe orders still refresh correctly.
+- `Use_HTF_For_Tradeability`, `Use_MTF_For_Tradeability`, and
+  `Use_LTF_For_Tradeability` independently control which market biases must
+  correlate. At least one must remain enabled. This supports HTF-only, HTF/MTF,
+  all-three, and other combinations without hiding any dashboard bias.
 - Preset session UTC offsets are fixed and do not adjust for daylight-saving
   time. Set the broker server offset correctly and use a custom session where
   seasonal handling matters.
