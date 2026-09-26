@@ -5,7 +5,7 @@ Purpose and scope
 -----------------
 Road.mq5 is a MetaTrader 5 Expert Advisor used for analysis, chart drawing, and
 alerts. It does not place, modify, or close orders. On each newly detected bar
-of the selected structure timeframe it rebuilds its view from closed candles,
+of the selected LTF timeframe it rebuilds its view from closed candles,
 classifies market structure, draws enabled overlays, updates the dashboard, and
 optionally alerts on a structure event confirmed by the most recently closed
 bar. Both OnTick and a two-second timer check for a new bar, so a quiet market
@@ -22,7 +22,8 @@ The processing pipeline is:
   6. Calculate session, MA, ADX, and ATR qualification states.
   7. Draw optional MA lines, current swing levels, higher-timeframe market
      boundaries, and trendline zones.
-  8. Decide whether the structure is clean enough to be called tradeable.
+  8. Correlate HTF, MTF, and LTF direction and require an LTF continuation BOS
+     to decide whether the market is tradeable.
   9. Combine bias, boundary clearance, extension, relative volume, and relative
      price momentum in the Optimal Conditions Meter.
  10. Render the dashboard, send any eligible alert, and redraw the chart.
@@ -41,15 +42,20 @@ Boundary_Timeframe (default PERIOD_H4)
 
 Structure_Timeframe (default PERIOD_H1)
   The fixed timeframe used for analytical swings, BOS/CHoCH, Market Bias,
-  Market Tradeability, the Optimal Conditions Meter, LTF MA, ADX, ATR,
-  dashboard close, alerts, and new-bar detection. Changing the chart period
+  Market Tradeability, the Optimal Conditions Meter, structure MA, ADX, ATR,
+  dashboard close, and alerts. Changing the chart period
   does not change these results. PERIOD_CURRENT remains available as an
   explicit opt-in to chart-dependent analysis.
 
 Setup_Entry_Timeframe (default PERIOD_M15)
-  Drives the independent setup bias, setup ATR/volume/momentum calculations,
-  and the Liquidity Swings overlay. Liquidity objects are deliberately shown
+  Drives the independent MTF/setup bias and the Liquidity Swings overlay.
+  Liquidity objects are deliberately shown
   only when the active chart period equals this timeframe.
+
+LTF_Timeframe (default PERIOD_M5)
+  Supplies the final confirmation bias for timeframe correlation. Market Bias
+  and Market Tradeability refresh on each new LTF bar. A definite directional
+  LTF BOS is required, while matching HTF and MTF biases may be transitional.
 
 Bars_To_Process (default 100; valid 100 or greater)
   Requested count of closed Structure_Timeframe candles replayed on every
@@ -59,7 +65,7 @@ Bars_To_Process (default 100; valid 100 or greater)
   the reconstructed structure. Initialization rejects values below 100.
 
 Result
-  Road refreshes only when the opening time of structure bar 0 changes. The
+  Road refreshes only when the opening time of LTF bar 0 changes. The
   first initialization rebuild never alerts; later new-bar rebuilds may alert.
   Its object prefix contains the chart ID, isolating its objects per chart.
 
@@ -450,8 +456,9 @@ Show_Liquidity_Swing_High / Show_Liquidity_Swing_Low and style inputs
 11. MARKET BIAS AND TRADEABILITY SYSTEM
 ------------------------------------------
 
-Road independently replays confirmed structure on Structure_Timeframe and
-Setup_Entry_Timeframe. The structure-timeframe bias is classified as follows:
+Road independently replays confirmed structure on Structure_Timeframe (HTF),
+Setup_Entry_Timeframe (MTF), and LTF_Timeframe. The HTF bias is classified as
+follows:
 
   Bullish:              latest break is bullish BOS and latest pivots are HH/HL.
   Bullish (Transition): bullish direction exists, but the latest break is CHoCH
@@ -461,28 +468,27 @@ Setup_Entry_Timeframe. The structure-timeframe bias is classified as follows:
                         or the latest pivot pair is not yet a clean LH/LL.
   Consolidating:        no confirmed directional break exists in replay history.
 
-The lower/setup timeframe uses the event sequence directly: it is transitional
+The MTF and LTF use the event sequence directly: each is transitional
 only when its latest break is a CHoCH. The first subsequent BOS completes the
 transition, and later pivot classifications cannot make it transitional again
 unless another CHoCH occurs.
 
-The timeframe biases correlate when they point in the same direction; an
-established or transitional structure-timeframe bias may correlate with the
-LTF. The LTF must additionally be definite: its most recent break must be a
-BOS. Thus a CHoCH makes the LTF transitional until a subsequent BOS, regardless
-of later pivot classifications, making the LTF the setup confirmation anchor.
+The timeframe biases correlate when HTF, MTF, and LTF all point in the same
+direction. The HTF and MTF may be established or transitional; the LTF must be
+definite, meaning its most recent break is a BOS. Thus bearish HTF and MTF
+transitions plus a definite bearish LTF are tradeable. A CHoCH makes the LTF
+transitional until a subsequent BOS, regardless of later pivot classifications.
 
-Market Tradeability prints Tradable only when the biases correlate, the LTF is
-definite, and every Optimal Conditions requirement passes. Otherwise it prints
-Not Tradable and a specific reason: unavailable/consolidating LTF data,
-consolidating structure, conflicting directions, transitional LTF structure,
-or the failed optimal-condition reasons.
+Market Tradeability prints Tradable when all three biases correlate and the LTF
+is definite. Optimal Conditions remains a separate quality meter and does not
+override timeframe tradeability. Otherwise Tradeability prints Not Tradable
+and identifies unavailable, consolidating, conflicting, or transitional data.
 
 
 12. DASHBOARD SYSTEM
 --------------------
 
-Bold chart labels display only the two market biases, Market Tradeability and
+Bold chart labels display the HTF, MTF, and LTF market biases, Market Tradeability and
 its reason, plus the Optimal Conditions result, Definite Bias, Technical Space,
 Healthy Extension, Market Volume, Price Momentum, and the optimal-condition
 reason. Labels use the chart foreground color so they remain readable when the
@@ -500,14 +506,14 @@ values retain their documented defaults but are intentionally hidden from the
 normal Inputs dialog.
 
 Definite Market Bias
-  Requires directional correlation between Structure_Timeframe and the LTF/setup
-  timeframe. The structure bias may be established or transitional, while the
-  LTF's latest break must be a BOS. A CHoCH remains transitional until a later
-  BOS confirms continuation in the new direction.
+  Requires directional correlation between Structure_Timeframe (HTF),
+  Setup_Entry_Timeframe (MTF), and LTF_Timeframe. HTF and MTF biases may be
+  established or transitional, while the LTF's latest break must be a BOS. A
+  CHoCH remains transitional until a later BOS confirms continuation.
 
 Clear Technical Space
   The latest price must be farther than Boundary_Clearance_ATR (default 1.0)
-  LTF/setup-timeframe ATR from every available higher-timeframe Market High,
+  LTF ATR from every available higher-timeframe Market High,
   Market Low, resistance trendline zone, and support trendline zone. Being
   inside a trendline zone also blocks it. The dashboard identifies the first
   nearby boundary. A missing/invalid ATR blocks the requirement.
@@ -521,7 +527,7 @@ Healthy Extension
   post-correction run are required.
 
 Good Market Volume
-  The newest closed LTF/setup candle's tick volume is divided by the average of the
+  The newest closed LTF candle's tick volume is divided by the average of the
   preceding Volume_Average_Length candles (default 20). It passes from
   Volume_Minimum_Ratio (default 0.50) through Volume_Maximum_Ratio (default
   2.00), inclusive. This rejects both inactive conditions and volume spikes.
@@ -529,7 +535,7 @@ Good Market Volume
   available across instruments.
 
 Good Price Momentum
-  Momentum is the newest closed LTF/setup candle's true range divided by the average true
+  Momentum is the newest closed LTF candle's true range divided by the average true
   range of the preceding Momentum_Average_Length candles (default 20). True
   range includes gaps from the preceding close, so the measure captures actual
   price travel without imposing a bullish or bearish direction. It passes from
@@ -571,12 +577,13 @@ Eligibility and deduplication
 
 Persistent globals
   g_prefix             Unique "Road_<chart ID>_" object-name prefix.
-  g_last_bar           Current open structure bar time used for new-bar gating.
+  g_last_bar           Current open LTF bar time used for new-bar gating.
   g_ma_handle          LTF MA indicator handle, or INVALID_HANDLE.
   g_htf_ma_handle      HTF MA indicator handle, or INVALID_HANDLE.
   g_adx_handle         Structure-timeframe ADX handle, or INVALID_HANDLE.
   g_atr_handle         Structure-timeframe ATR handle, or INVALID_HANDLE.
   g_trend_atr_handle   Trend-timeframe ATR handle, or INVALID_HANDLE.
+  g_ltf_atr_handle     LTF ATR handle used by the conditions meter.
 
 Key rebuild-local variables
   rates/ma/adx/atr     Closed-bar price and enabled indicator histories.
