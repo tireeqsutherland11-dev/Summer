@@ -482,56 +482,22 @@ or the failed optimal-condition reasons.
 12. DASHBOARD SYSTEM
 --------------------
 
-The chart Comment displays:
-  * Market Bias and the confirmed structural event that caused it.
-  * Structural Market Tradeability and a specific explanation of any blocking
-    condition (undefined bias, latest CHoCH, conflicting direction, or an
-    unclean pivot sequence).
-  * Most recent confirmed high and low, or "-" when unavailable.
-  * Session OFF/IN/OUT.
-  * ADX value, configured minimum, pass/block, and scope.
-  * ATR value and pass/block.
-  * Whether the latest close is above/below each enabled MA.
-  * Aggregate BOS and CHoCH filter pass/block states, their intended role, and
-    the exact enabled component(s) currently blocking the relevant direction.
-  * The Optimal Conditions result, each requirement state, the latest
-    volume-to-average and true-range-to-average ratios, and a specific
-    failure-reason list.
-
-Directional aggregation is bias-aware:
-  * For bullish/undefined structure, BOS displays the bullish BOS qualification;
-    for bearish/undefined structure it displays bearish qualification. At
-    undefined structure either passing side can produce PASS.
-  * CHoCH checks the reversal direction: bullish qualification while current
-    structure is bearish/undefined, or bearish qualification while current
-    structure is bullish/undefined.
-
-The MA dashboard words use close > MA for ABOVE and otherwise BELOW, even when
-full-body mode is selected. Thus the word is positional information, while the
-aggregate filter row carries the stricter full-body result.
-
-Filter explanations and effects
-  * BOS Filters qualify a continuation setup in the current bias direction.
-    They combine directional LTF MA, directional HTF MA, session, ADX, and ATR.
-  * CHoCH Filters qualify a possible reversal setup against the current bias.
-    They combine directional LTF MA, directional HTF MA, session, ATR, and ADX
-    only when Apply_ADX_Filter_To is BOS_AND_CHOCH.
-  * LTF/HTF MA describe directional alignment, Session describes timing, ADX
-    describes non-directional trend strength, and ATR describes volatility.
-  * These are setup-qualification filters. They never rewrite confirmed price
-    structure, Market Bias, structural Market Tradeability, drawings, or alerts.
-    They also do not enter the Optimal Conditions formula. In particular, a
-    CHoCH structurally makes Tradeability transitional and therefore blocks the
-    meter's Definite Bias requirement; CHoCH Filters PASS/BLOCKED does not.
+Bold chart labels display only the two market biases, Market Tradeability and
+its reason, plus the Optimal Conditions result, Definite Bias, Technical Space,
+Healthy Extension, Market Volume, Price Momentum, and the optimal-condition
+reason. Labels use the chart foreground color so they remain readable when the
+chart theme changes. Detailed session, indicator, swing, and aggregate-filter
+diagnostics remain part of the internal calculation but no longer clutter the
+chart.
 
 
 12A. OPTIMAL CONDITIONS METER
 -----------------------------
 
-Use_Optimal_Conditions_Meter (default true)
-  Enables the final, informational gate. OPTIMAL is printed only when all five
-  requirements below pass simultaneously. Turning it off prints OFF; it does
-  not change structure, filters, chart signals, or alerts.
+The meter is always enabled as an internal calculation. OPTIMAL is printed only
+when all five requirements below pass simultaneously. Its detailed tuning
+values retain their documented defaults but are intentionally hidden from the
+normal Inputs dialog.
 
 Definite Market Bias
   Requires directional correlation between Structure_Timeframe and the LTF/setup

@@ -1,5 +1,5 @@
 #property copyright "Market Trend Analyser conversion"
-#property version   "1.62"
+#property version   "1.63"
 #property strict
 #property description "Road: MT5 port of the Market Trend Analyser Pine Script."
 #property description "Signal/visualisation EA only; the source indicator contains no trading rules."
@@ -20,10 +20,10 @@ input group "Swing Detection"
 input int Swing_Detection_Length=5;
 input bool Show_Swing_Points=true;
 
-input group "Market Boundaries — Shared Settings"
+input group "Market Boundaries"
 input ENUM_TIMEFRAMES Boundary_Timeframe=PERIOD_H4;
 
-input group "Market Boundaries — Higher-Timeframe Support / Resistance"
+input group "Market Boundaries - Support / Resistance"
 input bool Show_HTF_Support_Resistance=true;
 input int Boundary_Lookback_Bars=50;
 input int SR_Pivot_Length=3;
@@ -31,12 +31,9 @@ input ENUM_LINE_STYLE SR_Line_Style=STYLE_DOT;
 input int SR_Line_Width=2;
 input bool Show_SR_Labels=true;
 
-input group "Market Boundaries — Trendline Zones"
+input group "Market Boundaries - Trendline Zones"
 input bool Show_Trendline_Zones=true;
 input int Trendline_Bars_To_Apply=300;
-input ROAD_TREND_PIVOT_SOURCE Trendline_Pivot_Source=ROAD_TREND_HIGH_LOW;
-input int Trendline_Pivot_Strength=10;
-input int Trendline_Min_Pivot_Confirmation=3;
 input color Trendline_Resistance_Color=clrRed;
 input color Trendline_Support_Color=clrGreen;
 input int Trendline_Zone_Transparency=50;
@@ -61,7 +58,6 @@ input group "MA Filter (LTF)"
 input bool Use_MA_Filter=true;
 input int MA_Length=50;
 input ROAD_MA_TYPE MA_Type=ROAD_EMA;
-input ROAD_MA_FILTER_MODE MA_Filter_Mode=ROAD_PRICE_ABOVE_BELOW;
 input bool Show_MA_Line=false;
 input color MA_Color=clrBlue;
 
@@ -69,8 +65,7 @@ input group "MA Filter (HTF)"
 input bool Use_HTF_MA_Filter=true;
 input ENUM_TIMEFRAMES HTF_Timeframe=PERIOD_H1;
 input int HTF_MA_Length=100;
-input ROAD_MA_TYPE HTF_MA_Type=ROAD_EMA;
-input ROAD_MA_FILTER_MODE HTF_MA_Filter_Mode=ROAD_PRICE_ABOVE_BELOW;
+input ROAD_MA_TYPE HTF_MA_Type=ROAD_EMA; // MA Type
 input bool Show_HTF_MA_Line=false;
 input color HTF_MA_Color=clrOrange;
 
@@ -84,26 +79,10 @@ input int Server_UTC_Offset_Minutes=0;
 input group "ADX Filter"
 input bool Use_ADX_Filter=true;
 input int ADX_Length=14;
-input double ADX_Minimum=25.0;
-input ROAD_ADX_SCOPE Apply_ADX_Filter_To=ROAD_BOS_ONLY;
 
 input group "ATR Filter"
 input bool Use_ATR_Filter=true;
 input int ATR_Length=14;
-input ROAD_ATR_MODE ATR_Filter_Mode=ROAD_ATR_MINIMUM;
-input double ATR_Minimum=1.0;
-input double ATR_Maximum=10.0;
-
-input group "Optimal Conditions Meter"
-input bool Use_Optimal_Conditions_Meter=true;
-input double Boundary_Clearance_ATR=1.0;
-input double Maximum_Extension_ATR=3.0;
-input int Volume_Average_Length=20;
-input double Volume_Minimum_Ratio=0.50;
-input double Volume_Maximum_Ratio=2.00;
-input int Momentum_Average_Length=20;
-input double Momentum_Minimum_Ratio=0.50;
-input double Momentum_Maximum_Ratio=2.00;
 
 input group "Setup and Entry"
 input ENUM_TIMEFRAMES Setup_Entry_Timeframe=PERIOD_M15;
@@ -111,6 +90,28 @@ input ENUM_TIMEFRAMES Setup_Entry_Timeframe=PERIOD_M15;
 input group "Alerts"
 input bool Enable_Popup_Alerts=true;
 input bool Enable_Push_Notifications=false;
+
+// Internal tuning values are deliberately kept out of the Inputs dialog. The
+// streamlined UI exposes only settings that are useful during normal use.
+const ROAD_TREND_PIVOT_SOURCE Trendline_Pivot_Source=ROAD_TREND_HIGH_LOW;
+const int Trendline_Pivot_Strength=10;
+const int Trendline_Min_Pivot_Confirmation=3;
+const ROAD_MA_FILTER_MODE MA_Filter_Mode=ROAD_PRICE_ABOVE_BELOW;
+const ROAD_MA_FILTER_MODE HTF_MA_Filter_Mode=ROAD_PRICE_ABOVE_BELOW;
+const double ADX_Minimum=25.0;
+const ROAD_ADX_SCOPE Apply_ADX_Filter_To=ROAD_BOS_ONLY;
+const ROAD_ATR_MODE ATR_Filter_Mode=ROAD_ATR_MINIMUM;
+const double ATR_Minimum=1.0;
+const double ATR_Maximum=10.0;
+const bool Use_Optimal_Conditions_Meter=true;
+const double Boundary_Clearance_ATR=1.0;
+const double Maximum_Extension_ATR=3.0;
+const int Volume_Average_Length=20;
+const double Volume_Minimum_Ratio=0.50;
+const double Volume_Maximum_Ratio=2.00;
+const int Momentum_Average_Length=20;
+const double Momentum_Minimum_Ratio=0.50;
+const double Momentum_Maximum_Ratio=2.00;
 
 string g_prefix="";
 datetime g_last_bar=0;
@@ -639,49 +640,44 @@ void SendRoadAlert(const string signal,const datetime bar_time)
    if(Enable_Push_Notifications) SendNotification(message);
   }
 
-string PriceText(const bool available,const double value)
+void DrawDashboardLine(const int row,const string value)
   {
-   return available?DoubleToString(value,_Digits):"-";
+   string name=g_prefix+"DASHBOARD_"+(string)row;
+   if(!ObjectCreate(0,name,OBJ_LABEL,0,0,0)) return;
+   ObjectSetInteger(0,name,OBJPROP_CORNER,CORNER_LEFT_UPPER);
+   ObjectSetInteger(0,name,OBJPROP_ANCHOR,ANCHOR_LEFT_UPPER);
+   ObjectSetInteger(0,name,OBJPROP_XDISTANCE,10);
+   ObjectSetInteger(0,name,OBJPROP_YDISTANCE,10+row*18);
+   color foreground=(color)ChartGetInteger(0,CHART_COLOR_FOREGROUND);
+   ObjectSetInteger(0,name,OBJPROP_COLOR,foreground);
+   ObjectSetInteger(0,name,OBJPROP_FONTSIZE,10);
+   ObjectSetInteger(0,name,OBJPROP_SELECTABLE,false);
+   ObjectSetInteger(0,name,OBJPROP_HIDDEN,true);
+   ObjectSetString(0,name,OBJPROP_FONT,"Arial Bold");
+   ObjectSetString(0,name,OBJPROP_TEXT,value);
   }
 
-void DrawDashboard(const int structure,const string structure_bias,const string setup_bias,
-                   const bool have_high,const double last_high,
-                   const bool have_low,const double last_low,const bool in_session,
-                   const double adx,const bool adx_pass,const double atr,const bool atr_pass,
-                   const double close,const double ma,const double htf_ma,
+void DrawDashboard(const string structure_bias,const string setup_bias,
                    const bool bias_ready,const bool tradeable,const string tradeability_reason,
-                   const bool bull_bos_pass,const bool bear_bos_pass,
-                   const bool bull_choch_pass,const bool bear_choch_pass,
                    const bool optimal,const bool clear_space,const bool healthy_extension,
                    const bool good_volume,const double volume_ratio,
                    const bool good_momentum,const double momentum_ratio,
                    const string optimal_reason)
   {
-   string session=!Use_Session_Filter?"OFF":in_session?"IN":"OUT";
-   string adx_text=!Use_ADX_Filter?"OFF":DoubleToString(adx,1)+" / "+DoubleToString(ADX_Minimum,0)+(adx_pass?" PASS":" BLOCKED");
-   string atr_text=!Use_ATR_Filter?"OFF":DoubleToString(atr,_Digits)+(atr_pass?" PASS":" BLOCKED");
-   string ltf=!Use_MA_Filter?"OFF":close>ma?"ABOVE":"BELOW";
-   string htf=!Use_HTF_MA_Filter?"OFF":close>htf_ma?"ABOVE":"BELOW";
-   bool bos_pass=(structure>=0 && bull_bos_pass)||(structure<=0 && bear_bos_pass);
-   bool choch_pass=(structure<=0 && bull_choch_pass)||(structure>=0 && bear_choch_pass);
-   Comment("ROAD — Market Trend Analyser\n",
-           "Market Bias (Structure): ",structure_bias,
-           "\nMarket Bias (LTF/Setup): ",setup_bias,
-           "\nMarket Tradeability: ",tradeable?"Tradable":"Not Tradable",
-           "\nTradeability Reason: ",tradeability_reason,
-           "\nLast High: ",PriceText(have_high,last_high),
-           "\nLast Low: ",PriceText(have_low,last_low),"\nSession: ",session,
-           "\nADX: ",adx_text,"\nADX Scope: ",!Use_ADX_Filter?"OFF":Apply_ADX_Filter_To==ROAD_BOS_AND_CHOCH?"BOS+CHoCH":"BOS Only",
-           "\nATR: ",atr_text,"\nMA (LTF): ",ltf,"\nMA (HTF): ",htf,
-           "\nBOS Filters: ",bos_pass?"PASS":"BLOCKED",
-           "\nCHoCH Filters: ",choch_pass?"PASS":"BLOCKED",
-           "\n\nOptimal Conditions: ",!Use_Optimal_Conditions_Meter?"OFF":optimal?"OPTIMAL":"NOT OPTIMAL",
-           "\n  Definite Bias: ",bias_ready?"PASS":"BLOCKED",
-           "\n  Technical Space: ",clear_space?"PASS":"BLOCKED",
-           "\n  Healthy Extension: ",healthy_extension?"PASS":"BLOCKED",
-           "\n  Market Volume: ",good_volume?"PASS":"BLOCKED"," (",DoubleToString(volume_ratio,2),"x average)",
-           "\n  Price Momentum: ",good_momentum?"PASS":"BLOCKED"," (",DoubleToString(momentum_ratio,2),"x average range)",
-           !Use_Optimal_Conditions_Meter?"":"\nReason: "+optimal_reason);
+   Comment("");
+   DrawDashboardLine(0,"Market Bias (Structure): "+structure_bias);
+   DrawDashboardLine(1,"Market Bias (LTF/Setup): "+setup_bias);
+   DrawDashboardLine(2,"Market Tradeability: "+(tradeable?"Tradable":"Not Tradable"));
+   DrawDashboardLine(3,"Tradeability Reason: "+tradeability_reason);
+   DrawDashboardLine(5,"Optimal Conditions: "+(optimal?"OPTIMAL":"NOT OPTIMAL"));
+   DrawDashboardLine(6,"Definite Bias: "+(bias_ready?"PASS":"BLOCKED"));
+   DrawDashboardLine(7,"Technical Space: "+(clear_space?"PASS":"BLOCKED"));
+   DrawDashboardLine(8,"Healthy Extension: "+(healthy_extension?"PASS":"BLOCKED"));
+   DrawDashboardLine(9,"Market Volume: "+(good_volume?"PASS":"BLOCKED")+
+                         " ("+DoubleToString(volume_ratio,2)+"x average)"));
+   DrawDashboardLine(10,"Price Momentum: "+(good_momentum?"PASS":"BLOCKED")+
+                          " ("+DoubleToString(momentum_ratio,2)+"x average range)"));
+   DrawDashboardLine(11,"Reason: "+optimal_reason);
   }
 
 // Returns false while history or an indicator is still being synchronized.
@@ -957,13 +953,8 @@ bool Rebuild(const bool permit_alert)
       else if(!setup_definite) tradeability_reason="LTF bias is transitional (CHoCH has no subsequent BOS)";
       else tradeability_reason=optimal_reason;
      }
-   DrawDashboard(structure,BiasText(structure_state),have_setup?SetupBiasText(setup_state):"Consolidating",
-                 have_high,last_high,have_low,last_low,dashboard_session,
-                 Use_ADX_Filter?adx[total-1]:0.0,dashboard_adx,
-                 Use_ATR_Filter?atr[total-1]:0.0,dashboard_atr,rates[total-1].close,
-                 Use_MA_Filter?ma[total-1]:0.0,last_htf_ma,bias_ready,tradeable,tradeability_reason,
-                 dashboard_bull_bos,dashboard_bear_bos,
-                 dashboard_bull_choch,dashboard_bear_choch,optimal,clear_space,
+   DrawDashboard(BiasText(structure_state),have_setup?SetupBiasText(setup_state):"Consolidating",
+                 bias_ready,tradeable,tradeability_reason,optimal,clear_space,
                  healthy_extension,good_volume,volume_ratio,good_momentum,
                  momentum_ratio,optimal_reason);
    if(permit_alert && newest_signal_time==rates[total-1].time && newest_signal!="")
