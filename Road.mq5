@@ -1,5 +1,5 @@
 #property copyright "Market Trend Analyser conversion"
-#property version   "1.67"
+#property version   "1.68"
 #property strict
 #property description "Road: MT5 port of the Market Trend Analyser Pine Script."
 #property description "Signal/visualisation EA only; the source indicator contains no trading rules."
@@ -90,6 +90,13 @@ input int ADX_Length=14;
 input group "ATR Filter"
 input bool Use_ATR_Filter=true;
 input int ATR_Length=14;
+
+input group "Optimal Conditions"
+input bool Use_Timeframe_Correlation_For_Optimal=true;
+input bool Use_Technical_Space_For_Optimal=true;
+input bool Use_Healthy_Extension_For_Optimal=true;
+input bool Use_Market_Volume_For_Optimal=true;
+input bool Use_Price_Momentum_For_Optimal=true;
 
 input group "Alerts"
 input bool Enable_Popup_Alerts=true;
@@ -774,20 +781,30 @@ void DrawDashboard(const string structure_bias,const string setup_bias,const str
                    const string optimal_reason)
   {
    Comment("");
-   DrawDashboardLine(0,"Market Bias (HTF/Structure): "+structure_bias);
-   DrawDashboardLine(1,"Market Bias (MTF/Setup): "+setup_bias);
-   DrawDashboardLine(2,"Market Bias (LTF): "+ltf_bias);
-   DrawDashboardLine(3,"Market Tradeability: "+(tradeable?"Tradable":"Not Tradable"));
-   DrawDashboardLine(4,"Tradeability Reason: "+tradeability_reason);
-   DrawDashboardLine(6,"Optimal Conditions: "+(optimal?"OPTIMAL":"NOT OPTIMAL"));
-   DrawDashboardLine(7,"Timeframe Correlation: "+(bias_ready?"PASS":"BLOCKED"));
-   DrawDashboardLine(8,"Technical Space: "+(clear_space?"PASS":"BLOCKED"));
-   DrawDashboardLine(9,"Healthy Extension: "+(healthy_extension?"PASS":"BLOCKED"));
-   DrawDashboardLine(10,"Market Volume: "+(good_volume?"PASS":"BLOCKED")+
-                         " ("+DoubleToString(volume_ratio,2)+"x average)");
-   DrawDashboardLine(11,"Price Momentum: "+(good_momentum?"PASS":"BLOCKED")+
-                          " ("+DoubleToString(momentum_ratio,2)+"x average range)");
-   DrawDashboardLine(12,"Reason: "+optimal_reason);
+   int row=0;
+   if(Use_HTF_For_Tradeability)
+      DrawDashboardLine(row++,"Market Bias (HTF/Structure): "+structure_bias);
+   if(Use_MTF_For_Tradeability)
+      DrawDashboardLine(row++,"Market Bias (MTF/Setup): "+setup_bias);
+   if(Use_LTF_For_Tradeability)
+      DrawDashboardLine(row++,"Market Bias (LTF): "+ltf_bias);
+   DrawDashboardLine(row++,"Market Tradeability: "+(tradeable?"Tradable":"Not Tradable"));
+   DrawDashboardLine(row++,"Tradeability Reason: "+tradeability_reason);
+   row++;
+   DrawDashboardLine(row++,"Optimal Conditions: "+(optimal?"OPTIMAL":"NOT OPTIMAL"));
+   if(Use_Timeframe_Correlation_For_Optimal)
+      DrawDashboardLine(row++,"Timeframe Correlation: "+(bias_ready?"PASS":"BLOCKED"));
+   if(Use_Technical_Space_For_Optimal)
+      DrawDashboardLine(row++,"Technical Space: "+(clear_space?"PASS":"BLOCKED"));
+   if(Use_Healthy_Extension_For_Optimal)
+      DrawDashboardLine(row++,"Healthy Extension: "+(healthy_extension?"PASS":"BLOCKED"));
+   if(Use_Market_Volume_For_Optimal)
+      DrawDashboardLine(row++,"Market Volume: "+(good_volume?"PASS":"BLOCKED")+
+                              " ("+DoubleToString(volume_ratio,2)+"x average)");
+   if(Use_Price_Momentum_For_Optimal)
+      DrawDashboardLine(row++,"Price Momentum: "+(good_momentum?"PASS":"BLOCKED")+
+                               " ("+DoubleToString(momentum_ratio,2)+"x average range)");
+   DrawDashboardLine(row,"Reason: "+optimal_reason);
   }
 
 // Returns false while history or an indicator is still being synchronized.
@@ -1073,18 +1090,27 @@ bool Rebuild(const bool permit_alert)
    bool good_momentum=average_true_range>0.0 &&
                       momentum_ratio>=Momentum_Minimum_Ratio &&
                       momentum_ratio<=Momentum_Maximum_Ratio;
-   bool optimal=bias_ready && clear_space && healthy_extension && good_volume && good_momentum;
-   string optimal_reason="All five requirements are met";
+   bool optimal=(!Use_Timeframe_Correlation_For_Optimal || bias_ready) &&
+                (!Use_Technical_Space_For_Optimal || clear_space) &&
+                (!Use_Healthy_Extension_For_Optimal || healthy_extension) &&
+                (!Use_Market_Volume_For_Optimal || good_volume) &&
+                (!Use_Price_Momentum_For_Optimal || good_momentum);
+   string optimal_reason="All selected requirements are met";
    if(!optimal)
      {
       optimal_reason="";
-      if(!bias_ready) optimal_reason=TradeabilityTimeframesText()+
+      if(Use_Timeframe_Correlation_For_Optimal && !bias_ready)
+         optimal_reason=TradeabilityTimeframesText()+
                                      " tradeability biases do not meet the selected correlation requirements";
-      if(!clear_space) optimal_reason+=(optimal_reason==""?"":"; ")+space_reason;
-      if(!healthy_extension) optimal_reason+=(optimal_reason==""?"":"; ")+"price is overextended or lacks a valid corrective anchor";
-      if(!good_volume) optimal_reason+=(optimal_reason==""?"":"; ")+
+      if(Use_Technical_Space_For_Optimal && !clear_space)
+         optimal_reason+=(optimal_reason==""?"":"; ")+space_reason;
+      if(Use_Healthy_Extension_For_Optimal && !healthy_extension)
+         optimal_reason+=(optimal_reason==""?"":"; ")+"price is overextended or lacks a valid corrective anchor";
+      if(Use_Market_Volume_For_Optimal && !good_volume)
+         optimal_reason+=(optimal_reason==""?"":"; ")+
                          (volume_ratio<Volume_Minimum_Ratio?"volume is too low":"volume is too high");
-      if(!good_momentum) optimal_reason+=(optimal_reason==""?"":"; ")+
+      if(Use_Price_Momentum_For_Optimal && !good_momentum)
+         optimal_reason+=(optimal_reason==""?"":"; ")+
                            (momentum_ratio<Momentum_Minimum_Ratio?
                             "momentum is too low (price is sluggish)":
                             "momentum is too high (price would need to be chased)");
@@ -1134,6 +1160,9 @@ int OnInit()
       Volume_Maximum_Ratio<Volume_Minimum_Ratio ||
       Momentum_Average_Length<1 || Momentum_Minimum_Ratio<0.0 ||
       Momentum_Maximum_Ratio<Momentum_Minimum_Ratio ||
+      (!Use_Timeframe_Correlation_For_Optimal && !Use_Technical_Space_For_Optimal &&
+       !Use_Healthy_Extension_For_Optimal && !Use_Market_Volume_For_Optimal &&
+       !Use_Price_Momentum_For_Optimal) ||
       (!Use_HTF_For_Tradeability && !Use_MTF_For_Tradeability && !Use_LTF_For_Tradeability))
       return INIT_PARAMETERS_INCORRECT;
    ENUM_TIMEFRAMES timeframe=RoadTimeframe();

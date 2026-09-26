@@ -34,8 +34,10 @@ chart-specific prefix.
 - **Tradable** requires the enabled tradeability timeframe directions to agree.
   When LTF participation is enabled, its latest break must be BOS. It is an
   analytical state, not an instruction to place a trade.
-- **Optimal Conditions** additionally checks boundary clearance, extension,
-  relative tick volume, and relative true-range momentum.
+- **Optimal Conditions** applies only the requirements enabled in the
+  **Optimal Conditions** input group. By default it checks timeframe
+  correlation, boundary clearance, extension, relative tick volume, and
+  relative true-range momentum.
 - BOS/CHoCH alerts describe confirmed structure events and are intentionally
   independent of the qualification filters.
 
@@ -51,7 +53,11 @@ break; a candle must close beyond it.
 - `Use_HTF_For_Tradeability`, `Use_MTF_For_Tradeability`, and
   `Use_LTF_For_Tradeability` independently control which market biases must
   correlate. At least one must remain enabled. This supports HTF-only, HTF/MTF,
-  all-three, and other combinations without hiding any dashboard bias.
+  all-three, and other combinations. Disabled timeframe biases are hidden from
+  the dashboard.
+- The five `Use_*_For_Optimal` inputs independently choose which requirements
+  determine the Optimal Conditions result. At least one must remain enabled;
+  disabled requirements are omitted from both the result and the dashboard.
 - Preset session UTC offsets are fixed and do not adjust for daylight-saving
   time. Set the broker server offset correctly and use a custom session where
   seasonal handling matters.
