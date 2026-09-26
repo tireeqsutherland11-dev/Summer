@@ -65,7 +65,9 @@ break; a candle must close beyond it.
   and end means all day; ranges such as `2200-0600` cross midnight.
 - ATR thresholds use raw symbol price units, not points or pips.
 - `Trendline_Zones_Per_Side` selects how many distinct resistance and support
-  trendline zones may be drawn. `Trendline_Minimum_Touches` is selectable from
+  trendlines may be drawn. The ATR-derived zone remains part of proximity
+  calculations, while the chart renders its centre as a thin line so crossings
+  stay clean. `Trendline_Minimum_Touches` is selectable from
   3 through 8; no trendline with fewer than three confirmed pivot touches is
   considered valid.
 

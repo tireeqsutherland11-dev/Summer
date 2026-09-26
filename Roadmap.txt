@@ -406,8 +406,9 @@ Trendline_Minimum_Touches (default 3; valid 3..8)
 Trendline_Resistance_Color (default red)
 Trendline_Support_Color (default green)
 Trendline_Zone_Transparency (default 50; valid 0..100)
-  Visual settings. Transparency 0 is opaque and 100 is invisible. Boundary
-  lines use a fixed 50% transparency derived from the chosen color.
+  Visual settings. Transparency 0 is opaque and 100 is invisible. Each
+  ATR-derived zone is rendered as a single one-pixel centre line, avoiding the
+  heavy bands and unpainted seams that filled, overlapping channels can create.
 
 Algorithm and result
   * Road loads closed trend-timeframe rates plus pivot padding.
@@ -422,10 +423,11 @@ Algorithm and result
     the version with the most touches (then the closest projection on a tie).
   * Among distinct candidates meeting the touch minimum, up to the selected
     number nearest the latest trend close are drawn for resistance and support.
-  * The output is a filled, right-rayed sloped channel plus right-rayed top and
-    bottom boundaries. Zones do not create structure signals, but their latest
-    projected bounds are used by the Optimal Conditions Meter. Zone discovery
-    therefore continues when the overlay is hidden and the meter is enabled.
+  * The output is a thin, right-rayed line through the centre of each sloped
+    zone. Zones do not create structure signals, but their latest projected
+    top and bottom bounds are still used by the Optimal Conditions Meter. Zone
+    discovery therefore continues when the overlay is hidden and the meter is
+    enabled.
 
 ATR_Length indirectly changes the zone tolerance. Larger/smoother ATR windows
 usually make its width/tolerance less reactive; higher current ATR expands the
