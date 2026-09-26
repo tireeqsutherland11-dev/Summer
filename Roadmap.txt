@@ -86,12 +86,18 @@ Show_Swing_Points (default true)
   or tradeability.
 
 Classification and state
+  * Accepted structure legs alternate high, low, high, low. If multiple pivot
+    highs are confirmed before a pivot low, they belong to one leg and only
+    the highest is retained; multiple lows before a high similarly retain only
+    the lowest. This extreme-point filter prevents a nearby, less-extreme low
+    from being mislabeled HL immediately after an LL (and the mirrored HH/LH
+    case), which could otherwise manufacture a false CHoCH.
   * The first high and first low in the replay window are deliberately
     untyped because no prior same-side pivot exists.
-  * A later high above the previous high is HH; otherwise it is LH. Equality
-    is therefore treated as LH.
-  * A later low below the previous low is LL; otherwise it is HL. Equality is
-    therefore treated as HL.
+  * After an intervening low leg, a high above the previous high-leg extreme
+    is HH; otherwise it is LH. Equality is therefore treated as LH.
+  * After an intervening high leg, a low below the previous low-leg extreme is
+    LL; otherwise it is HL. Equality is therefore treated as HL.
   * last_high/last_low and their times store the newest confirmed levels.
   * high_broken/low_broken allow each level to generate at most one break.
   * A newly confirmed pivot resets the corresponding broken flag.

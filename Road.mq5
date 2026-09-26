@@ -1,5 +1,5 @@
 #property copyright "Market Trend Analyser conversion"
-#property version   "1.64"
+#property version   "1.65"
 #property strict
 #property description "Road: MT5 port of the Market Trend Analyser Pine Script."
 #property description "Signal/visualisation EA only; the source indicator contains no trading rules."
@@ -158,20 +158,33 @@ bool AnalyseStructure(const ENUM_TIMEFRAMES timeframe,const int wanted,
    state.have_high=false; state.have_low=false;
    state.last_high=0.0; state.last_low=0.0;
    bool high_broken=false,low_broken=false;
+   int last_pivot_side=0;
+   bool have_high_reference=false,have_low_reference=false;
+   double high_reference=0.0,low_reference=0.0;
    for(int i=length;i<total;i++)
      {
       int pivot=i-length;
       if(PivotHigh(rates,total,pivot,length))
         {
          double value=rates[pivot].high;
-         state.last_high_kind=!state.have_high?0:(value>state.last_high?1:-1);
-         state.have_high=true; state.last_high=value; high_broken=false;
+         int kind=0;
+         if(AcceptStructureHigh(value,state.have_high,state.last_high,last_pivot_side,
+                                have_high_reference,high_reference,kind))
+           {
+            state.last_high_kind=kind;
+            high_broken=false;
+           }
         }
       if(PivotLow(rates,total,pivot,length))
         {
          double value=rates[pivot].low;
-         state.last_low_kind=!state.have_low?0:(value<state.last_low?1:-1);
-         state.have_low=true; state.last_low=value; low_broken=false;
+         int kind=0;
+         if(AcceptStructureLow(value,state.have_low,state.last_low,last_pivot_side,
+                               have_low_reference,low_reference,kind))
+           {
+            state.last_low_kind=kind;
+            low_broken=false;
+           }
         }
       if(state.have_high && state.last_high_kind!=0 && !high_broken &&
          rates[i].close>state.last_high)
@@ -249,6 +262,52 @@ bool PivotLow(const MqlRates &rates[],const int total,const int index,const int 
    if(index-length<0 || index+length>=total) return false;
    for(int i=index-length;i<=index+length;i++)
       if(i!=index && rates[i].low<=rates[index].low) return false;
+   return true;
+  }
+
+// Structure must alternate between a high leg and a low leg.  When several
+// same-side pivots are confirmed before the opposite leg appears, they are one
+// swing rather than several contrasting structure points: retain only the
+// highest high or lowest low.  The reference is the extreme from the previous
+// same-side leg, so replacing a candidate does not change what it is compared
+// against when deciding HH/LH or LL/HL.
+bool AcceptStructureHigh(const double value,bool &have_high,double &last_high,
+                         int &last_side,bool &have_reference,double &reference,
+                         int &kind)
+  {
+   if(last_side==1)
+     {
+      if(value<=last_high) return false;
+      last_high=value;
+      kind=have_reference?(value>reference?1:-1):0;
+      return true;
+     }
+   have_reference=have_high;
+   reference=last_high;
+   kind=have_high?(value>last_high?1:-1):0;
+   have_high=true;
+   last_high=value;
+   last_side=1;
+   return true;
+  }
+
+bool AcceptStructureLow(const double value,bool &have_low,double &last_low,
+                        int &last_side,bool &have_reference,double &reference,
+                        int &kind)
+  {
+   if(last_side==-1)
+     {
+      if(value>=last_low) return false;
+      last_low=value;
+      kind=have_reference?(value<reference?1:-1):0;
+      return true;
+     }
+   have_reference=have_low;
+   reference=last_low;
+   kind=have_low?(value<last_low?1:-1):0;
+   have_low=true;
+   last_low=value;
+   last_side=-1;
    return true;
   }
 
@@ -596,6 +655,9 @@ void DrawChartTimeframeStructure()
 
    bool have_high=false,have_low=false,high_broken=false,low_broken=false;
    int last_high_kind=0,last_low_kind=0;
+   int last_pivot_side=0;
+   bool have_high_reference=false,have_low_reference=false;
+   double high_reference=0.0,low_reference=0.0;
    double last_high=0.0,last_low=0.0;
    datetime last_high_time=0,last_low_time=0;
    for(int i=length;i<total;i++)
@@ -604,18 +666,36 @@ void DrawChartTimeframeStructure()
       if(PivotHigh(rates,total,pivot,length))
         {
          double value=rates[pivot].high;
-         int kind=!have_high?0:(value>last_high?1:-1);
-         have_high=true; last_high=value; last_high_time=rates[pivot].time;
-         last_high_kind=kind; high_broken=false;
-         if(kind!=0) DrawStructurePoint(kind>0?"HH":"LH",last_high_time,last_high);
+         int kind=0;
+         bool replacing=last_pivot_side==1;
+         int old_kind=last_high_kind;
+         datetime old_time=last_high_time;
+         if(AcceptStructureHigh(value,have_high,last_high,last_pivot_side,
+                                have_high_reference,high_reference,kind))
+           {
+            if(replacing && old_kind!=0)
+               ObjectDelete(0,g_prefix+"STRUCTURE_"+(old_kind>0?"HH_":"LH_")+(string)old_time);
+            last_high_time=rates[pivot].time;
+            last_high_kind=kind; high_broken=false;
+            if(kind!=0) DrawStructurePoint(kind>0?"HH":"LH",last_high_time,last_high);
+           }
         }
       if(PivotLow(rates,total,pivot,length))
         {
          double value=rates[pivot].low;
-         int kind=!have_low?0:(value<last_low?1:-1);
-         have_low=true; last_low=value; last_low_time=rates[pivot].time;
-         last_low_kind=kind; low_broken=false;
-         if(kind!=0) DrawStructurePoint(kind>0?"LL":"HL",last_low_time,last_low);
+         int kind=0;
+         bool replacing=last_pivot_side==-1;
+         int old_kind=last_low_kind;
+         datetime old_time=last_low_time;
+         if(AcceptStructureLow(value,have_low,last_low,last_pivot_side,
+                               have_low_reference,low_reference,kind))
+           {
+            if(replacing && old_kind!=0)
+               ObjectDelete(0,g_prefix+"STRUCTURE_"+(old_kind>0?"LL_":"HL_")+(string)old_time);
+            last_low_time=rates[pivot].time;
+            last_low_kind=kind; low_broken=false;
+            if(kind!=0) DrawStructurePoint(kind>0?"LL":"HL",last_low_time,last_low);
+           }
         }
       if(have_high && last_high_kind!=0 && !high_broken && rates[i].close>last_high)
         {
@@ -727,6 +807,9 @@ bool Rebuild(const bool permit_alert)
    // 1 means HH/LL, -1 means LH/HL, and 0 means that the first pivot in the
    // processed range has no preceding pivot against which it can be typed.
    int last_high_kind=0,last_low_kind=0;
+   int last_pivot_side=0;
+   bool have_high_reference=false,have_low_reference=false;
+   double high_reference=0.0,low_reference=0.0;
    double last_high=0.0,last_low=0.0,last_htf_ma=0.0;
    datetime last_high_time=0,last_low_time=0,newest_signal_time=0;
    int structure=0;
@@ -746,21 +829,39 @@ bool Rebuild(const bool permit_alert)
          // A high can only be called HH or LH when both pivots are inside the
          // processed range.  Treating its first high as an HH would create a
          // false BOS without evidence of an earlier high.
-         int high_kind=!have_high?0:(swing_high>last_high?1:-1);
-         have_high=true; last_high=swing_high; last_high_time=rates[pivot].time; high_broken=false;
-         last_high_kind=high_kind;
-         if(draw_anchored_structure && high_kind!=0)
-            DrawStructurePoint(high_kind>0?"HH":"LH",last_high_time,last_high);
+         int high_kind=0;
+         bool replacing=last_pivot_side==1;
+         int old_kind=last_high_kind;
+         datetime old_time=last_high_time;
+         if(AcceptStructureHigh(swing_high,have_high,last_high,last_pivot_side,
+                                have_high_reference,high_reference,high_kind))
+           {
+            if(draw_anchored_structure && replacing && old_kind!=0)
+               ObjectDelete(0,g_prefix+"STRUCTURE_"+(old_kind>0?"HH_":"LH_")+(string)old_time);
+            last_high_time=rates[pivot].time; high_broken=false;
+            last_high_kind=high_kind;
+            if(draw_anchored_structure && high_kind!=0)
+               DrawStructurePoint(high_kind>0?"HH":"LH",last_high_time,last_high);
+           }
         }
       if(PivotLow(rates,total,pivot,length))
         {
          double swing_low=rates[pivot].low;
          // As with highs, do not invent a type for the first visible low.
-         int low_kind=!have_low?0:(swing_low<last_low?1:-1);
-         have_low=true; last_low=swing_low; last_low_time=rates[pivot].time; low_broken=false;
-         last_low_kind=low_kind;
-         if(draw_anchored_structure && low_kind!=0)
-            DrawStructurePoint(low_kind>0?"LL":"HL",last_low_time,last_low);
+         int low_kind=0;
+         bool replacing=last_pivot_side==-1;
+         int old_kind=last_low_kind;
+         datetime old_time=last_low_time;
+         if(AcceptStructureLow(swing_low,have_low,last_low,last_pivot_side,
+                               have_low_reference,low_reference,low_kind))
+           {
+            if(draw_anchored_structure && replacing && old_kind!=0)
+               ObjectDelete(0,g_prefix+"STRUCTURE_"+(old_kind>0?"LL_":"HL_")+(string)old_time);
+            last_low_time=rates[pivot].time; low_broken=false;
+            last_low_kind=low_kind;
+            if(draw_anchored_structure && low_kind!=0)
+               DrawStructurePoint(low_kind>0?"LL":"HL",last_low_time,last_low);
+           }
         }
 
       bool ma_long=true,ma_short=true;
