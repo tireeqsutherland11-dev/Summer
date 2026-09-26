@@ -1,5 +1,5 @@
 #property copyright "Market Trend Analyser conversion"
-#property version   "1.72"
+#property version   "1.62"
 #property strict
 #property description "Road: MT5 port of the Market Trend Analyser Pine Script."
 #property description "Signal/visualisation EA only; the source indicator contains no trading rules."
@@ -11,8 +11,6 @@ enum ROAD_ADX_SCOPE { ROAD_BOS_ONLY=0, ROAD_BOS_AND_CHOCH=1 };
 enum ROAD_ATR_MODE { ROAD_ATR_MINIMUM=0, ROAD_ATR_MAXIMUM=1, ROAD_ATR_RANGE=2 };
 enum ROAD_LABEL_SIZE { ROAD_TINY=7, ROAD_SMALL=9, ROAD_NORMAL=11, ROAD_LARGE=14 };
 enum ROAD_TREND_PIVOT_SOURCE { ROAD_TREND_HIGH_LOW=0, ROAD_TREND_CLOSE=1 };
-enum ROAD_LIQUIDITY_AREA { ROAD_LIQUIDITY_WICK_EXTREMITY=0, ROAD_LIQUIDITY_FULL_RANGE=1 };
-enum ROAD_LIQUIDITY_FILTER { ROAD_LIQUIDITY_COUNT=0, ROAD_LIQUIDITY_VOLUME=1 };
 
 input group "Structure Processing"
 input ENUM_TIMEFRAMES Structure_Timeframe=PERIOD_H1;
@@ -52,9 +50,6 @@ input group "CHoCH Display"
 input bool Show_CHoCH_Labels=true;
 input color Bullish_CHoCH_Color=clrLime;
 input color Bearish_CHoCH_Color=clrMagenta;
-
-input group "Lower-Timeframe Structure Display"
-input bool Show_LTF_Structure=true;
 
 input group "Labels and Lines"
 input ROAD_LABEL_SIZE Label_Size=ROAD_SMALL;
@@ -113,29 +108,12 @@ input double Momentum_Maximum_Ratio=2.00;
 input group "Setup and Entry"
 input ENUM_TIMEFRAMES Setup_Entry_Timeframe=PERIOD_M15;
 
-input group "Liquidity Swings (Setup/LTF only)"
-input bool Show_Liquidity_Swings=true;
-input int Liquidity_Pivot_Lookback=14;
-input ROAD_LIQUIDITY_AREA Liquidity_Swing_Area=ROAD_LIQUIDITY_WICK_EXTREMITY;
-input bool Liquidity_Intrabar_Precision=false;
-input ENUM_TIMEFRAMES Liquidity_Intrabar_Timeframe=PERIOD_M1;
-input ROAD_LIQUIDITY_FILTER Liquidity_Filter_By=ROAD_LIQUIDITY_COUNT;
-input double Liquidity_Filter_Value=0.0;
-input bool Show_Liquidity_Swing_High=true;
-input color Liquidity_High_Color=clrRed;
-input color Liquidity_High_Area_Color=clrRed;
-input bool Show_Liquidity_Swing_Low=true;
-input color Liquidity_Low_Color=clrTeal;
-input color Liquidity_Low_Area_Color=clrTeal;
-input ROAD_LABEL_SIZE Liquidity_Label_Size=ROAD_TINY;
-
 input group "Alerts"
 input bool Enable_Popup_Alerts=true;
 input bool Enable_Push_Notifications=false;
 
 string g_prefix="";
 datetime g_last_bar=0;
-datetime g_last_setup_bar=0;
 int g_ma_handle=INVALID_HANDLE;
 int g_htf_ma_handle=INVALID_HANDLE;
 int g_adx_handle=INVALID_HANDLE;
@@ -365,213 +343,6 @@ void DrawSegment(const string id,const datetime from,const double from_price,
    ObjectSetInteger(0,name,OBJPROP_SELECTABLE,false);
   }
 
-string LiquidityVolumeText(const double value)
-  {
-   if(value>=1000000000.0) return DoubleToString(value/1000000000.0,1)+"B";
-   if(value>=1000000.0) return DoubleToString(value/1000000.0,1)+"M";
-   if(value>=1000.0) return DoubleToString(value/1000.0,1)+"K";
-   return DoubleToString(value,0);
-  }
-
-void SetLiquidityRectangle(const string id,const datetime left,const double top,
-                           const datetime right,const double bottom,const color clr)
-  {
-   string name=g_prefix+id;
-   if(ObjectFind(0,name)<0 && !ObjectCreate(0,name,OBJ_RECTANGLE,0,left,top,right,bottom)) return;
-   ObjectMove(0,name,0,left,top);
-   ObjectMove(0,name,1,right,bottom);
-   ObjectSetInteger(0,name,OBJPROP_COLOR,clr);
-   ObjectSetInteger(0,name,OBJPROP_FILL,true);
-   ObjectSetInteger(0,name,OBJPROP_BACK,true);
-   ObjectSetInteger(0,name,OBJPROP_SELECTABLE,false);
-  }
-
-double LiquidityBarVolume(const MqlRates &bar,const datetime next_time,
-                          const double top,const double bottom)
-  {
-   if(!(bar.low<top && bar.high>bottom)) return 0.0;
-   if(!Liquidity_Intrabar_Precision) return (double)bar.tick_volume;
-   MqlRates lower[];
-   datetime end_time=next_time>bar.time?next_time-1:
-                     bar.time+MathMax(1,PeriodSeconds(SetupTimeframe()))-1;
-   int copied=CopyRates(_Symbol,Liquidity_Intrabar_Timeframe,bar.time,end_time,lower);
-   if(copied<=0) return 0.0;
-   double volume=0.0;
-   for(int i=0;i<copied;i++)
-      if(lower[i].low<top && lower[i].high>bottom)
-         volume+=(double)lower[i].tick_volume;
-   return volume;
-  }
-
-// Select only retracement swings that are subsequently validated by
-// continuation structure.  A bearish trend contributes its latest LH when
-// price closes below an LL (bearish BOS); a bullish trend contributes its
-// latest HL when price closes above an HH (bullish BOS).  Keeping this as a
-// separate replay lets the renderer wait for the BOS instead of exposing an
-// unconfirmed liquidity area in real time.
-void FindLiquidityBosOrigins(const MqlRates &rates[],const int total,const int length,
-                             bool &eligible_high[],bool &eligible_low[])
-  {
-   ArrayResize(eligible_high,total);
-   ArrayResize(eligible_low,total);
-   for(int i=0;i<total;i++) { eligible_high[i]=false; eligible_low[i]=false; }
-
-   bool have_high=false,have_low=false,high_broken=false,low_broken=false;
-   double last_high=0.0,last_low=0.0;
-   int last_high_kind=0,last_low_kind=0;
-   int candidate_lh=-1,candidate_hl=-1;
-   int trend=0;
-   for(int i=length;i<total;i++)
-     {
-      int pivot=i-length;
-      if(PivotHigh(rates,total,pivot,length))
-        {
-         double value=rates[pivot].high;
-         int kind=!have_high?0:(value>last_high?1:-1);
-         have_high=true; last_high=value; last_high_kind=kind; high_broken=false;
-         // An LH is a liquidity origin only when a bearish trend was already
-         // established. A later bearish BOS will validate this candidate.
-         candidate_lh=(kind<0 && trend<0)?pivot:-1;
-        }
-      if(PivotLow(rates,total,pivot,length))
-        {
-         double value=rates[pivot].low;
-         int kind=!have_low?0:(value<last_low?1:-1);
-         have_low=true; last_low=value; last_low_kind=kind; low_broken=false;
-         // The bullish counterpart is the latest HL formed in an established
-         // uptrend, pending a close-confirmed bullish BOS.
-         candidate_hl=(kind<0 && trend>0)?pivot:-1;
-        }
-
-      if(have_high && last_high_kind!=0 && !high_broken && rates[i].close>last_high)
-        {
-         high_broken=true;
-         if(last_high_kind>0 && trend>0 && candidate_hl>=0)
-            eligible_low[candidate_hl]=true;
-         trend=1;
-         candidate_hl=-1;
-         candidate_lh=-1;
-        }
-      if(have_low && last_low_kind!=0 && !low_broken && rates[i].close<last_low)
-        {
-         low_broken=true;
-         if(last_low_kind>0 && trend<0 && candidate_lh>=0)
-            eligible_high[candidate_lh]=true;
-         trend=-1;
-         candidate_lh=-1;
-         candidate_hl=-1;
-        }
-     }
-  }
-
-// BOS-confirmed liquidity swings are intentionally rendered only while the
-// chart itself is on Setup_Entry_Timeframe: the zones are an entry-context
-// overlay and must never leak onto the structure/HTF view.
-void DrawSetupLiquiditySwings(const MqlRates &rates[],const int total)
-  {
-   if(!Show_Liquidity_Swings || (ENUM_TIMEFRAMES)_Period!=SetupTimeframe()) return;
-   int length=MathMax(1,MathMin(200,Liquidity_Pivot_Lookback));
-   if(total<2*length+2) return;
-   int seconds=MathMax(1,PeriodSeconds(SetupTimeframe()));
-   bool eligible_high[],eligible_low[];
-   FindLiquidityBosOrigins(rates,total,length,eligible_high,eligible_low);
-
-   for(int side=0;side<2;side++)
-     {
-      bool high_side=side==0;
-      if((high_side && !Show_Liquidity_Swing_High) ||
-         (!high_side && !Show_Liquidity_Swing_Low)) continue;
-      bool active=false,crossed=false,qualified=false;
-      double top=0.0,bottom=0.0,count=0.0,volume=0.0;
-      datetime pivot_time=0;
-      string key="";
-      color line_color=high_side?Liquidity_High_Color:Liquidity_Low_Color;
-      color area_color=high_side?Liquidity_High_Area_Color:Liquidity_Low_Area_Color;
-      string active_id="LIQ_"+(high_side?"HIGH_ACTIVE":"LOW_ACTIVE");
-      int pivots=0;
-      for(int scan=2*length;scan<total;scan++)
-        {
-         int scan_pivot=scan-length;
-         bool found=high_side?PivotHigh(rates,total,scan_pivot,length):
-                              PivotLow(rates,total,scan_pivot,length);
-         if(found && (high_side?eligible_high[scan_pivot]:eligible_low[scan_pivot])) pivots++;
-        }
-      // Pine requests at most 500 boxes in total. Retaining 250 candidates on
-      // each side gives the same hard ceiling without relying on MT5 cleanup.
-      int skip=MathMax(0,pivots-250);
-
-      for(int i=2*length;i<total;i++)
-        {
-         int pivot=i-length;
-         bool found=high_side?PivotHigh(rates,total,pivot,length):PivotLow(rates,total,pivot,length);
-         found=found && (high_side?eligible_high[pivot]:eligible_low[pivot]);
-         if(found)
-           {
-            if(skip>0) { skip--; active=false; continue; }
-            if(active && qualified && !crossed)
-               ObjectMove(0,g_prefix+key+"_LEVEL",1,rates[pivot].time,high_side?top:bottom);
-            pivot_time=rates[pivot].time;
-            top=high_side?rates[pivot].high:
-                (Liquidity_Swing_Area==ROAD_LIQUIDITY_WICK_EXTREMITY?
-                 MathMin(rates[pivot].open,rates[pivot].close):rates[pivot].high);
-            bottom=high_side?
-                   (Liquidity_Swing_Area==ROAD_LIQUIDITY_WICK_EXTREMITY?
-                    MathMax(rates[pivot].open,rates[pivot].close):rates[pivot].low):
-                   rates[pivot].low;
-            count=0.0; volume=0.0; crossed=false; qualified=false; active=true;
-            key="LIQ_"+(high_side?"HIGH_":"LOW_")+(string)pivot_time;
-            SetLiquidityRectangle(active_id,pivot_time,top,pivot_time,bottom,
-                                  (color)ColorToARGB(area_color,51));
-            continue;
-           }
-         if(!active) continue;
-
-         int tested=i-length;
-         bool overlap=rates[tested].low<top && rates[tested].high>bottom;
-         double old_target=Liquidity_Filter_By==ROAD_LIQUIDITY_COUNT?count:volume;
-         if(overlap)
-           {
-            count+=1.0;
-            datetime next_time=tested+1<total?rates[tested+1].time:rates[tested].time+seconds;
-            volume+=LiquidityBarVolume(rates[tested],next_time,top,bottom);
-           }
-         double target=Liquidity_Filter_By==ROAD_LIQUIDITY_COUNT?count:volume;
-         if(!qualified && old_target<=Liquidity_Filter_Value && target>Liquidity_Filter_Value)
-           {
-            qualified=true;
-            DrawSegment(key+"_LEVEL",pivot_time,high_side?top:bottom,
-                        rates[i].time,high_side?top:bottom,line_color,STYLE_SOLID,1);
-            DrawText(key+"_LABEL",pivot_time,high_side?top:bottom,
-                     LiquidityVolumeText(volume),line_color,!high_side,(int)Liquidity_Label_Size);
-            SetLiquidityRectangle(key+"_FILTERED",pivot_time,top,
-                                  pivot_time+(int)count*seconds,bottom,
-                                  (color)ColorToARGB(area_color,128));
-           }
-         if(qualified)
-           {
-            ObjectSetString(0,g_prefix+key+"_LABEL",OBJPROP_TEXT,LiquidityVolumeText(volume));
-            if(!crossed)
-               ObjectMove(0,g_prefix+key+"_LEVEL",1,rates[i].time+3*seconds,high_side?top:bottom);
-            SetLiquidityRectangle(key+"_FILTERED",pivot_time,top,
-                                  pivot_time+(int)count*seconds,bottom,
-                                  (color)ColorToARGB(area_color,128));
-           }
-         if(!crossed && ((high_side && rates[i].close>top) || (!high_side && rates[i].close<bottom)))
-           {
-            crossed=true;
-            if(qualified)
-              {
-               ObjectMove(0,g_prefix+key+"_LEVEL",1,rates[i].time,high_side?top:bottom);
-               ObjectSetInteger(0,g_prefix+key+"_LEVEL",OBJPROP_STYLE,STYLE_DASH);
-              }
-           }
-         datetime active_right=crossed?pivot_time:rates[i].time+3*seconds;
-         SetLiquidityRectangle(active_id,pivot_time,top,active_right,bottom,
-                               (color)ColorToARGB(area_color,51));
-        }
-     }
-  }
-
 bool TrendPivot(const MqlRates &rates[],const int total,const int index,
                 const int strength,const bool high)
   {
@@ -782,10 +553,6 @@ void EvaluateSignificantSR(const datetime chart_time,const double current_price,
 void DrawSignal(const string kind,const int direction,const datetime swing_time,
                 const double level,const MqlRates &bar)
   {
-   // The setup chart can be kept visually clean without disabling structure
-   // analysis.  This guard affects only BOS/CHoCH objects; both timeframe
-   // state machines continue to run for bias, tradeability, and alerts.
-   if(!Show_LTF_Structure && (ENUM_TIMEFRAMES)_Period==SetupTimeframe()) return;
    bool bos=kind=="BOS";
    if((bos && !Show_BOS_Labels) || (!bos && !Show_CHoCH_Labels)) return;
    color clr=direction>0?(bos?Bullish_BOS_Color:Bullish_CHoCH_Color)
@@ -1095,7 +862,6 @@ bool Rebuild(const bool permit_alert)
    if(draw_anchored_structure && Show_Swing_Points && have_low)
       DrawSegment("LAST_LOW",last_low_time,last_low,rates[total-1].time,last_low,clrTeal,STYLE_DOT,1);
    if(!draw_anchored_structure) DrawChartTimeframeStructure();
-   DrawSetupLiquiditySwings(setup_rates,setup_total);
 
    MqlTick current_tick;
    double current_price=SymbolInfoTick(_Symbol,current_tick) && current_tick.bid>0.0
@@ -1220,12 +986,7 @@ int OnInit()
       Volume_Average_Length<1 || Volume_Minimum_Ratio<0.0 ||
       Volume_Maximum_Ratio<Volume_Minimum_Ratio ||
       Momentum_Average_Length<1 || Momentum_Minimum_Ratio<0.0 ||
-      Momentum_Maximum_Ratio<Momentum_Minimum_Ratio ||
-      Liquidity_Pivot_Lookback<1 || Liquidity_Pivot_Lookback>200 ||
-      Liquidity_Filter_Value<0.0 ||
-      (Liquidity_Intrabar_Precision &&
-       (PeriodSeconds(Liquidity_Intrabar_Timeframe)<=0 ||
-        PeriodSeconds(Liquidity_Intrabar_Timeframe)>=PeriodSeconds(SetupTimeframe()))))
+      Momentum_Maximum_Ratio<Momentum_Minimum_Ratio)
       return INIT_PARAMETERS_INCORRECT;
    ENUM_TIMEFRAMES timeframe=RoadTimeframe();
    g_prefix="Road_"+(string)ChartID()+"_";
@@ -1239,11 +1000,7 @@ int OnInit()
       (g_trend_atr_handle=iATR(_Symbol,BoundaryTimeframe(),ATR_Length))==INVALID_HANDLE) return INIT_FAILED;
    if(!EventSetTimer(2)) return INIT_FAILED;
    datetime current=iTime(_Symbol,RoadTimeframe(),0);
-   if(current!=0 && Rebuild(false))
-     {
-      g_last_bar=current;
-      g_last_setup_bar=iTime(_Symbol,SetupTimeframe(),0);
-     }
+   if(current!=0 && Rebuild(false)) g_last_bar=current;
    return INIT_SUCCEEDED;
   }
 
@@ -1263,20 +1020,13 @@ void OnDeinit(const int reason)
 void CheckForBar()
   {
    datetime current=iTime(_Symbol,RoadTimeframe(),0);
-   datetime setup_current=iTime(_Symbol,SetupTimeframe(),0);
-   bool structure_changed=current!=0 && current!=g_last_bar;
-   bool setup_changed=setup_current!=0 && setup_current!=g_last_setup_bar;
-   if(structure_changed || setup_changed)
+   if(current!=0 && current!=g_last_bar)
      {
-      bool alert=structure_changed && g_last_bar!=0;
+      bool alert=g_last_bar!=0;
       // Do not consume the bar until every required series has loaded.  When
       // Rebuild reports temporary unavailability, OnTimer will retry in two
       // seconds even if no tick arrives on the newly selected timeframe.
-      if(Rebuild(alert))
-        {
-         g_last_bar=current;
-         g_last_setup_bar=setup_current;
-        }
+      if(Rebuild(alert)) g_last_bar=current;
      }
   }
 
