@@ -578,11 +578,13 @@ Key rebuild-local variables
 
 Changing globals directly is not a supported user control; they are derived
 state. On initialization, Road validates bounded inputs, creates only required
-indicator handles, starts a two-second timer, and performs a non-alerting build.
-If required handles/data are unavailable, initialization or that rebuild stops
-rather than operating on partial enabled-filter data. On deinitialization it
-kills the timer, releases every created handle, deletes only prefixed objects,
-and clears the chart comment.
+indicator handles, starts a two-second timer, and attempts a non-alerting build.
+If history or indicator data are still synchronizing (as commonly happens just
+after a chart timeframe change), the incomplete build retains the prior display
+and does not consume the current bar; the timer retries it every two seconds
+until all required data are ready. On deinitialization Road kills the timer,
+releases every created handle, deletes only prefixed objects, and clears the
+chart comment.
 
 
 15. PRACTICAL INTERACTION MAP
