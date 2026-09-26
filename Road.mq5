@@ -674,9 +674,9 @@ void DrawDashboard(const string structure_bias,const string setup_bias,
    DrawDashboardLine(7,"Technical Space: "+(clear_space?"PASS":"BLOCKED"));
    DrawDashboardLine(8,"Healthy Extension: "+(healthy_extension?"PASS":"BLOCKED"));
    DrawDashboardLine(9,"Market Volume: "+(good_volume?"PASS":"BLOCKED")+
-                         " ("+DoubleToString(volume_ratio,2)+"x average)"));
+                         " ("+DoubleToString(volume_ratio,2)+"x average)");
    DrawDashboardLine(10,"Price Momentum: "+(good_momentum?"PASS":"BLOCKED")+
-                          " ("+DoubleToString(momentum_ratio,2)+"x average range)"));
+                          " ("+DoubleToString(momentum_ratio,2)+"x average range)");
    DrawDashboardLine(11,"Reason: "+optimal_reason);
   }
 
