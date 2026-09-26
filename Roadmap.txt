@@ -5,11 +5,11 @@ Purpose and scope
 -----------------
 Road.mq5 is a MetaTrader 5 Expert Advisor used for analysis, chart drawing, and
 alerts. It does not place, modify, or close orders. On each newly detected bar
-of the selected LTF timeframe it rebuilds its view from closed candles,
-classifies market structure, draws enabled overlays, updates the dashboard, and
-optionally alerts on a structure event confirmed by the most recently closed
-bar. Both OnTick and a two-second timer check for a new bar, so a quiet market
-can still trigger a refresh.
+of the Structure, Setup, or LTF timeframe it rebuilds its view from closed
+candles, classifies market structure, draws enabled overlays, updates the
+dashboard, and optionally alerts on a structure event confirmed by the most
+recently closed bar. Both OnTick and a two-second timer check for new bars, so a
+quiet market can still trigger a refresh.
 
 The processing pipeline is:
 
@@ -48,14 +48,12 @@ Structure_Timeframe (default PERIOD_H1)
   explicit opt-in to chart-dependent analysis.
 
 Setup_Entry_Timeframe (default PERIOD_M15)
-  Drives the independent MTF/setup bias and the Liquidity Swings overlay.
-  Liquidity objects are deliberately shown
-  only when the active chart period equals this timeframe.
+  Drives the independent MTF/setup bias used in timeframe correlation.
 
 LTF_Timeframe (default PERIOD_M5)
-  Supplies the final confirmation bias for timeframe correlation. Market Bias
-  and Market Tradeability refresh on each new LTF bar. A definite directional
-  LTF BOS is required, while matching HTF and MTF biases may be transitional.
+  Supplies the final confirmation bias for timeframe correlation. A definite
+  directional LTF BOS is required, while matching HTF and MTF biases may be
+  transitional.
 
 Bars_To_Process (default 100; valid 100 or greater)
   Requested count of closed Structure_Timeframe candles replayed on every
@@ -65,9 +63,11 @@ Bars_To_Process (default 100; valid 100 or greater)
   the reconstructed structure. Initialization rejects values below 100.
 
 Result
-  Road refreshes only when the opening time of LTF bar 0 changes. The
-  first initialization rebuild never alerts; later new-bar rebuilds may alert.
-  Its object prefix contains the chart ID, isolating its objects per chart.
+  Road refreshes when the opening time of the Structure, Setup, or LTF bar 0
+  changes. Monitoring every analytical timeframe also supports nonstandard
+  timeframe combinations where the LTF is not the fastest source. The first
+  initialization rebuild never alerts; later new-bar rebuilds may alert. Its
+  object prefix contains the chart ID, isolating its objects per chart.
 
 
 2. SWING-DETECTION AND STRUCTURE SYSTEM
@@ -131,15 +131,6 @@ Show_BOS_Labels / Show_CHoCH_Labels (defaults true)
   Control drawing of the corresponding signal. Turning one off suppresses both
   its text and its structure segment because DrawSignal exits immediately. It
   does not suppress event classification, market bias, tradeability, or alert.
-
-Show_LTF_Structure (default true)
-  Controls BOS and CHoCH drawing only when the active chart period equals
-  Setup_Entry_Timeframe. Turning it off keeps the setup chart clear while all
-  lower-timeframe structure detection continues in the background for setup
-  bias, timeframe correlation, tradeability, the dashboard, and alerts. It
-  does not hide BOS or CHoCH on other chart periods, including the configured
-  Structure_Timeframe and higher timeframes. Swing-point visibility remains
-  independently controlled by Show_Swing_Points.
 
 Bullish_BOS_Color / Bearish_BOS_Color (defaults teal/red)
 Bullish_CHoCH_Color / Bearish_CHoCH_Color (defaults lime/magenta)
@@ -419,46 +410,6 @@ usually make its width/tolerance less reactive; higher current ATR expands the
 allowed touch/break distance, while lower ATR tightens it.
 
 
-10A. SETUP/LTF LIQUIDITY SWINGS
---------------------------------
-
-Show_Liquidity_Swings (default true)
-  Enables BOS-confirmed liquidity swings. In an established downtrend, only
-  the latest lower high that subsequently leads to a close-confirmed bearish
-  BOS is drawn. In an established uptrend, only the latest higher low that
-  subsequently leads to a close-confirmed bullish BOS is drawn. Candidate
-  swings that never produce continuation BOS are not displayed. The
-  calculation always uses closed Setup_Entry_Timeframe candles, and its objects
-  are rendered only on a chart whose period equals Setup_Entry_Timeframe. A new
-  setup candle triggers a rebuild even when the structure timeframe has not
-  opened a new candle.
-
-Liquidity_Pivot_Lookback (default 14; valid 1..200)
-  Requires this many candles on both sides of a strict swing. Like the Pine
-  source, a swing is known only after the right-hand lookback has closed.
-
-Liquidity_Swing_Area
-  WICK_EXTREMITY spans a high swing from the candle body top to its high and a
-  low swing from its low to the candle body bottom. FULL_RANGE uses the whole
-  pivot candle range.
-
-Liquidity_Intrabar_Precision / Liquidity_Intrabar_Timeframe
-  With precision off, overlapping setup-candle tick volume is accumulated.
-  With it on, only lower-timeframe candles that overlap the swing area add
-  their tick volume. The selected intrabar period must be shorter than the
-  setup period.
-
-Liquidity_Filter_By / Liquidity_Filter_Value
-  Select whether accumulated overlapping candle count or accumulated volume
-  must cross the threshold before the colored level, filtered area, and volume
-  label appear. The faint active area is visible immediately. A close through
-  the swing extremity ends and dashes the level, matching the source script.
-
-Show_Liquidity_Swing_High / Show_Liquidity_Swing_Low and style inputs
-  Independently toggle the two sides and set their level, area, and label
-  colors. Liquidity_Label_Size uses the shared tiny/small/normal/large sizes.
-
-
 11. MARKET BIAS AND TRADEABILITY SYSTEM
 ------------------------------------------
 
@@ -583,8 +534,10 @@ Eligibility and deduplication
 
 Persistent globals
   g_prefix             Unique "Road_<chart ID>_" object-name prefix.
-  g_last_bar           Current open LTF bar time used for new-bar gating.
-  g_ma_handle          LTF MA indicator handle, or INVALID_HANDLE.
+  g_last_ltf_bar       Current open LTF bar time used for refresh gating.
+  g_last_structure_bar Current open structure bar time used for refresh gating.
+  g_last_setup_bar     Current open setup bar time used for refresh gating.
+  g_ma_handle          Structure-timeframe MA handle, or INVALID_HANDLE.
   g_htf_ma_handle      HTF MA indicator handle, or INVALID_HANDLE.
   g_adx_handle         Structure-timeframe ADX handle, or INVALID_HANDLE.
   g_atr_handle         Structure-timeframe ATR handle, or INVALID_HANDLE.
