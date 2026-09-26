@@ -402,10 +402,15 @@ allowed touch/break distance, while lower ATR tightens it.
 --------------------------------
 
 Show_Liquidity_Swings (default true)
-  Enables the LuxAlgo Liquidity Swings conversion. The calculation always uses
-  closed Setup_Entry_Timeframe candles, and its objects are rendered only on a
-  chart whose period equals Setup_Entry_Timeframe. A new setup candle triggers
-  a rebuild even when the structure timeframe has not opened a new candle.
+  Enables BOS-confirmed liquidity swings. In an established downtrend, only
+  the latest lower high that subsequently leads to a close-confirmed bearish
+  BOS is drawn. In an established uptrend, only the latest higher low that
+  subsequently leads to a close-confirmed bullish BOS is drawn. Candidate
+  swings that never produce continuation BOS are not displayed. The
+  calculation always uses closed Setup_Entry_Timeframe candles, and its objects
+  are rendered only on a chart whose period equals Setup_Entry_Timeframe. A new
+  setup candle triggers a rebuild even when the structure timeframe has not
+  opened a new candle.
 
 Liquidity_Pivot_Lookback (default 14; valid 1..200)
   Requires this many candles on both sides of a strict swing. Like the Pine
