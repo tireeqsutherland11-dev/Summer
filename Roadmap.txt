@@ -23,8 +23,8 @@ The processing pipeline is:
   7. Draw optional MA lines, current swing levels, higher-timeframe market
      boundaries, and trendline zones.
   8. Decide whether the structure is clean enough to be called tradeable.
-  9. Combine bias, boundary clearance, extension, and relative volume in the
-     Optimal Conditions Meter.
+  9. Combine bias, boundary clearance, extension, relative volume, and relative
+     price momentum in the Optimal Conditions Meter.
  10. Render the dashboard, send any eligible alert, and redraw the chart.
 
 All signals are based on closed candles (CopyRates starts at shift 1). A wick
@@ -428,8 +428,9 @@ The chart Comment displays:
   * ATR value and pass/block.
   * Whether the latest close is above/below each enabled MA.
   * Aggregate BOS and CHoCH filter pass/block states.
-  * The Optimal Conditions result, each of its four requirement states, the
-    latest volume-to-average ratio, and a specific failure-reason list.
+  * The Optimal Conditions result, each requirement state, the latest
+    volume-to-average and true-range-to-average ratios, and a specific
+    failure-reason list.
 
 Directional aggregation is bias-aware:
   * For bullish/undefined structure, BOS displays the bullish BOS qualification;
@@ -448,7 +449,7 @@ aggregate filter row carries the stricter full-body result.
 -----------------------------
 
 Use_Optimal_Conditions_Meter (default true)
-  Enables the final, informational gate. OPTIMAL is printed only when all four
+  Enables the final, informational gate. OPTIMAL is printed only when all five
   requirements below pass simultaneously. Turning it off prints OFF; it does
   not change structure, filters, chart signals, or alerts.
 
@@ -481,11 +482,22 @@ Good Market Volume
   MT5 tick volume is used because centralized real volume is not consistently
   available across instruments.
 
+Good Price Momentum
+  Momentum is the newest closed candle's true range divided by the average true
+  range of the preceding Momentum_Average_Length candles (default 20). True
+  range includes gaps from the preceding close, so the measure captures actual
+  price travel without imposing a bullish or bearish direction. It passes from
+  Momentum_Minimum_Ratio (default 0.50) through Momentum_Maximum_Ratio (default
+  2.00), inclusive. Below the band, price is considered sluggish; above the
+  band, price is considered too fast to enter without chasing. Volume and
+  momentum must both pass, which describes active but controlled conditions
+  rather than treating a volume spike alone as a suitable entry environment.
+
 Failure reasons
   NOT OPTIMAL is accompanied by every failed category: absent continuation
-  bias, the nearby boundary name, excessive/invalid extension, and volume that
-  is too low or too high. This makes the final result diagnostic rather than a
-  bare pass/fail flag.
+  bias, the nearby boundary name, excessive/invalid extension, volume that is
+  too low or too high, and momentum that is sluggish or too fast. This makes
+  the final result diagnostic rather than a bare pass/fail flag.
 
 
 13. ALERT SYSTEM
@@ -553,7 +565,8 @@ and clears the chart comment.
 
   Change the Optimal Conditions result:
     Incoming clean structure, Boundary_Clearance_ATR,
-    Maximum_Extension_ATR, Volume_Average_Length, and the volume ratio bounds.
+    Maximum_Extension_ATR, Volume_Average_Length, the volume ratio bounds,
+    Momentum_Average_Length, and the momentum ratio bounds.
 
   Change the structural TRADEABLE result:
     Only incoming confirmed pivot/break sequence (indirectly affected by the

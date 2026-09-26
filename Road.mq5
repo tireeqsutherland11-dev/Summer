@@ -1,5 +1,5 @@
 #property copyright "Market Trend Analyser conversion"
-#property version   "1.40"
+#property version   "1.50"
 #property strict
 #property description "Road: MT5 port of the Market Trend Analyser Pine Script."
 #property description "Signal/visualisation EA only; the source indicator contains no trading rules."
@@ -101,6 +101,9 @@ input double Maximum_Extension_ATR=3.0;
 input int Volume_Average_Length=20;
 input double Volume_Minimum_Ratio=0.50;
 input double Volume_Maximum_Ratio=2.00;
+input int Momentum_Average_Length=20;
+input double Momentum_Minimum_Ratio=0.50;
+input double Momentum_Maximum_Ratio=2.00;
 
 input group "Setup and Entry"
 input ENUM_TIMEFRAMES Setup_Entry_Timeframe=PERIOD_M15;
@@ -146,6 +149,17 @@ bool PivotLow(const MqlRates &rates[],const int total,const int index,const int 
    for(int i=index-length;i<=index+length;i++)
       if(i!=index && rates[i].low<=rates[index].low) return false;
    return true;
+  }
+
+// True range captures both the candle's travel and any gap from the preceding
+// close.  Relative true range is used as a direction-neutral momentum measure:
+// quiet/sluggish bars and unusually fast chase bars are both undesirable.
+double BarTrueRange(const MqlRates &rates[],const int index)
+  {
+   double range=rates[index].high-rates[index].low;
+   if(index<=0) return range;
+   return MathMax(range,MathMax(MathAbs(rates[index].high-rates[index-1].close),
+                                MathAbs(rates[index].low-rates[index-1].close)));
   }
 
 bool ParseSession(const string source,int &start_minutes,int &end_minutes)
@@ -542,7 +556,9 @@ void DrawDashboard(const int structure,const bool have_high,const double last_hi
                    const bool bull_bos_pass,const bool bear_bos_pass,
                    const bool bull_choch_pass,const bool bear_choch_pass,
                    const bool optimal,const bool clear_space,const bool healthy_extension,
-                   const bool good_volume,const double volume_ratio,const string optimal_reason)
+                   const bool good_volume,const double volume_ratio,
+                   const bool good_momentum,const double momentum_ratio,
+                   const string optimal_reason)
   {
    string bias=structure>0?"BULLISH":structure<0?"BEARISH":"UNDEFINED";
    string session=!Use_Session_Filter?"OFF":in_session?"IN":"OUT";
@@ -566,6 +582,7 @@ void DrawDashboard(const int structure,const bool have_high,const double last_hi
            "\n  Technical Space: ",clear_space?"PASS":"BLOCKED",
            "\n  Healthy Extension: ",healthy_extension?"PASS":"BLOCKED",
            "\n  Market Volume: ",good_volume?"PASS":"BLOCKED"," (",DoubleToString(volume_ratio,2),"x average)",
+           "\n  Price Momentum: ",good_momentum?"PASS":"BLOCKED"," (",DoubleToString(momentum_ratio,2),"x average range)",
            !Use_Optimal_Conditions_Meter?"":"\nReason: "+optimal_reason);
   }
 
@@ -784,8 +801,18 @@ void Rebuild(const bool permit_alert)
    double volume_ratio=average_volume>0.0?(double)rates[total-1].tick_volume/average_volume:0.0;
    bool good_volume=average_volume>0.0 && volume_ratio>=Volume_Minimum_Ratio &&
                     volume_ratio<=Volume_Maximum_Ratio;
-   bool optimal=tradeable && clear_space && healthy_extension && good_volume;
-   string optimal_reason="All four requirements are met";
+   int momentum_length=MathMin(Momentum_Average_Length,total-2);
+   double average_true_range=0.0;
+   for(int i=total-1-momentum_length;i<total-1;i++)
+      average_true_range+=BarTrueRange(rates,i);
+   if(momentum_length>0) average_true_range/=momentum_length;
+   double momentum_ratio=average_true_range>0.0?
+                         BarTrueRange(rates,total-1)/average_true_range:0.0;
+   bool good_momentum=average_true_range>0.0 &&
+                      momentum_ratio>=Momentum_Minimum_Ratio &&
+                      momentum_ratio<=Momentum_Maximum_Ratio;
+   bool optimal=tradeable && clear_space && healthy_extension && good_volume && good_momentum;
+   string optimal_reason="All five requirements are met";
    if(!optimal)
      {
       optimal_reason="";
@@ -794,6 +821,10 @@ void Rebuild(const bool permit_alert)
       if(!healthy_extension) optimal_reason+=(optimal_reason==""?"":"; ")+"price is overextended or lacks a valid corrective anchor";
       if(!good_volume) optimal_reason+=(optimal_reason==""?"":"; ")+
                          (volume_ratio<Volume_Minimum_Ratio?"volume is too low":"volume is too high");
+      if(!good_momentum) optimal_reason+=(optimal_reason==""?"":"; ")+
+                           (momentum_ratio<Momentum_Minimum_Ratio?
+                            "momentum is too low (price is sluggish)":
+                            "momentum is too high (price would need to be chased)");
      }
    DrawDashboard(structure,have_high,last_high,have_low,last_low,dashboard_session,
                  Use_ADX_Filter?adx[total-1]:0.0,dashboard_adx,
@@ -801,7 +832,8 @@ void Rebuild(const bool permit_alert)
                  Use_MA_Filter?ma[total-1]:0.0,last_htf_ma,tradeable,
                  dashboard_bull_bos,dashboard_bear_bos,
                  dashboard_bull_choch,dashboard_bear_choch,optimal,clear_space,
-                 healthy_extension,good_volume,volume_ratio,optimal_reason);
+                 healthy_extension,good_volume,volume_ratio,good_momentum,
+                 momentum_ratio,optimal_reason);
    if(permit_alert && newest_signal_time==rates[total-1].time && newest_signal!="")
       SendRoadAlert(newest_signal,newest_signal_time);
    ChartRedraw();
@@ -819,7 +851,9 @@ int OnInit()
       Trendline_Zone_Transparency<0 || Trendline_Zone_Transparency>100 ||
       Boundary_Clearance_ATR<0.0 || Maximum_Extension_ATR<=0.0 ||
       Volume_Average_Length<1 || Volume_Minimum_Ratio<0.0 ||
-      Volume_Maximum_Ratio<Volume_Minimum_Ratio)
+      Volume_Maximum_Ratio<Volume_Minimum_Ratio ||
+      Momentum_Average_Length<1 || Momentum_Minimum_Ratio<0.0 ||
+      Momentum_Maximum_Ratio<Momentum_Minimum_Ratio)
       return INIT_PARAMETERS_INCORRECT;
    ENUM_TIMEFRAMES timeframe=RoadTimeframe();
    g_prefix="Road_"+(string)ChartID()+"_";
