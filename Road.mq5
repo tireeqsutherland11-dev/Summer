@@ -1,5 +1,5 @@
 #property copyright "Market Trend Analyser conversion"
-#property version   "1.63"
+#property version   "1.64"
 #property strict
 #property description "Road: MT5 port of the Market Trend Analyser Pine Script."
 #property description "Signal/visualisation EA only; the source indicator contains no trading rules."
@@ -12,16 +12,18 @@ enum ROAD_ATR_MODE { ROAD_ATR_MINIMUM=0, ROAD_ATR_MAXIMUM=1, ROAD_ATR_RANGE=2 };
 enum ROAD_LABEL_SIZE { ROAD_TINY=7, ROAD_SMALL=9, ROAD_NORMAL=11, ROAD_LARGE=14 };
 enum ROAD_TREND_PIVOT_SOURCE { ROAD_TREND_HIGH_LOW=0, ROAD_TREND_CLOSE=1 };
 
+input group "Timeframe Inputs"
+input ENUM_TIMEFRAMES Boundary_Timeframe=PERIOD_H4;
+input ENUM_TIMEFRAMES Structure_Timeframe=PERIOD_H1; // HTF
+input ENUM_TIMEFRAMES Setup_Entry_Timeframe=PERIOD_M15; // MTF
+input ENUM_TIMEFRAMES LTF_Timeframe=PERIOD_M5;
+
 input group "Structure Processing"
-input ENUM_TIMEFRAMES Structure_Timeframe=PERIOD_H1;
 input int Bars_To_Process=100;
 
 input group "Swing Detection"
 input int Swing_Detection_Length=5;
 input bool Show_Swing_Points=true;
-
-input group "Market Boundaries"
-input ENUM_TIMEFRAMES Boundary_Timeframe=PERIOD_H4;
 
 input group "Market Boundaries - Support / Resistance"
 input bool Show_HTF_Support_Resistance=true;
@@ -84,9 +86,6 @@ input group "ATR Filter"
 input bool Use_ATR_Filter=true;
 input int ATR_Length=14;
 
-input group "Setup and Entry"
-input ENUM_TIMEFRAMES Setup_Entry_Timeframe=PERIOD_M15;
-
 input group "Alerts"
 input bool Enable_Popup_Alerts=true;
 input bool Enable_Push_Notifications=false;
@@ -120,7 +119,7 @@ int g_htf_ma_handle=INVALID_HANDLE;
 int g_adx_handle=INVALID_HANDLE;
 int g_atr_handle=INVALID_HANDLE;
 int g_trend_atr_handle=INVALID_HANDLE;
-int g_setup_atr_handle=INVALID_HANDLE;
+int g_ltf_atr_handle=INVALID_HANDLE;
 
 struct ROAD_STRUCTURE_STATE
   {
@@ -137,6 +136,11 @@ struct ROAD_STRUCTURE_STATE
 ENUM_TIMEFRAMES SetupTimeframe()
   {
    return Setup_Entry_Timeframe==PERIOD_CURRENT?(ENUM_TIMEFRAMES)_Period:Setup_Entry_Timeframe;
+  }
+
+ENUM_TIMEFRAMES LTFTimeframe()
+  {
+   return LTF_Timeframe==PERIOD_CURRENT?(ENUM_TIMEFRAMES)_Period:LTF_Timeframe;
   }
 
 // Replays confirmed pivots on any timeframe without drawing them.  This keeps
@@ -657,7 +661,7 @@ void DrawDashboardLine(const int row,const string value)
    ObjectSetString(0,name,OBJPROP_TEXT,value);
   }
 
-void DrawDashboard(const string structure_bias,const string setup_bias,
+void DrawDashboard(const string structure_bias,const string setup_bias,const string ltf_bias,
                    const bool bias_ready,const bool tradeable,const string tradeability_reason,
                    const bool optimal,const bool clear_space,const bool healthy_extension,
                    const bool good_volume,const double volume_ratio,
@@ -665,19 +669,20 @@ void DrawDashboard(const string structure_bias,const string setup_bias,
                    const string optimal_reason)
   {
    Comment("");
-   DrawDashboardLine(0,"Market Bias (Structure): "+structure_bias);
-   DrawDashboardLine(1,"Market Bias (LTF/Setup): "+setup_bias);
-   DrawDashboardLine(2,"Market Tradeability: "+(tradeable?"Tradable":"Not Tradable"));
-   DrawDashboardLine(3,"Tradeability Reason: "+tradeability_reason);
-   DrawDashboardLine(5,"Optimal Conditions: "+(optimal?"OPTIMAL":"NOT OPTIMAL"));
-   DrawDashboardLine(6,"Definite Bias: "+(bias_ready?"PASS":"BLOCKED"));
-   DrawDashboardLine(7,"Technical Space: "+(clear_space?"PASS":"BLOCKED"));
-   DrawDashboardLine(8,"Healthy Extension: "+(healthy_extension?"PASS":"BLOCKED"));
-   DrawDashboardLine(9,"Market Volume: "+(good_volume?"PASS":"BLOCKED")+
+   DrawDashboardLine(0,"Market Bias (HTF/Structure): "+structure_bias);
+   DrawDashboardLine(1,"Market Bias (MTF/Setup): "+setup_bias);
+   DrawDashboardLine(2,"Market Bias (LTF): "+ltf_bias);
+   DrawDashboardLine(3,"Market Tradeability: "+(tradeable?"Tradable":"Not Tradable"));
+   DrawDashboardLine(4,"Tradeability Reason: "+tradeability_reason);
+   DrawDashboardLine(6,"Optimal Conditions: "+(optimal?"OPTIMAL":"NOT OPTIMAL"));
+   DrawDashboardLine(7,"Timeframe Correlation: "+(bias_ready?"PASS":"BLOCKED"));
+   DrawDashboardLine(8,"Technical Space: "+(clear_space?"PASS":"BLOCKED"));
+   DrawDashboardLine(9,"Healthy Extension: "+(healthy_extension?"PASS":"BLOCKED"));
+   DrawDashboardLine(10,"Market Volume: "+(good_volume?"PASS":"BLOCKED")+
                          " ("+DoubleToString(volume_ratio,2)+"x average)");
-   DrawDashboardLine(10,"Price Momentum: "+(good_momentum?"PASS":"BLOCKED")+
+   DrawDashboardLine(11,"Price Momentum: "+(good_momentum?"PASS":"BLOCKED")+
                           " ("+DoubleToString(momentum_ratio,2)+"x average range)");
-   DrawDashboardLine(11,"Reason: "+optimal_reason);
+   DrawDashboardLine(12,"Reason: "+optimal_reason);
   }
 
 // Returns false while history or an indicator is still being synchronized.
@@ -707,9 +712,15 @@ bool Rebuild(const bool permit_alert)
    MqlRates setup_rates[];
    bool have_setup=AnalyseStructure(SetupTimeframe(),wanted,setup_state,setup_rates);
    int setup_total=ArraySize(setup_rates);
-   double setup_atr_values[];
-   bool have_setup_atr=have_setup && CopyIndicator(g_setup_atr_handle,0,setup_total,setup_atr_values);
-   if(!have_setup || !have_setup_atr) return false;
+   if(!have_setup) return false;
+
+   ROAD_STRUCTURE_STATE ltf_state;
+   MqlRates ltf_rates[];
+   bool have_ltf=AnalyseStructure(LTFTimeframe(),wanted,ltf_state,ltf_rates);
+   int ltf_total=ArraySize(ltf_rates);
+   double ltf_atr_values[];
+   bool have_ltf_atr=have_ltf && CopyIndicator(g_ltf_atr_handle,0,ltf_total,ltf_atr_values);
+   if(!have_ltf || !have_ltf_atr) return false;
 
    ObjectsDeleteAll(0,g_prefix);
    bool have_high=false,have_low=false,high_broken=false,low_broken=false;
@@ -877,14 +888,15 @@ bool Rebuild(const bool permit_alert)
    structure_state.last_high_kind=last_high_kind; structure_state.last_low_kind=last_low_kind;
    structure_state.have_high=have_high; structure_state.have_low=have_low;
    structure_state.last_high=last_high; structure_state.last_low=last_low;
-   // The HTF may be either established or transitional, but it must already
-   // point in the same direction as a definite LTF BOS sequence.  The LTF is
+   // HTF and MTF may be transitional, but both must point in the same
+   // direction as a definite LTF BOS sequence.  The LTF is
    // transitional only while its latest break is a CHoCH; a subsequent BOS
    // completes that transition.
-   bool setup_definite=have_setup && DefiniteSetupBias(setup_state);
-   bool bias_ready=setup_definite && structure!=0 && structure==setup_state.direction;
+   bool ltf_definite=have_ltf && DefiniteSetupBias(ltf_state);
+   bool bias_ready=ltf_definite && structure!=0 && setup_state.direction!=0 &&
+                   structure==setup_state.direction && structure==ltf_state.direction;
 
-   double latest_atr=have_setup_atr?setup_atr_values[setup_total-1]:0.0;
+   double latest_atr=have_ltf_atr?ltf_atr_values[ltf_total-1]:0.0;
    double clearance=latest_atr*Boundary_Clearance_ATR;
    bool clear_space=latest_atr!=EMPTY_VALUE && latest_atr>0.0;
    string space_reason="";
@@ -902,28 +914,28 @@ bool Rebuild(const bool permit_alert)
    double extension=DBL_MAX;
    if(latest_atr!=EMPTY_VALUE && latest_atr>0.0)
      {
-      if(setup_state.direction>0 && setup_state.have_low)
-         extension=(setup_rates[setup_total-1].close-setup_state.last_low)/latest_atr;
-      else if(setup_state.direction<0 && setup_state.have_high)
-         extension=(setup_state.last_high-setup_rates[setup_total-1].close)/latest_atr;
+      if(ltf_state.direction>0 && ltf_state.have_low)
+         extension=(ltf_rates[ltf_total-1].close-ltf_state.last_low)/latest_atr;
+      else if(ltf_state.direction<0 && ltf_state.have_high)
+         extension=(ltf_state.last_high-ltf_rates[ltf_total-1].close)/latest_atr;
      }
    bool healthy_extension=latest_atr!=EMPTY_VALUE && latest_atr>0.0 && extension>=0.0 &&
                           extension<=Maximum_Extension_ATR;
 
-   int volume_length=MathMin(Volume_Average_Length,setup_total-1);
+   int volume_length=MathMin(Volume_Average_Length,ltf_total-1);
    double average_volume=0.0;
-   for(int i=setup_total-1-volume_length;i<setup_total-1;i++) average_volume+=(double)setup_rates[i].tick_volume;
+   for(int i=ltf_total-1-volume_length;i<ltf_total-1;i++) average_volume+=(double)ltf_rates[i].tick_volume;
    if(volume_length>0) average_volume/=volume_length;
-   double volume_ratio=average_volume>0.0?(double)setup_rates[setup_total-1].tick_volume/average_volume:0.0;
+   double volume_ratio=average_volume>0.0?(double)ltf_rates[ltf_total-1].tick_volume/average_volume:0.0;
    bool good_volume=average_volume>0.0 && volume_ratio>=Volume_Minimum_Ratio &&
                     volume_ratio<=Volume_Maximum_Ratio;
-   int momentum_length=MathMin(Momentum_Average_Length,setup_total-2);
+   int momentum_length=MathMin(Momentum_Average_Length,ltf_total-2);
    double average_true_range=0.0;
-   for(int i=setup_total-1-momentum_length;i<setup_total-1;i++)
-      average_true_range+=BarTrueRange(setup_rates,i);
+   for(int i=ltf_total-1-momentum_length;i<ltf_total-1;i++)
+      average_true_range+=BarTrueRange(ltf_rates,i);
    if(momentum_length>0) average_true_range/=momentum_length;
    double momentum_ratio=average_true_range>0.0?
-                         BarTrueRange(setup_rates,setup_total-1)/average_true_range:0.0;
+                         BarTrueRange(ltf_rates,ltf_total-1)/average_true_range:0.0;
    bool good_momentum=average_true_range>0.0 &&
                       momentum_ratio>=Momentum_Minimum_Ratio &&
                       momentum_ratio<=Momentum_Maximum_Ratio;
@@ -932,7 +944,7 @@ bool Rebuild(const bool permit_alert)
    if(!optimal)
      {
       optimal_reason="";
-      if(!bias_ready) optimal_reason="structure and LTF biases are not directionally correlated with a definite LTF BOS";
+      if(!bias_ready) optimal_reason="HTF, MTF, and LTF biases are not directionally correlated with a definite LTF BOS";
       if(!clear_space) optimal_reason+=(optimal_reason==""?"":"; ")+space_reason;
       if(!healthy_extension) optimal_reason+=(optimal_reason==""?"":"; ")+"price is overextended or lacks a valid corrective anchor";
       if(!good_volume) optimal_reason+=(optimal_reason==""?"":"; ")+
@@ -942,18 +954,21 @@ bool Rebuild(const bool permit_alert)
                             "momentum is too low (price is sluggish)":
                             "momentum is too high (price would need to be chased)");
      }
-   bool tradeable=optimal;
-   string tradeability_reason="Structure and LTF correlate; all optimal conditions are met";
+   bool tradeable=bias_ready;
+   string tradeability_reason="HTF, MTF, and LTF correlate; LTF is confirmed by BOS";
    if(!tradeable)
      {
-      if(!have_setup) tradeability_reason="LTF structure data is unavailable";
-      else if(structure==0) tradeability_reason="structure timeframe is consolidating";
-      else if(setup_state.direction==0) tradeability_reason="LTF/setup timeframe is consolidating";
-      else if(structure!=setup_state.direction) tradeability_reason="structure and LTF biases conflict";
-      else if(!setup_definite) tradeability_reason="LTF bias is transitional (CHoCH has no subsequent BOS)";
-      else tradeability_reason=optimal_reason;
+      if(!have_setup) tradeability_reason="MTF structure data is unavailable";
+      else if(!have_ltf) tradeability_reason="LTF structure data is unavailable";
+      else if(structure==0) tradeability_reason="HTF is consolidating";
+      else if(setup_state.direction==0) tradeability_reason="MTF is consolidating";
+      else if(ltf_state.direction==0) tradeability_reason="LTF is consolidating";
+      else if(structure!=setup_state.direction || structure!=ltf_state.direction)
+         tradeability_reason="HTF, MTF, and LTF biases conflict";
+      else if(!ltf_definite) tradeability_reason="LTF bias is transitional (CHoCH has no subsequent BOS)";
      }
    DrawDashboard(BiasText(structure_state),have_setup?SetupBiasText(setup_state):"Consolidating",
+                 have_ltf?SetupBiasText(ltf_state):"Consolidating",
                  bias_ready,tradeable,tradeability_reason,optimal,clear_space,
                  healthy_extension,good_volume,volume_ratio,good_momentum,
                  momentum_ratio,optimal_reason);
@@ -986,11 +1001,11 @@ int OnInit()
    if(Use_ADX_Filter && (g_adx_handle=iADX(_Symbol,timeframe,ADX_Length))==INVALID_HANDLE) return INIT_FAILED;
    if((Use_ATR_Filter || Use_Optimal_Conditions_Meter) &&
       (g_atr_handle=iATR(_Symbol,timeframe,ATR_Length))==INVALID_HANDLE) return INIT_FAILED;
-   if((g_setup_atr_handle=iATR(_Symbol,SetupTimeframe(),ATR_Length))==INVALID_HANDLE) return INIT_FAILED;
+   if((g_ltf_atr_handle=iATR(_Symbol,LTFTimeframe(),ATR_Length))==INVALID_HANDLE) return INIT_FAILED;
    if((Show_Trendline_Zones || Use_Optimal_Conditions_Meter) &&
       (g_trend_atr_handle=iATR(_Symbol,BoundaryTimeframe(),ATR_Length))==INVALID_HANDLE) return INIT_FAILED;
    if(!EventSetTimer(2)) return INIT_FAILED;
-   datetime current=iTime(_Symbol,RoadTimeframe(),0);
+   datetime current=iTime(_Symbol,LTFTimeframe(),0);
    if(current!=0 && Rebuild(false)) g_last_bar=current;
    return INIT_SUCCEEDED;
   }
@@ -1002,7 +1017,7 @@ void OnDeinit(const int reason)
    if(g_htf_ma_handle!=INVALID_HANDLE) IndicatorRelease(g_htf_ma_handle);
    if(g_adx_handle!=INVALID_HANDLE) IndicatorRelease(g_adx_handle);
    if(g_atr_handle!=INVALID_HANDLE) IndicatorRelease(g_atr_handle);
-   if(g_setup_atr_handle!=INVALID_HANDLE) IndicatorRelease(g_setup_atr_handle);
+   if(g_ltf_atr_handle!=INVALID_HANDLE) IndicatorRelease(g_ltf_atr_handle);
    if(g_trend_atr_handle!=INVALID_HANDLE) IndicatorRelease(g_trend_atr_handle);
    ObjectsDeleteAll(0,g_prefix);
    Comment("");
@@ -1010,7 +1025,7 @@ void OnDeinit(const int reason)
 
 void CheckForBar()
   {
-   datetime current=iTime(_Symbol,RoadTimeframe(),0);
+   datetime current=iTime(_Symbol,LTFTimeframe(),0);
    if(current!=0 && current!=g_last_bar)
      {
       bool alert=g_last_bar!=0;
