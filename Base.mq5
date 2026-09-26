@@ -1,16 +1,16 @@
 #property copyright "Market Trend Analyser conversion"
 #property version   "1.70"
 #property strict
-#property description "Road: MT5 port of the Market Trend Analyser Pine Script."
+#property description "BASE: MT5 port of the Market Trend Analyser Pine Script."
 #property description "Signal/visualisation EA only; the source indicator contains no trading rules."
 
-enum ROAD_MA_TYPE { ROAD_SMA=0, ROAD_EMA=1 };
-enum ROAD_MA_FILTER_MODE { ROAD_PRICE_ABOVE_BELOW=0, ROAD_FULL_BODY_CLOSE=1 };
-enum ROAD_SESSION { ROAD_NEW_YORK=0, ROAD_LONDON=1, ROAD_TOKYO=2, ROAD_SYDNEY=3, ROAD_CUSTOM=4, ROAD_24X7=5 };
-enum ROAD_ADX_SCOPE { ROAD_BOS_ONLY=0, ROAD_BOS_AND_CHOCH=1 };
-enum ROAD_ATR_MODE { ROAD_ATR_MINIMUM=0, ROAD_ATR_MAXIMUM=1, ROAD_ATR_RANGE=2 };
-enum ROAD_LABEL_SIZE { ROAD_TINY=7, ROAD_SMALL=9, ROAD_NORMAL=11, ROAD_LARGE=14 };
-enum ROAD_TREND_PIVOT_SOURCE { ROAD_TREND_HIGH_LOW=0, ROAD_TREND_CLOSE=1 };
+enum BASE_MA_TYPE { BASE_SMA=0, BASE_EMA=1 };
+enum BASE_MA_FILTER_MODE { BASE_PRICE_ABOVE_BELOW=0, BASE_FULL_BODY_CLOSE=1 };
+enum BASE_SESSION { BASE_NEW_YORK=0, BASE_LONDON=1, BASE_TOKYO=2, BASE_SYDNEY=3, BASE_CUSTOM=4, BASE_24X7=5 };
+enum BASE_ADX_SCOPE { BASE_BOS_ONLY=0, BASE_BOS_AND_CHOCH=1 };
+enum BASE_ATR_MODE { BASE_ATR_MINIMUM=0, BASE_ATR_MAXIMUM=1, BASE_ATR_RANGE=2 };
+enum BASE_LABEL_SIZE { BASE_TINY=7, BASE_SMALL=9, BASE_NORMAL=11, BASE_LARGE=14 };
+enum BASE_TREND_PIVOT_SOURCE { BASE_TREND_HIGH_LOW=0, BASE_TREND_CLOSE=1 };
 
 input group "Timeframe Inputs"
 input ENUM_TIMEFRAMES Boundary_Timeframe=PERIOD_H4;
@@ -58,7 +58,7 @@ input color Bullish_CHoCH_Color=clrLime;
 input color Bearish_CHoCH_Color=clrMagenta;
 
 input group "Labels and Lines"
-input ROAD_LABEL_SIZE Label_Size=ROAD_SMALL;
+input BASE_LABEL_SIZE Label_Size=BASE_SMALL;
 input bool Show_Structure_Lines=true;
 input ENUM_LINE_STYLE Line_Style=STYLE_DASH;
 input int Line_Width=1;
@@ -66,7 +66,7 @@ input int Line_Width=1;
 input group "MA Filter (LTF)"
 input bool Use_MA_Filter=true;
 input int MA_Length=50;
-input ROAD_MA_TYPE MA_Type=ROAD_EMA;
+input BASE_MA_TYPE MA_Type=BASE_EMA;
 input bool Show_MA_Line=false;
 input color MA_Color=clrBlue;
 
@@ -74,13 +74,13 @@ input group "MA Filter (HTF)"
 input bool Use_HTF_MA_Filter=true;
 input ENUM_TIMEFRAMES HTF_Timeframe=PERIOD_H1;
 input int HTF_MA_Length=100;
-input ROAD_MA_TYPE HTF_MA_Type=ROAD_EMA; // MA Type
+input BASE_MA_TYPE HTF_MA_Type=BASE_EMA; // MA Type
 input bool Show_HTF_MA_Line=false;
 input color HTF_MA_Color=clrOrange;
 
 input group "Session Filter"
 input bool Use_Session_Filter=false;
-input ROAD_SESSION Session_Preset=ROAD_NEW_YORK;
+input BASE_SESSION Session_Preset=BASE_NEW_YORK;
 input string Custom_Session="0930-1600";
 input int Custom_UTC_Offset_Minutes=0;
 input int Server_UTC_Offset_Minutes=0;
@@ -106,13 +106,13 @@ input bool Enable_Push_Notifications=false;
 
 // Internal tuning values are deliberately kept out of the Inputs dialog. The
 // streamlined UI exposes only settings that are useful during normal use.
-const ROAD_TREND_PIVOT_SOURCE Trendline_Pivot_Source=ROAD_TREND_HIGH_LOW;
+const BASE_TREND_PIVOT_SOURCE Trendline_Pivot_Source=BASE_TREND_HIGH_LOW;
 const int Trendline_Pivot_Strength=10;
-const ROAD_MA_FILTER_MODE MA_Filter_Mode=ROAD_PRICE_ABOVE_BELOW;
-const ROAD_MA_FILTER_MODE HTF_MA_Filter_Mode=ROAD_PRICE_ABOVE_BELOW;
+const BASE_MA_FILTER_MODE MA_Filter_Mode=BASE_PRICE_ABOVE_BELOW;
+const BASE_MA_FILTER_MODE HTF_MA_Filter_Mode=BASE_PRICE_ABOVE_BELOW;
 const double ADX_Minimum=25.0;
-const ROAD_ADX_SCOPE Apply_ADX_Filter_To=ROAD_BOS_ONLY;
-const ROAD_ATR_MODE ATR_Filter_Mode=ROAD_ATR_MINIMUM;
+const BASE_ADX_SCOPE Apply_ADX_Filter_To=BASE_BOS_ONLY;
+const BASE_ATR_MODE ATR_Filter_Mode=BASE_ATR_MINIMUM;
 const double ATR_Minimum=1.0;
 const double ATR_Maximum=10.0;
 const bool Use_Optimal_Conditions_Meter=true;
@@ -136,7 +136,7 @@ int g_atr_handle=INVALID_HANDLE;
 int g_trend_atr_handle=INVALID_HANDLE;
 int g_ltf_atr_handle=INVALID_HANDLE;
 
-struct ROAD_STRUCTURE_STATE
+struct BASE_STRUCTURE_STATE
   {
    int direction;
    bool last_break_was_bos;
@@ -162,7 +162,7 @@ ENUM_TIMEFRAMES LTFTimeframe()
 // the structure and setup biases independent and prevents an HTF candle from
 // being mistaken for lower-timeframe confirmation.
 bool AnalyseStructure(const ENUM_TIMEFRAMES timeframe,const int wanted,
-                      ROAD_STRUCTURE_STATE &state,MqlRates &rates[])
+                      BASE_STRUCTURE_STATE &state,MqlRates &rates[])
   {
    ArraySetAsSeries(rates,false);
    int total=CopyRates(_Symbol,timeframe,1,wanted,rates);
@@ -217,7 +217,7 @@ bool AnalyseStructure(const ENUM_TIMEFRAMES timeframe,const int wanted,
    return true;
   }
 
-bool DefiniteBias(const ROAD_STRUCTURE_STATE &state)
+bool DefiniteBias(const BASE_STRUCTURE_STATE &state)
   {
    return (state.direction>0 && state.last_break_was_bos &&
            state.last_high_kind>0 && state.last_low_kind<0) ||
@@ -225,7 +225,7 @@ bool DefiniteBias(const ROAD_STRUCTURE_STATE &state)
            state.last_high_kind<0 && state.last_low_kind>0);
   }
 
-bool DefiniteSetupBias(const ROAD_STRUCTURE_STATE &state)
+bool DefiniteSetupBias(const BASE_STRUCTURE_STATE &state)
   {
    // On the lower timeframe, CHoCH begins the transition and the next BOS
    // completes it. Later pivot classifications cannot make it transitional
@@ -233,7 +233,7 @@ bool DefiniteSetupBias(const ROAD_STRUCTURE_STATE &state)
    return state.direction!=0 && state.last_break_was_bos;
   }
 
-string BiasText(const ROAD_STRUCTURE_STATE &state)
+string BiasText(const BASE_STRUCTURE_STATE &state)
   {
    if(state.direction==0) return "Consolidating";
    bool definite=DefiniteBias(state);
@@ -241,7 +241,7 @@ string BiasText(const ROAD_STRUCTURE_STATE &state)
    return definite?"Bearish":"Bearish (Transition)";
   }
 
-string SetupBiasText(const ROAD_STRUCTURE_STATE &state)
+string SetupBiasText(const BASE_STRUCTURE_STATE &state)
   {
    if(state.direction==0) return "Consolidating";
    bool definite=DefiniteSetupBias(state);
@@ -263,14 +263,14 @@ ENUM_TIMEFRAMES BoundaryTimeframe()
    return Boundary_Timeframe==PERIOD_CURRENT?(ENUM_TIMEFRAMES)_Period:Boundary_Timeframe;
   }
 
-ENUM_TIMEFRAMES RoadTimeframe()
+ENUM_TIMEFRAMES BASETimeframe()
   {
    return Structure_Timeframe==PERIOD_CURRENT?(ENUM_TIMEFRAMES)_Period:Structure_Timeframe;
   }
 
-ENUM_MA_METHOD RoadMAMethod(const ROAD_MA_TYPE value)
+ENUM_MA_METHOD BASEMAMethod(const BASE_MA_TYPE value)
   {
-   return value==ROAD_EMA?MODE_EMA:MODE_SMA;
+   return value==BASE_EMA?MODE_EMA:MODE_SMA;
   }
 
 bool PivotHigh(const MqlRates &rates[],const int total,const int index,const int length)
@@ -371,13 +371,13 @@ bool ParseSession(const string source,int &start_minutes,int &end_minutes)
 
 bool InSession(const datetime server_time)
   {
-   if(!Use_Session_Filter || Session_Preset==ROAD_24X7) return true;
+   if(!Use_Session_Filter || Session_Preset==BASE_24X7) return true;
    string session="0000-2359";
    int zone_offset=0;
-   if(Session_Preset==ROAD_NEW_YORK) { session="0930-1600"; zone_offset=-300; }
-   else if(Session_Preset==ROAD_LONDON) { session="0800-1700"; zone_offset=0; }
-   else if(Session_Preset==ROAD_TOKYO) { session="0900-1500"; zone_offset=540; }
-   else if(Session_Preset==ROAD_SYDNEY) { session="0800-1700"; zone_offset=600; }
+   if(Session_Preset==BASE_NEW_YORK) { session="0930-1600"; zone_offset=-300; }
+   else if(Session_Preset==BASE_LONDON) { session="0800-1700"; zone_offset=0; }
+   else if(Session_Preset==BASE_TOKYO) { session="0900-1500"; zone_offset=540; }
+   else if(Session_Preset==BASE_SYDNEY) { session="0800-1700"; zone_offset=600; }
    else { session=Custom_Session; zone_offset=Custom_UTC_Offset_Minutes; }
    int begin=0,end=0;
    if(!ParseSession(session,begin,end)) return false;
@@ -402,7 +402,7 @@ bool HTFValues(const datetime time,double &ma,double &open,double &close)
    // candle only when that candle has closed. Earlier child bars use the
    // preceding completed HTF candle, avoiding historical future leakage.
    datetime htf_open_time=shift>=0?iTime(_Symbol,HTF_Timeframe,shift):0;
-   int ltf_seconds=PeriodSeconds(RoadTimeframe());
+   int ltf_seconds=PeriodSeconds(BASETimeframe());
    int htf_seconds=PeriodSeconds(HTF_Timeframe);
    if(shift>=0 && ltf_seconds>0 && htf_seconds>0 &&
       time+ltf_seconds<htf_open_time+htf_seconds)
@@ -444,12 +444,12 @@ bool TrendPivot(const MqlRates &rates[],const int total,const int index,
                 const int strength,const bool high)
   {
    if(index-strength<0 || index+strength>=total) return false;
-   double value=Trendline_Pivot_Source==ROAD_TREND_CLOSE?rates[index].close:
+   double value=Trendline_Pivot_Source==BASE_TREND_CLOSE?rates[index].close:
                 (high?rates[index].high:rates[index].low);
    for(int i=index-strength;i<=index+strength;i++)
      {
       if(i==index) continue;
-      double other=Trendline_Pivot_Source==ROAD_TREND_CLOSE?rates[i].close:
+      double other=Trendline_Pivot_Source==BASE_TREND_CLOSE?rates[i].close:
                    (high?rates[i].high:rates[i].low);
       if((high && other>=value) || (!high && other<=value)) return false;
      }
@@ -489,7 +489,7 @@ bool FindTrendZones(const MqlRates &rates[],const int total,const double thresho
         {
          ArrayResize(prices,prices_count+1);
          ArrayResize(indices,prices_count+1);
-         prices[prices_count]=Trendline_Pivot_Source==ROAD_TREND_CLOSE?rates[i].close:
+         prices[prices_count]=Trendline_Pivot_Source==BASE_TREND_CLOSE?rates[i].close:
                               (resistance?rates[i].high:rates[i].low);
          indices[prices_count++]=i;
         }
@@ -727,7 +727,7 @@ void DrawStructurePoint(const string kind,const datetime time,const double price
 void DrawChartTimeframeStructure()
   {
    ENUM_TIMEFRAMES chart_timeframe=(ENUM_TIMEFRAMES)_Period;
-   int structure_seconds=PeriodSeconds(RoadTimeframe());
+   int structure_seconds=PeriodSeconds(BASETimeframe());
    int chart_seconds=PeriodSeconds(chart_timeframe);
    if(structure_seconds<=0 || chart_seconds<=0) return;
    int wanted=(int)MathCeil((double)Bars_To_Process*structure_seconds/chart_seconds);
@@ -798,12 +798,12 @@ void DrawChartTimeframeStructure()
       DrawSegment("LAST_LOW",last_low_time,last_low,rates[total-1].time,last_low,clrTeal,STYLE_DOT,1);
   }
 
-void SendRoadAlert(const string signal,const datetime bar_time)
+void SendBASEAlert(const string signal,const datetime bar_time)
   {
    static datetime last_alert=0;
    if(bar_time<=last_alert) return;
    last_alert=bar_time;
-   string message=_Symbol+" "+EnumToString(RoadTimeframe())+" "+signal;
+   string message=_Symbol+" "+EnumToString(BASETimeframe())+" "+signal;
    if(Enable_Popup_Alerts) Alert(message);
    if(Enable_Push_Notifications) SendNotification(message);
   }
@@ -865,7 +865,7 @@ void DrawDashboard(const string structure_bias,const string setup_bias,const str
 // be allowed to retry the same bar instead of treating a partial build as done.
 bool Rebuild(const bool permit_alert)
   {
-   ENUM_TIMEFRAMES timeframe=RoadTimeframe();
+   ENUM_TIMEFRAMES timeframe=BASETimeframe();
    bool draw_anchored_structure=timeframe==(ENUM_TIMEFRAMES)_Period;
    int wanted=MathMax(100,MathMin(Bars_To_Process,100000));
    MqlRates rates[]; ArraySetAsSeries(rates,false);
@@ -882,13 +882,13 @@ bool Rebuild(const bool permit_alert)
    // output.  A timeframe switch can make this series ready slightly later
    // than the structure series; retaining the previous display avoids a blank
    // chart while CheckForBar retries the rebuild.
-   ROAD_STRUCTURE_STATE setup_state;
+   BASE_STRUCTURE_STATE setup_state;
    MqlRates setup_rates[];
    bool have_setup=AnalyseStructure(SetupTimeframe(),wanted,setup_state,setup_rates);
    int setup_total=ArraySize(setup_rates);
    if(!have_setup) return false;
 
-   ROAD_STRUCTURE_STATE ltf_state;
+   BASE_STRUCTURE_STATE ltf_state;
    MqlRates ltf_rates[];
    bool have_ltf=AnalyseStructure(LTFTimeframe(),wanted,ltf_state,ltf_rates);
    int ltf_total=ArraySize(ltf_rates);
@@ -961,29 +961,29 @@ bool Rebuild(const bool permit_alert)
       bool ma_long=true,ma_short=true;
       if(Use_MA_Filter)
         {
-         ma_long=MA_Filter_Mode==ROAD_PRICE_ABOVE_BELOW?rates[i].close>ma[i]
+         ma_long=MA_Filter_Mode==BASE_PRICE_ABOVE_BELOW?rates[i].close>ma[i]
                   :rates[i].close>ma[i] && rates[i].open>ma[i] && rates[i].close>rates[i].open;
-         ma_short=MA_Filter_Mode==ROAD_PRICE_ABOVE_BELOW?rates[i].close<ma[i]
+         ma_short=MA_Filter_Mode==BASE_PRICE_ABOVE_BELOW?rates[i].close<ma[i]
                    :rates[i].close<ma[i] && rates[i].open<ma[i] && rates[i].close<rates[i].open;
         }
       double htf_ma=0.0,htf_open=0.0,htf_close=0.0;
       bool htf_long=!Use_HTF_MA_Filter,htf_short=!Use_HTF_MA_Filter;
       if(Use_HTF_MA_Filter && HTFValues(rates[i].time,htf_ma,htf_open,htf_close))
         {
-         htf_long=HTF_MA_Filter_Mode==ROAD_PRICE_ABOVE_BELOW?rates[i].close>htf_ma
+         htf_long=HTF_MA_Filter_Mode==BASE_PRICE_ABOVE_BELOW?rates[i].close>htf_ma
                    :htf_close>htf_ma && htf_open>htf_ma && htf_close>htf_open;
-         htf_short=HTF_MA_Filter_Mode==ROAD_PRICE_ABOVE_BELOW?rates[i].close<htf_ma
+         htf_short=HTF_MA_Filter_Mode==BASE_PRICE_ABOVE_BELOW?rates[i].close<htf_ma
                     :htf_close<htf_ma && htf_open<htf_ma && htf_close<htf_open;
         }
       bool session=InSession(rates[i].time);
       bool adx_pass=!Use_ADX_Filter || (adx[i]!=EMPTY_VALUE && adx[i]>=ADX_Minimum);
       bool atr_pass=!Use_ATR_Filter || (atr[i]!=EMPTY_VALUE &&
-                    (ATR_Filter_Mode==ROAD_ATR_MINIMUM?atr[i]>=ATR_Minimum:
-                     ATR_Filter_Mode==ROAD_ATR_MAXIMUM?atr[i]<=ATR_Maximum:
+                    (ATR_Filter_Mode==BASE_ATR_MINIMUM?atr[i]>=ATR_Minimum:
+                     ATR_Filter_Mode==BASE_ATR_MAXIMUM?atr[i]<=ATR_Maximum:
                      atr[i]>=ATR_Minimum && atr[i]<=ATR_Maximum));
       bool long_direction=ma_long && htf_long && session;
       bool short_direction=ma_short && htf_short && session;
-      bool choch_adx=!Use_ADX_Filter || Apply_ADX_Filter_To==ROAD_BOS_ONLY || adx_pass;
+      bool choch_adx=!Use_ADX_Filter || Apply_ADX_Filter_To==BASE_BOS_ONLY || adx_pass;
       bool bull_bos=long_direction && adx_pass && atr_pass;
       bool bear_bos=short_direction && adx_pass && atr_pass;
       bool bull_choch=long_direction && choch_adx && atr_pass;
@@ -1077,7 +1077,7 @@ bool Rebuild(const bool permit_alert)
    EvaluateTrendlineZones(have_resistance,resistance_top,resistance_bottom,
                           have_support,support_top,support_bottom);
 
-   ROAD_STRUCTURE_STATE structure_state;
+   BASE_STRUCTURE_STATE structure_state;
    structure_state.direction=structure;
    structure_state.last_break_was_bos=last_break_was_bos;
    structure_state.last_high_kind=last_high_kind; structure_state.last_low_kind=last_low_kind;
@@ -1192,7 +1192,7 @@ bool Rebuild(const bool permit_alert)
                  healthy_extension,good_volume,volume_ratio,good_momentum,
                  momentum_ratio,optimal_reason);
    if(permit_alert && newest_signal_time==rates[total-1].time && newest_signal!="")
-      SendRoadAlert(newest_signal,newest_signal_time);
+      SendBASEAlert(newest_signal,newest_signal_time);
    ChartRedraw();
    return true;
   }
@@ -1218,10 +1218,10 @@ int OnInit()
        !Use_Price_Momentum_For_Optimal) ||
       (!Use_HTF_For_Tradeability && !Use_MTF_For_Tradeability && !Use_LTF_For_Tradeability))
       return INIT_PARAMETERS_INCORRECT;
-   ENUM_TIMEFRAMES timeframe=RoadTimeframe();
-   g_prefix="Road_"+(string)ChartID()+"_";
-   if(Use_MA_Filter && (g_ma_handle=iMA(_Symbol,timeframe,MA_Length,0,RoadMAMethod(MA_Type),PRICE_CLOSE))==INVALID_HANDLE) return INIT_FAILED;
-   if(Use_HTF_MA_Filter && (g_htf_ma_handle=iMA(_Symbol,HTF_Timeframe,HTF_MA_Length,0,RoadMAMethod(HTF_MA_Type),PRICE_CLOSE))==INVALID_HANDLE) return INIT_FAILED;
+   ENUM_TIMEFRAMES timeframe=BASETimeframe();
+   g_prefix="BASE_"+(string)ChartID()+"_";
+   if(Use_MA_Filter && (g_ma_handle=iMA(_Symbol,timeframe,MA_Length,0,BASEMAMethod(MA_Type),PRICE_CLOSE))==INVALID_HANDLE) return INIT_FAILED;
+   if(Use_HTF_MA_Filter && (g_htf_ma_handle=iMA(_Symbol,HTF_Timeframe,HTF_MA_Length,0,BASEMAMethod(HTF_MA_Type),PRICE_CLOSE))==INVALID_HANDLE) return INIT_FAILED;
    if(Use_ADX_Filter && (g_adx_handle=iADX(_Symbol,timeframe,ADX_Length))==INVALID_HANDLE) return INIT_FAILED;
    if((Use_ATR_Filter || Use_Optimal_Conditions_Meter) &&
       (g_atr_handle=iATR(_Symbol,timeframe,ATR_Length))==INVALID_HANDLE) return INIT_FAILED;
@@ -1230,7 +1230,7 @@ int OnInit()
       (g_trend_atr_handle=iATR(_Symbol,BoundaryTimeframe(),ATR_Length))==INVALID_HANDLE) return INIT_FAILED;
    if(!EventSetTimer(2)) return INIT_FAILED;
    datetime current=iTime(_Symbol,LTFTimeframe(),0);
-   datetime structure_current=iTime(_Symbol,RoadTimeframe(),0);
+   datetime structure_current=iTime(_Symbol,BASETimeframe(),0);
    datetime setup_current=iTime(_Symbol,SetupTimeframe(),0);
    if(current!=0 && structure_current!=0 && setup_current!=0 && Rebuild(false))
      {
@@ -1257,7 +1257,7 @@ void OnDeinit(const int reason)
 void CheckForBar()
   {
    datetime current=iTime(_Symbol,LTFTimeframe(),0);
-   datetime structure_current=iTime(_Symbol,RoadTimeframe(),0);
+   datetime structure_current=iTime(_Symbol,BASETimeframe(),0);
    datetime setup_current=iTime(_Symbol,SetupTimeframe(),0);
    if(current==0 || structure_current==0 || setup_current==0) return;
    bool changed=current!=g_last_ltf_bar || structure_current!=g_last_structure_bar ||
