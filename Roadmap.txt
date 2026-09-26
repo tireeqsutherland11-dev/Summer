@@ -47,9 +47,9 @@ Structure_Timeframe (default PERIOD_H1)
   explicit opt-in to chart-dependent analysis.
 
 Setup_Entry_Timeframe (default PERIOD_M15)
-  Reserved for the future setup and entry system. It is exposed now so the
-  three-timeframe model can be configured consistently, but it does not yet
-  affect calculations or drawings.
+  Drives the independent setup bias, setup ATR/volume/momentum calculations,
+  and the Liquidity Swings overlay. Liquidity objects are deliberately shown
+  only when the active chart period equals this timeframe.
 
 Bars_To_Process (default 100; valid 100 or greater)
   Requested count of closed Structure_Timeframe candles replayed on every
@@ -398,6 +398,41 @@ usually make its width/tolerance less reactive; higher current ATR expands the
 allowed touch/break distance, while lower ATR tightens it.
 
 
+10A. SETUP/LTF LIQUIDITY SWINGS
+--------------------------------
+
+Show_Liquidity_Swings (default true)
+  Enables the LuxAlgo Liquidity Swings conversion. The calculation always uses
+  closed Setup_Entry_Timeframe candles, and its objects are rendered only on a
+  chart whose period equals Setup_Entry_Timeframe. A new setup candle triggers
+  a rebuild even when the structure timeframe has not opened a new candle.
+
+Liquidity_Pivot_Lookback (default 14; valid 1..200)
+  Requires this many candles on both sides of a strict swing. Like the Pine
+  source, a swing is known only after the right-hand lookback has closed.
+
+Liquidity_Swing_Area
+  WICK_EXTREMITY spans a high swing from the candle body top to its high and a
+  low swing from its low to the candle body bottom. FULL_RANGE uses the whole
+  pivot candle range.
+
+Liquidity_Intrabar_Precision / Liquidity_Intrabar_Timeframe
+  With precision off, overlapping setup-candle tick volume is accumulated.
+  With it on, only lower-timeframe candles that overlap the swing area add
+  their tick volume. The selected intrabar period must be shorter than the
+  setup period.
+
+Liquidity_Filter_By / Liquidity_Filter_Value
+  Select whether accumulated overlapping candle count or accumulated volume
+  must cross the threshold before the colored level, filtered area, and volume
+  label appear. The faint active area is visible immediately. A close through
+  the swing extremity ends and dashes the level, matching the source script.
+
+Show_Liquidity_Swing_High / Show_Liquidity_Swing_Low and style inputs
+  Independently toggle the two sides and set their level, area, and label
+  colors. Liquidity_Label_Size uses the shared tiny/small/normal/large sizes.
+
+
 11. MARKET BIAS AND TRADEABILITY SYSTEM
 ------------------------------------------
 
@@ -609,6 +644,7 @@ chart comment.
     Boundary_Timeframe and SR settings for horizontal Market High/Low; trendline
     settings and ATR_Length
     for sloped support/resistance zones.
+
 
   Change visuals only:
     Show toggles, colors, label size, line styles/widths, transparency.
