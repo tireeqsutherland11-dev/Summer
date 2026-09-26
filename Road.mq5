@@ -1,5 +1,5 @@
 #property copyright "Market Trend Analyser conversion"
-#property version   "1.61"
+#property version   "1.62"
 #property strict
 #property description "Road: MT5 port of the Market Trend Analyser Pine Script."
 #property description "Signal/visualisation EA only; the source indicator contains no trading rules."
@@ -684,7 +684,11 @@ void DrawDashboard(const int structure,const string structure_bias,const string 
            !Use_Optimal_Conditions_Meter?"":"\nReason: "+optimal_reason);
   }
 
-void Rebuild(const bool permit_alert)
+// Returns false while history or an indicator is still being synchronized.
+// This is especially important after a chart timeframe change: MT5 recreates
+// the EA before all requested series are necessarily ready, so the timer must
+// be allowed to retry the same bar instead of treating a partial build as done.
+bool Rebuild(const bool permit_alert)
   {
    ENUM_TIMEFRAMES timeframe=RoadTimeframe();
    bool draw_anchored_structure=timeframe==(ENUM_TIMEFRAMES)_Period;
@@ -692,12 +696,24 @@ void Rebuild(const bool permit_alert)
    MqlRates rates[]; ArraySetAsSeries(rates,false);
    int total=CopyRates(_Symbol,timeframe,1,wanted,rates);
    int length=MathMax(1,MathMin(50,Swing_Detection_Length));
-   if(total<2*length+2) return;
+   if(total<2*length+2) return false;
 
    double ma[],adx[],atr[];
    if((Use_MA_Filter && !CopyIndicator(g_ma_handle,0,total,ma)) ||
       (Use_ADX_Filter && !CopyIndicator(g_adx_handle,0,total,adx)) ||
-      ((Use_ATR_Filter || Use_Optimal_Conditions_Meter) && !CopyIndicator(g_atr_handle,0,total,atr))) return;
+      ((Use_ATR_Filter || Use_Optimal_Conditions_Meter) && !CopyIndicator(g_atr_handle,0,total,atr))) return false;
+
+   // Preflight the setup-timeframe inputs before clearing any existing chart
+   // output.  A timeframe switch can make this series ready slightly later
+   // than the structure series; retaining the previous display avoids a blank
+   // chart while CheckForBar retries the rebuild.
+   ROAD_STRUCTURE_STATE setup_state;
+   MqlRates setup_rates[];
+   bool have_setup=AnalyseStructure(SetupTimeframe(),wanted,setup_state,setup_rates);
+   int setup_total=ArraySize(setup_rates);
+   double setup_atr_values[];
+   bool have_setup_atr=have_setup && CopyIndicator(g_setup_atr_handle,0,setup_total,setup_atr_values);
+   if(!have_setup || !have_setup_atr) return false;
 
    ObjectsDeleteAll(0,g_prefix);
    bool have_high=false,have_low=false,high_broken=false,low_broken=false;
@@ -865,14 +881,6 @@ void Rebuild(const bool permit_alert)
    structure_state.last_high_kind=last_high_kind; structure_state.last_low_kind=last_low_kind;
    structure_state.have_high=have_high; structure_state.have_low=have_low;
    structure_state.last_high=last_high; structure_state.last_low=last_low;
-   ROAD_STRUCTURE_STATE setup_state;
-   MqlRates setup_rates[];
-   bool have_setup=AnalyseStructure(SetupTimeframe(),wanted,setup_state,setup_rates);
-   int setup_total=ArraySize(setup_rates);
-   double setup_atr_values[];
-   bool have_setup_atr=have_setup && CopyIndicator(g_setup_atr_handle,0,setup_total,setup_atr_values);
-   if(!have_setup || !have_setup_atr) return;
-
    // The HTF may be either established or transitional, but it must already
    // point in the same direction as a definite LTF BOS sequence.  The LTF is
    // transitional only while its latest break is a CHoCH; a subsequent BOS
@@ -961,6 +969,7 @@ void Rebuild(const bool permit_alert)
    if(permit_alert && newest_signal_time==rates[total-1].time && newest_signal!="")
       SendRoadAlert(newest_signal,newest_signal_time);
    ChartRedraw();
+   return true;
   }
 
 int OnInit()
@@ -989,8 +998,9 @@ int OnInit()
    if((g_setup_atr_handle=iATR(_Symbol,SetupTimeframe(),ATR_Length))==INVALID_HANDLE) return INIT_FAILED;
    if((Show_Trendline_Zones || Use_Optimal_Conditions_Meter) &&
       (g_trend_atr_handle=iATR(_Symbol,BoundaryTimeframe(),ATR_Length))==INVALID_HANDLE) return INIT_FAILED;
-   EventSetTimer(2);
-   Rebuild(false);
+   if(!EventSetTimer(2)) return INIT_FAILED;
+   datetime current=iTime(_Symbol,RoadTimeframe(),0);
+   if(current!=0 && Rebuild(false)) g_last_bar=current;
    return INIT_SUCCEEDED;
   }
 
@@ -1013,8 +1023,10 @@ void CheckForBar()
    if(current!=0 && current!=g_last_bar)
      {
       bool alert=g_last_bar!=0;
-      g_last_bar=current;
-      Rebuild(alert);
+      // Do not consume the bar until every required series has loaded.  When
+      // Rebuild reports temporary unavailability, OnTimer will retry in two
+      // seconds even if no tick arrives on the newly selected timeframe.
+      if(Rebuild(alert)) g_last_bar=current;
      }
   }
 
