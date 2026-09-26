@@ -1,5 +1,5 @@
 #property copyright "Market Trend Analyser conversion"
-#property version   "1.66"
+#property version   "1.67"
 #property strict
 #property description "Road: MT5 port of the Market Trend Analyser Pine Script."
 #property description "Signal/visualisation EA only; the source indicator contains no trading rules."
@@ -163,6 +163,8 @@ bool AnalyseStructure(const ENUM_TIMEFRAMES timeframe,const int wanted,
    int last_pivot_side=0;
    bool have_high_reference=false,have_low_reference=false;
    double high_reference=0.0,low_reference=0.0;
+   int pending_transition=0;
+   int pending_break_index=-1;
    for(int i=length;i<total;i++)
      {
       int pivot=i-length;
@@ -175,6 +177,12 @@ bool AnalyseStructure(const ENUM_TIMEFRAMES timeframe,const int wanted,
            {
             state.last_high_kind=kind;
             high_broken=false;
+            if(pending_transition==-1 && kind<0 && pivot>pending_break_index)
+              {
+               state.direction=-1;
+               state.last_break_was_bos=false;
+               pending_transition=0;
+              }
            }
         }
       if(PivotLow(rates,total,pivot,length))
@@ -186,19 +194,41 @@ bool AnalyseStructure(const ENUM_TIMEFRAMES timeframe,const int wanted,
            {
             state.last_low_kind=kind;
             low_broken=false;
+            if(pending_transition==1 && kind<0 && pivot>pending_break_index)
+              {
+               state.direction=1;
+               state.last_break_was_bos=false;
+               pending_transition=0;
+              }
            }
         }
       if(state.have_high && state.last_high_kind!=0 && !high_broken &&
          rates[i].close>state.last_high)
         {
-         high_broken=true; state.direction=1;
-         state.last_break_was_bos=state.last_high_kind>0;
+         high_broken=true;
+         if(state.last_high_kind>0)
+           {
+            state.direction=1; state.last_break_was_bos=true;
+            pending_transition=0;
+           }
+         else if(state.direction<0)
+           {
+            pending_transition=1; pending_break_index=i;
+           }
         }
       if(state.have_low && state.last_low_kind!=0 && !low_broken &&
          rates[i].close<state.last_low)
         {
-         low_broken=true; state.direction=-1;
-         state.last_break_was_bos=state.last_low_kind>0;
+         low_broken=true;
+         if(state.last_low_kind>0)
+           {
+            state.direction=-1; state.last_break_was_bos=true;
+            pending_transition=0;
+           }
+         else if(state.direction>0)
+           {
+            pending_transition=-1; pending_break_index=i;
+           }
         }
      }
    return true;
@@ -671,6 +701,9 @@ void DrawChartTimeframeStructure()
    double high_reference=0.0,low_reference=0.0;
    double last_high=0.0,last_low=0.0;
    datetime last_high_time=0,last_low_time=0;
+   int structure=0,pending_transition=0,pending_break_index=-1;
+   double pending_level=0.0;
+   datetime pending_level_time=0;
    for(int i=length;i<total;i++)
      {
       int pivot=i-length;
@@ -689,6 +722,11 @@ void DrawChartTimeframeStructure()
             last_high_time=rates[pivot].time;
             last_high_kind=kind; high_broken=false;
             if(kind!=0) DrawStructurePoint(kind>0?"HH":"LH",last_high_time,last_high);
+            if(pending_transition==-1 && kind<0 && pivot>pending_break_index)
+              {
+               DrawSignal("CHoCH",-1,pending_level_time,pending_level,rates[i]);
+               structure=-1; pending_transition=0;
+              }
            }
         }
       if(PivotLow(rates,total,pivot,length))
@@ -706,17 +744,40 @@ void DrawChartTimeframeStructure()
             last_low_time=rates[pivot].time;
             last_low_kind=kind; low_broken=false;
             if(kind!=0) DrawStructurePoint(kind>0?"LL":"HL",last_low_time,last_low);
+            if(pending_transition==1 && kind<0 && pivot>pending_break_index)
+              {
+               DrawSignal("CHoCH",1,pending_level_time,pending_level,rates[i]);
+               structure=1; pending_transition=0;
+              }
            }
         }
       if(have_high && last_high_kind!=0 && !high_broken && rates[i].close>last_high)
         {
          high_broken=true;
-         DrawSignal(last_high_kind<0?"CHoCH":"BOS",1,last_high_time,last_high,rates[i]);
+         if(last_high_kind>0)
+           {
+            DrawSignal("BOS",1,last_high_time,last_high,rates[i]);
+            structure=1; pending_transition=0;
+           }
+         else if(structure<0)
+           {
+            pending_transition=1; pending_break_index=i;
+            pending_level=last_high; pending_level_time=last_high_time;
+           }
         }
       if(have_low && last_low_kind!=0 && !low_broken && rates[i].close<last_low)
         {
          low_broken=true;
-         DrawSignal(last_low_kind<0?"CHoCH":"BOS",-1,last_low_time,last_low,rates[i]);
+         if(last_low_kind>0)
+           {
+            DrawSignal("BOS",-1,last_low_time,last_low,rates[i]);
+            structure=-1; pending_transition=0;
+           }
+         else if(structure>0)
+           {
+            pending_transition=-1; pending_break_index=i;
+            pending_level=last_low; pending_level_time=last_low_time;
+           }
         }
      }
    if(Show_Swing_Points && have_high)
@@ -826,6 +887,10 @@ bool Rebuild(const bool permit_alert)
    int structure=0;
    int last_break_direction=0;
    bool last_break_was_bos=false;
+   int pending_transition=0;
+   int pending_break_index=-1;
+   double pending_level=0.0;
+   datetime pending_level_time=0;
    string newest_signal="";
    bool dashboard_bull_bos=false,dashboard_bear_bos=false;
    bool dashboard_bull_choch=false,dashboard_bear_choch=false;
@@ -853,6 +918,15 @@ bool Rebuild(const bool permit_alert)
             last_high_kind=high_kind;
             if(draw_anchored_structure && high_kind!=0)
                DrawStructurePoint(high_kind>0?"HH":"LH",last_high_time,last_high);
+            if(pending_transition==-1 && high_kind<0 && pivot>pending_break_index)
+              {
+               if(draw_anchored_structure)
+                  DrawSignal("CHoCH",-1,pending_level_time,pending_level,rates[i]);
+               structure=-1;
+               last_break_direction=-1; last_break_was_bos=false;
+               newest_signal="CHoCH bearish"; newest_signal_time=rates[i].time;
+               pending_transition=0;
+              }
            }
         }
       if(PivotLow(rates,total,pivot,length))
@@ -872,6 +946,15 @@ bool Rebuild(const bool permit_alert)
             last_low_kind=low_kind;
             if(draw_anchored_structure && low_kind!=0)
                DrawStructurePoint(low_kind>0?"LL":"HL",last_low_time,last_low);
+            if(pending_transition==1 && low_kind<0 && pivot>pending_break_index)
+              {
+               if(draw_anchored_structure)
+                  DrawSignal("CHoCH",1,pending_level_time,pending_level,rates[i]);
+               structure=1;
+               last_break_direction=1; last_break_was_bos=false;
+               newest_signal="CHoCH bullish"; newest_signal_time=rates[i].time;
+               pending_transition=0;
+              }
            }
         }
 
@@ -918,17 +1001,17 @@ bool Rebuild(const bool permit_alert)
       if(bullish_break)
         {
          high_broken=true;
-         // An HH made after an LH is a bullish change of character.  An HH
-         // made by breaking an HH is bullish continuation (BOS).
+         // Breaking an LH prepares a bullish change of character; the later
+         // confirmed HL completes it. Breaking an HH is continuation (BOS).
          if(last_high_kind<0)
            {
-            // Structure events are facts of price action. MA/session/ADX/ATR
-            // qualify a setup; they cannot erase a confirmed CHoCH from the
-            // analytical history or the separate chart-timeframe drawing.
-            if(draw_anchored_structure) DrawSignal("CHoCH",1,last_high_time,last_high,rates[i]);
-            structure=1;
-            last_break_direction=1; last_break_was_bos=false;
-            newest_signal="CHoCH bullish"; newest_signal_time=rates[i].time;
+            // A broken LH is only a candidate bullish transition.  Confirm
+            // CHoCH after price subsequently forms a higher low.
+            if(structure<0)
+              {
+               pending_transition=1; pending_break_index=i;
+               pending_level=last_high; pending_level_time=last_high_time;
+              }
            }
          else
            {
@@ -936,26 +1019,31 @@ bool Rebuild(const bool permit_alert)
             structure=1;
             last_break_direction=1; last_break_was_bos=true;
             newest_signal="BOS bullish"; newest_signal_time=rates[i].time;
+            pending_transition=0;
            }
         }
       if(bearish_break)
         {
          low_broken=true;
-         // An LL made after an HL is a bearish change of character.  An LL
-         // made by breaking an LL is bearish continuation (BOS).
+         // Breaking an HL prepares a bearish change of character; the later
+         // confirmed LH completes it. Breaking an LL is continuation (BOS).
          if(last_low_kind<0)
            {
-            if(draw_anchored_structure) DrawSignal("CHoCH",-1,last_low_time,last_low,rates[i]);
-            structure=-1;
-            last_break_direction=-1; last_break_was_bos=false;
-            newest_signal="CHoCH bearish"; newest_signal_time=rates[i].time;
-           }
+            // A broken HL is only a candidate bearish transition.  Confirm
+            // CHoCH after price subsequently forms a lower high.
+            if(structure>0)
+              {
+               pending_transition=-1; pending_break_index=i;
+               pending_level=last_low; pending_level_time=last_low_time;
+              }
+            }
          else
            {
             if(draw_anchored_structure) DrawSignal("BOS",-1,last_low_time,last_low,rates[i]);
             structure=-1;
             last_break_direction=-1; last_break_was_bos=true;
             newest_signal="BOS bearish"; newest_signal_time=rates[i].time;
+            pending_transition=0;
            }
         }
       if(i==total-1)

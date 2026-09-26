@@ -28,6 +28,9 @@ chart-specific prefix.
 
 - **Market Bias** shows the independently replayed Structure, Setup, and LTF
   state. A transition means the latest break is CHoCH rather than continuation.
+- A reversal is not declared on a level break alone: bearish-to-bullish CHoCH
+  requires an LH break followed by a confirmed HL, while bullish-to-bearish
+  CHoCH requires an HL break followed by a confirmed LH.
 - **Tradable** requires all three directions to agree and the LTF's latest break
   to be BOS. It is an analytical state, not an instruction to place a trade.
 - **Optimal Conditions** additionally checks boundary clearance, extension,
