@@ -1,5 +1,5 @@
 #property copyright "Market Trend Analyser conversion"
-#property version   "1.65"
+#property version   "1.66"
 #property strict
 #property description "Road: MT5 port of the Market Trend Analyser Pine Script."
 #property description "Signal/visualisation EA only; the source indicator contains no trading rules."
@@ -113,7 +113,9 @@ const double Momentum_Minimum_Ratio=0.50;
 const double Momentum_Maximum_Ratio=2.00;
 
 string g_prefix="";
-datetime g_last_bar=0;
+datetime g_last_ltf_bar=0;
+datetime g_last_structure_bar=0;
+datetime g_last_setup_bar=0;
 int g_ma_handle=INVALID_HANDLE;
 int g_htf_ma_handle=INVALID_HANDLE;
 int g_adx_handle=INVALID_HANDLE;
@@ -327,6 +329,15 @@ bool ParseSession(const string source,int &start_minutes,int &end_minutes)
    string pieces[];
    if(StringSplit(source,'-',pieces)!=2 || StringLen(pieces[0])!=4 || StringLen(pieces[1])!=4)
       return false;
+   // StringToInteger silently converts malformed text (for example "AB00")
+   // to zero.  Reject anything other than the documented HHMM-HHMM format so
+   // a typo cannot unexpectedly enable a midnight session.
+   for(int part=0;part<2;part++)
+      for(int character=0;character<4;character++)
+        {
+         ushort digit=StringGetCharacter(pieces[part],character);
+         if(digit<'0' || digit>'9') return false;
+        }
    int sh=(int)StringToInteger(StringSubstr(pieces[0],0,2));
    int sm=(int)StringToInteger(StringSubstr(pieces[0],2,2));
    int eh=(int)StringToInteger(StringSubstr(pieces[1],0,2));
@@ -1107,7 +1118,14 @@ int OnInit()
       (g_trend_atr_handle=iATR(_Symbol,BoundaryTimeframe(),ATR_Length))==INVALID_HANDLE) return INIT_FAILED;
    if(!EventSetTimer(2)) return INIT_FAILED;
    datetime current=iTime(_Symbol,LTFTimeframe(),0);
-   if(current!=0 && Rebuild(false)) g_last_bar=current;
+   datetime structure_current=iTime(_Symbol,RoadTimeframe(),0);
+   datetime setup_current=iTime(_Symbol,SetupTimeframe(),0);
+   if(current!=0 && structure_current!=0 && setup_current!=0 && Rebuild(false))
+     {
+      g_last_ltf_bar=current;
+      g_last_structure_bar=structure_current;
+      g_last_setup_bar=setup_current;
+     }
    return INIT_SUCCEEDED;
   }
 
@@ -1127,13 +1145,23 @@ void OnDeinit(const int reason)
 void CheckForBar()
   {
    datetime current=iTime(_Symbol,LTFTimeframe(),0);
-   if(current!=0 && current!=g_last_bar)
+   datetime structure_current=iTime(_Symbol,RoadTimeframe(),0);
+   datetime setup_current=iTime(_Symbol,SetupTimeframe(),0);
+   if(current==0 || structure_current==0 || setup_current==0) return;
+   bool changed=current!=g_last_ltf_bar || structure_current!=g_last_structure_bar ||
+                setup_current!=g_last_setup_bar;
+   if(changed)
      {
-      bool alert=g_last_bar!=0;
+      bool alert=g_last_ltf_bar!=0 && g_last_structure_bar!=0 && g_last_setup_bar!=0;
       // Do not consume the bar until every required series has loaded.  When
       // Rebuild reports temporary unavailability, OnTimer will retry in two
       // seconds even if no tick arrives on the newly selected timeframe.
-      if(Rebuild(alert)) g_last_bar=current;
+      if(Rebuild(alert))
+        {
+         g_last_ltf_bar=current;
+         g_last_structure_bar=structure_current;
+         g_last_setup_bar=setup_current;
+        }
      }
   }
 
