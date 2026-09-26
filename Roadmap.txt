@@ -120,6 +120,15 @@ Show_BOS_Labels / Show_CHoCH_Labels (defaults true)
   its text and its structure segment because DrawSignal exits immediately. It
   does not suppress event classification, market bias, tradeability, or alert.
 
+Show_LTF_Structure (default true)
+  Controls BOS and CHoCH drawing only when the active chart period equals
+  Setup_Entry_Timeframe. Turning it off keeps the setup chart clear while all
+  lower-timeframe structure detection continues in the background for setup
+  bias, timeframe correlation, tradeability, the dashboard, and alerts. It
+  does not hide BOS or CHoCH on other chart periods, including the configured
+  Structure_Timeframe and higher timeframes. Swing-point visibility remains
+  independently controlled by Show_Swing_Points.
+
 Bullish_BOS_Color / Bearish_BOS_Color (defaults teal/red)
 Bullish_CHoCH_Color / Bearish_CHoCH_Color (defaults lime/magenta)
   Set text and segment color for each direction/type; visual effect only.
