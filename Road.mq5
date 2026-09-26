@@ -20,8 +20,8 @@ input ENUM_TIMEFRAMES LTF_Timeframe=PERIOD_M5;
 
 input group "Tradeability Timeframes"
 input bool Use_HTF_For_Tradeability=true;
-input bool Use_MTF_For_Tradeability=true;
-input bool Use_LTF_For_Tradeability=true;
+input bool Use_MTF_For_Tradeability=false;
+input bool Use_LTF_For_Tradeability=false;
 
 input group "Structure Processing"
 input int Bars_To_Process=100;
@@ -94,12 +94,12 @@ input int ATR_Length=14;
 input group "Optimal Conditions"
 input bool Use_Timeframe_Correlation_For_Optimal=true;
 input bool Use_Technical_Space_For_Optimal=true;
-input bool Use_Healthy_Extension_For_Optimal=true;
+input bool Use_Healthy_Extension_For_Optimal=false;
 input bool Use_Market_Volume_For_Optimal=true;
-input bool Use_Price_Momentum_For_Optimal=true;
+input bool Use_Price_Momentum_For_Optimal=false;
 
 input group "Alerts"
-input bool Enable_Popup_Alerts=true;
+input bool Enable_Popup_Alerts=false;
 input bool Enable_Push_Notifications=false;
 
 // Internal tuning values are deliberately kept out of the Inputs dialog. The
