@@ -1,5 +1,5 @@
 #property copyright "Market Trend Analyser conversion"
-#property version   "1.66"
+#property version   "1.67"
 #property strict
 #property description "Road: MT5 port of the Market Trend Analyser Pine Script."
 #property description "Signal/visualisation EA only; the source indicator contains no trading rules."
@@ -17,6 +17,11 @@ input ENUM_TIMEFRAMES Boundary_Timeframe=PERIOD_H4;
 input ENUM_TIMEFRAMES Structure_Timeframe=PERIOD_H1; // HTF
 input ENUM_TIMEFRAMES Setup_Entry_Timeframe=PERIOD_M15; // MTF
 input ENUM_TIMEFRAMES LTF_Timeframe=PERIOD_M5;
+
+input group "Tradeability Timeframes"
+input bool Use_HTF_For_Tradeability=true;
+input bool Use_MTF_For_Tradeability=true;
+input bool Use_LTF_For_Tradeability=true;
 
 input group "Structure Processing"
 input int Bars_To_Process=100;
@@ -234,6 +239,15 @@ string SetupBiasText(const ROAD_STRUCTURE_STATE &state)
    bool definite=DefiniteSetupBias(state);
    if(state.direction>0) return definite?"Bullish":"Bullish (Transition)";
    return definite?"Bearish":"Bearish (Transition)";
+  }
+
+string TradeabilityTimeframesText()
+  {
+   string result="";
+   if(Use_HTF_For_Tradeability) result="HTF";
+   if(Use_MTF_For_Tradeability) result+=(result==""?"":" and ")+"MTF";
+   if(Use_LTF_For_Tradeability) result+=(result==""?"":" and ")+"LTF";
+   return result;
   }
 
 ENUM_TIMEFRAMES BoundaryTimeframe()
@@ -1000,13 +1014,21 @@ bool Rebuild(const bool permit_alert)
    structure_state.last_high_kind=last_high_kind; structure_state.last_low_kind=last_low_kind;
    structure_state.have_high=have_high; structure_state.have_low=have_low;
    structure_state.last_high=last_high; structure_state.last_low=last_low;
-   // HTF and MTF may be transitional, but both must point in the same
-   // direction as a definite LTF BOS sequence.  The LTF is
-   // transitional only while its latest break is a CHoCH; a subsequent BOS
-   // completes that transition.
+   // Only enabled tradeability timeframes participate in correlation. HTF and
+   // MTF may be transitional. When enabled, LTF must have a definite BOS;
+   // CHoCH remains transitional until a subsequent BOS.
    bool ltf_definite=have_ltf && DefiniteSetupBias(ltf_state);
-   bool bias_ready=ltf_definite && structure!=0 && setup_state.direction!=0 &&
-                   structure==setup_state.direction && structure==ltf_state.direction;
+   bool selected_biases_available=(!Use_HTF_For_Tradeability || structure!=0) &&
+                                  (!Use_MTF_For_Tradeability || setup_state.direction!=0) &&
+                                  (!Use_LTF_For_Tradeability || ltf_state.direction!=0);
+   bool selected_biases_match=(!Use_HTF_For_Tradeability || !Use_MTF_For_Tradeability ||
+                               structure==setup_state.direction) &&
+                              (!Use_HTF_For_Tradeability || !Use_LTF_For_Tradeability ||
+                               structure==ltf_state.direction) &&
+                              (!Use_MTF_For_Tradeability || !Use_LTF_For_Tradeability ||
+                               setup_state.direction==ltf_state.direction);
+   bool bias_ready=selected_biases_available && selected_biases_match &&
+                   (!Use_LTF_For_Tradeability || ltf_definite);
 
    double latest_atr=have_ltf_atr?ltf_atr_values[ltf_total-1]:0.0;
    double clearance=latest_atr*Boundary_Clearance_ATR;
@@ -1056,7 +1078,8 @@ bool Rebuild(const bool permit_alert)
    if(!optimal)
      {
       optimal_reason="";
-      if(!bias_ready) optimal_reason="HTF, MTF, and LTF biases are not directionally correlated with a definite LTF BOS";
+      if(!bias_ready) optimal_reason=TradeabilityTimeframesText()+
+                                     " tradeability biases do not meet the selected correlation requirements";
       if(!clear_space) optimal_reason+=(optimal_reason==""?"":"; ")+space_reason;
       if(!healthy_extension) optimal_reason+=(optimal_reason==""?"":"; ")+"price is overextended or lacks a valid corrective anchor";
       if(!good_volume) optimal_reason+=(optimal_reason==""?"":"; ")+
@@ -1067,17 +1090,23 @@ bool Rebuild(const bool permit_alert)
                             "momentum is too high (price would need to be chased)");
      }
    bool tradeable=bias_ready;
-   string tradeability_reason="HTF, MTF, and LTF correlate; LTF is confirmed by BOS";
+   int selected_timeframe_count=(Use_HTF_For_Tradeability?1:0)+
+                                (Use_MTF_For_Tradeability?1:0)+
+                                (Use_LTF_For_Tradeability?1:0);
+   string tradeability_reason=TradeabilityTimeframesText()+
+                              (selected_timeframe_count>1?" correlate":" is directional");
+   if(Use_LTF_For_Tradeability) tradeability_reason+="; LTF is confirmed by BOS";
    if(!tradeable)
      {
-      if(!have_setup) tradeability_reason="MTF structure data is unavailable";
-      else if(!have_ltf) tradeability_reason="LTF structure data is unavailable";
-      else if(structure==0) tradeability_reason="HTF is consolidating";
-      else if(setup_state.direction==0) tradeability_reason="MTF is consolidating";
-      else if(ltf_state.direction==0) tradeability_reason="LTF is consolidating";
-      else if(structure!=setup_state.direction || structure!=ltf_state.direction)
-         tradeability_reason="HTF, MTF, and LTF biases conflict";
-      else if(!ltf_definite) tradeability_reason="LTF bias is transitional (CHoCH has no subsequent BOS)";
+      if(Use_MTF_For_Tradeability && !have_setup) tradeability_reason="MTF structure data is unavailable";
+      else if(Use_LTF_For_Tradeability && !have_ltf) tradeability_reason="LTF structure data is unavailable";
+      else if(Use_HTF_For_Tradeability && structure==0) tradeability_reason="HTF is consolidating";
+      else if(Use_MTF_For_Tradeability && setup_state.direction==0) tradeability_reason="MTF is consolidating";
+      else if(Use_LTF_For_Tradeability && ltf_state.direction==0) tradeability_reason="LTF is consolidating";
+      else if(!selected_biases_match)
+         tradeability_reason=TradeabilityTimeframesText()+" biases conflict";
+      else if(Use_LTF_For_Tradeability && !ltf_definite)
+         tradeability_reason="LTF bias is transitional (CHoCH has no subsequent BOS)";
      }
    DrawDashboard(BiasText(structure_state),have_setup?SetupBiasText(setup_state):"Consolidating",
                  have_ltf?SetupBiasText(ltf_state):"Consolidating",
@@ -1104,7 +1133,8 @@ int OnInit()
       Volume_Average_Length<1 || Volume_Minimum_Ratio<0.0 ||
       Volume_Maximum_Ratio<Volume_Minimum_Ratio ||
       Momentum_Average_Length<1 || Momentum_Minimum_Ratio<0.0 ||
-      Momentum_Maximum_Ratio<Momentum_Minimum_Ratio)
+      Momentum_Maximum_Ratio<Momentum_Minimum_Ratio ||
+      (!Use_HTF_For_Tradeability && !Use_MTF_For_Tradeability && !Use_LTF_For_Tradeability))
       return INIT_PARAMETERS_INCORRECT;
    ENUM_TIMEFRAMES timeframe=RoadTimeframe();
    g_prefix="Road_"+(string)ChartID()+"_";
