@@ -1,5 +1,5 @@
 #property copyright "Market Trend Analyser conversion"
-#property version   "1.68"
+#property version   "1.69"
 #property strict
 #property description "Road: MT5 port of the Market Trend Analyser Pine Script."
 #property description "Signal/visualisation EA only; the source indicator contains no trading rules."
@@ -41,6 +41,8 @@ input bool Show_SR_Labels=true;
 input group "Market Boundaries - Trendline Zones"
 input bool Show_Trendline_Zones=true;
 input int Trendline_Bars_To_Apply=300;
+input int Trendline_Zones_Per_Side=3;
+input int Trendline_Minimum_Touches=3;
 input color Trendline_Resistance_Color=clrRed;
 input color Trendline_Support_Color=clrGreen;
 input int Trendline_Zone_Transparency=50;
@@ -106,7 +108,6 @@ input bool Enable_Push_Notifications=false;
 // streamlined UI exposes only settings that are useful during normal use.
 const ROAD_TREND_PIVOT_SOURCE Trendline_Pivot_Source=ROAD_TREND_HIGH_LOW;
 const int Trendline_Pivot_Strength=10;
-const int Trendline_Min_Pivot_Confirmation=3;
 const ROAD_MA_FILTER_MODE MA_Filter_Mode=ROAD_PRICE_ABOVE_BELOW;
 const ROAD_MA_FILTER_MODE HTF_MA_Filter_Mode=ROAD_PRICE_ABOVE_BELOW;
 const double ADX_Minimum=25.0;
@@ -483,8 +484,8 @@ void DrawTrendZone(const string id,const datetime from_time,const double from_to
    ObjectSetInteger(0,g_prefix+"TREND_BOTTOM_"+id,OBJPROP_RAY_RIGHT,true);
   }
 
-bool FindClosestTrendZone(const MqlRates &rates[],const int total,const double threshold,
-                          const bool resistance,double &projected_top,double &projected_bottom)
+bool FindTrendZones(const MqlRates &rates[],const int total,const double threshold,
+                    const bool resistance,double &projected_top,double &projected_bottom)
   {
    int strength=MathMax(5,MathMin(15,Trendline_Pivot_Strength));
    int first=MathMax(strength,total-1-Trendline_Bars_To_Apply);
@@ -501,10 +502,12 @@ bool FindClosestTrendZone(const MqlRates &rates[],const int total,const double t
          indices[prices_count++]=i;
         }
 
-   int required=MathMax(2,MathMin(8,Trendline_Min_Pivot_Confirmation));
+   int required=MathMax(3,MathMin(8,Trendline_Minimum_Touches));
    if(prices_count<required || threshold<=0.0) return false;
-   double nearest=DBL_MAX,best_y=0.0,best_slope=0.0,best_up=0.0,best_down=0.0;
-   int best_index=-1;
+   double candidate_y[],candidate_slope[],candidate_up[],candidate_down[];
+   double candidate_projected[],candidate_distance[];
+   int candidate_index[],candidate_touches[];
+   int candidate_count=0;
    // The newest five bars form the same stability buffer as the Pine source.
    int stability=total-1-5;
    for(int i=0;i<prices_count-1;i++)
@@ -537,21 +540,78 @@ bool FindClosestTrendZone(const MqlRates &rates[],const int total,const double t
          if(touches<required || broken) continue;
          double projected=prices[i]+slope*(total-1-indices[i]);
          double distance=MathAbs(projected-rates[total-1].close);
-         if(distance<nearest)
+         int duplicate=-1;
+         for(int candidate=0;candidate<candidate_count;candidate++)
            {
-            nearest=distance; best_index=indices[i]; best_y=prices[i]; best_slope=slope;
-            best_up=max_up; best_down=max_down;
+            int overlap=total-1-MathMin(indices[i],candidate_index[candidate]);
+            if(MathAbs(projected-candidate_projected[candidate])<=threshold &&
+               MathAbs(slope-candidate_slope[candidate])*overlap<=threshold)
+              {
+               duplicate=candidate;
+               break;
+              }
            }
+         if(duplicate>=0)
+           {
+            if(touches<candidate_touches[duplicate] ||
+               (touches==candidate_touches[duplicate] && distance>=candidate_distance[duplicate]))
+               continue;
+           }
+         else
+           {
+            duplicate=candidate_count++;
+            ArrayResize(candidate_y,candidate_count);
+            ArrayResize(candidate_slope,candidate_count);
+            ArrayResize(candidate_up,candidate_count);
+            ArrayResize(candidate_down,candidate_count);
+            ArrayResize(candidate_projected,candidate_count);
+            ArrayResize(candidate_distance,candidate_count);
+            ArrayResize(candidate_index,candidate_count);
+            ArrayResize(candidate_touches,candidate_count);
+           }
+         candidate_index[duplicate]=indices[i];
+         candidate_y[duplicate]=prices[i];
+         candidate_slope[duplicate]=slope;
+         candidate_up[duplicate]=max_up;
+         candidate_down[duplicate]=max_down;
+         candidate_projected[duplicate]=projected;
+         candidate_distance[duplicate]=distance;
+         candidate_touches[duplicate]=touches;
         }
-   if(best_index<0) return false;
-   double end_y=best_y+best_slope*(total-1-best_index);
-   projected_top=end_y+best_up;
-   projected_bottom=end_y+best_down;
-   if(Show_Trendline_Zones)
-      DrawTrendZone(resistance?"RESISTANCE":"SUPPORT",rates[best_index].time,
-                    best_y+best_up,best_y+best_down,rates[total-1].time,
-                    projected_top,projected_bottom,
-                    resistance?Trendline_Resistance_Color:Trendline_Support_Color);
+   if(candidate_count==0) return false;
+
+   int draw_count=MathMin(Trendline_Zones_Per_Side,candidate_count);
+   for(int rank=0;rank<draw_count;rank++)
+     {
+      int best=rank;
+      for(int candidate=rank+1;candidate<candidate_count;candidate++)
+         if(candidate_distance[candidate]<candidate_distance[best]) best=candidate;
+      if(best!=rank)
+        {
+         double swap_double;
+         int swap_int;
+         swap_double=candidate_y[rank]; candidate_y[rank]=candidate_y[best]; candidate_y[best]=swap_double;
+         swap_double=candidate_slope[rank]; candidate_slope[rank]=candidate_slope[best]; candidate_slope[best]=swap_double;
+         swap_double=candidate_up[rank]; candidate_up[rank]=candidate_up[best]; candidate_up[best]=swap_double;
+         swap_double=candidate_down[rank]; candidate_down[rank]=candidate_down[best]; candidate_down[best]=swap_double;
+         swap_double=candidate_projected[rank]; candidate_projected[rank]=candidate_projected[best]; candidate_projected[best]=swap_double;
+         swap_double=candidate_distance[rank]; candidate_distance[rank]=candidate_distance[best]; candidate_distance[best]=swap_double;
+         swap_int=candidate_index[rank]; candidate_index[rank]=candidate_index[best]; candidate_index[best]=swap_int;
+        }
+      double end_y=candidate_projected[rank];
+      if(rank==0)
+        {
+         projected_top=end_y+candidate_up[rank];
+         projected_bottom=end_y+candidate_down[rank];
+        }
+      if(Show_Trendline_Zones)
+         DrawTrendZone((resistance?"RESISTANCE_":"SUPPORT_")+(string)(rank+1),
+                       rates[candidate_index[rank]].time,
+                       candidate_y[rank]+candidate_up[rank],
+                       candidate_y[rank]+candidate_down[rank],rates[total-1].time,
+                       end_y+candidate_up[rank],end_y+candidate_down[rank],
+                       resistance?Trendline_Resistance_Color:Trendline_Support_Color);
+     }
    return true;
   }
 
@@ -572,8 +632,8 @@ void EvaluateTrendlineZones(bool &have_resistance,double &resistance_top,
    if(total<2*Trendline_Pivot_Strength+1) return;
    const double fixed_atr_multiplier=0.5;
    double threshold=trend_atr[0]*fixed_atr_multiplier;
-   have_resistance=FindClosestTrendZone(rates,total,threshold,true,resistance_top,resistance_bottom);
-   have_support=FindClosestTrendZone(rates,total,threshold,false,support_top,support_bottom);
+   have_resistance=FindTrendZones(rates,total,threshold,true,resistance_top,resistance_bottom);
+   have_support=FindTrendZones(rates,total,threshold,false,support_top,support_bottom);
   }
 
 // Market High is the highest confirmed swing high in the boundary lookback;
@@ -1152,8 +1212,9 @@ int OnInit()
       Boundary_Lookback_Bars<1 || Boundary_Lookback_Bars>100000 ||
       SR_Pivot_Length<1 || SR_Pivot_Length>20 ||
       Trendline_Bars_To_Apply<50 || Trendline_Bars_To_Apply>100000 ||
+      Trendline_Zones_Per_Side<1 || Trendline_Zones_Per_Side>10 ||
       Trendline_Pivot_Strength<5 || Trendline_Pivot_Strength>15 ||
-      Trendline_Min_Pivot_Confirmation<2 || Trendline_Min_Pivot_Confirmation>8 ||
+      Trendline_Minimum_Touches<3 || Trendline_Minimum_Touches>8 ||
       Trendline_Zone_Transparency<0 || Trendline_Zone_Transparency>100 ||
       Boundary_Clearance_ATR<0.0 || Maximum_Extension_ATR<=0.0 ||
       Volume_Average_Length<1 || Volume_Minimum_Ratio<0.0 ||

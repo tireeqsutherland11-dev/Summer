@@ -64,6 +64,10 @@ break; a candle must close beyond it.
 - A custom session must use exactly `HHMM-HHMM` with numeric digits. Equal start
   and end means all day; ranges such as `2200-0600` cross midnight.
 - ATR thresholds use raw symbol price units, not points or pips.
+- `Trendline_Zones_Per_Side` selects how many distinct resistance and support
+  trendline zones may be drawn. `Trendline_Minimum_Touches` is selectable from
+  3 through 8; no trendline with fewer than three confirmed pivot touches is
+  considered valid.
 
 See [`Roadmap.txt`](Roadmap.txt) for the complete processing model and input
 reference.

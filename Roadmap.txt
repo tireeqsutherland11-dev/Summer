@@ -372,7 +372,7 @@ Result
 -------------------------
 
 Show_Trendline_Zones (default true)
-  Enables one nearest valid resistance zone and one nearest valid support zone.
+  Enables the nearest valid resistance and support zones.
   It also controls creation of the trend-timeframe ATR handle.
 
 Boundary_Timeframe (default PERIOD_H4)
@@ -383,6 +383,11 @@ Trendline_Bars_To_Apply (default 300; valid 50..100000)
   Historical region searched for trend pivots. Larger values provide more line
   candidates and processing cost; smaller values focus on recent structure.
 
+Trendline_Zones_Per_Side (default 3; valid 1..10)
+  Maximum number of distinct zones drawn for each side. Candidates are ordered
+  by proximity to the latest trend-timeframe close, so 3 can draw as many as
+  three resistance and three support zones when enough valid candidates exist.
+
 Trendline_Pivot_Source (default ROAD_TREND_HIGH_LOW)
   HIGH_LOW uses highs for resistance pivots and lows for support pivots.
   CLOSE uses closes for both, generally reducing wick influence and moving zone
@@ -392,10 +397,11 @@ Trendline_Pivot_Strength (default 10; valid 5..15)
   Strict bars-on-each-side pivot window. Higher strength yields fewer, more
   prominent and later-confirmed anchors; lower strength yields more candidates.
 
-Trendline_Min_Pivot_Confirmation (default 3; valid 2..8)
+Trendline_Minimum_Touches (default 3; valid 3..8)
   Minimum candidate pivots that must touch a proposed line within the threshold.
   Raising it makes zones rarer and more strongly corroborated; lowering it makes
-  them easier to form. Runtime also clamps this value to 2..8.
+  them easier to form. Every displayed trendline always has at least three
+  touches; runtime also clamps this value to 3..8.
 
 Trendline_Resistance_Color (default red)
 Trendline_Support_Color (default green)
@@ -412,8 +418,10 @@ Algorithm and result
   * A resistance candidate is rejected if an eligible older pivot exceeds it by
     more than tolerance; support is rejected for the opposite violation. The
     newest five bars form a stability buffer and do not invalidate a candidate.
-  * Among candidates meeting the touch minimum, the projected line closest to
-    the latest trend close wins independently for resistance and support.
+  * Equivalent candidates within the ATR tolerance are consolidated, retaining
+    the version with the most touches (then the closest projection on a tie).
+  * Among distinct candidates meeting the touch minimum, up to the selected
+    number nearest the latest trend close are drawn for resistance and support.
   * The output is a filled, right-rayed sloped channel plus right-rayed top and
     bottom boundaries. Zones do not create structure signals, but their latest
     projected bounds are used by the Optimal Conditions Meter. Zone discovery
