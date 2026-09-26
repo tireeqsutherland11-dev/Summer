@@ -398,23 +398,30 @@ usually make its width/tolerance less reactive; higher current ATR expands the
 allowed touch/break distance, while lower ATR tightens it.
 
 
-11. MARKET TRADEABILITY SYSTEM
-------------------------------
+11. MARKET BIAS AND TRADEABILITY SYSTEM
+------------------------------------------
 
-Market bias
-  The last replayed confirmed break sets BULLISH or BEARISH. With no break it is
-  UNDEFINED. A CHoCH changes bias, but bias alone is not considered tradeable.
+Road independently replays confirmed structure on Structure_Timeframe and
+Setup_Entry_Timeframe. Each bias is classified as follows:
 
-Tradeable is true only for one of these exact clean-continuation states:
+  Bullish:              latest break is bullish BOS and latest pivots are HH/HL.
+  Bullish (Transition): bullish direction exists, but the latest break is CHoCH
+                        or the latest pivot pair is not yet a clean HH/HL.
+  Bearish:              latest break is bearish BOS and latest pivots are LH/LL.
+  Bearish (Transition): bearish direction exists, but the latest break is CHoCH
+                        or the latest pivot pair is not yet a clean LH/LL.
+  Consolidating:        no confirmed directional break exists in replay history.
 
-  Bullish: last break direction is up, last break was BOS, latest high is HH,
-           and latest low is HL.
-  Bearish: last break direction is down, last break was BOS, latest high is LH,
-           and latest low is LL.
+The timeframe biases correlate when they point in the same direction; an
+established or transitional structure-timeframe bias may correlate with the
+LTF. The LTF must additionally be definite (BOS plus HH/HL or LH/LL), making it
+the setup confirmation anchor.
 
-All mixed sequences and every latest CHoCH are reported as NOT TRADEABLE
-(TRANSITION). This flag is structural only: MA, session, ADX, and ATR do not
-enter the tradeable formula. It is information, not an order instruction.
+Market Tradeability prints Tradable only when the biases correlate, the LTF is
+definite, and every Optimal Conditions requirement passes. Otherwise it prints
+Not Tradable and a specific reason: unavailable/consolidating LTF data,
+consolidating structure, conflicting directions, transitional LTF structure,
+or the failed optimal-condition reasons.
 
 
 12. DASHBOARD SYSTEM
@@ -472,14 +479,13 @@ Use_Optimal_Conditions_Meter (default true)
   not change structure, filters, chart signals, or alerts.
 
 Definite Market Bias
-  Uses the strict Market Tradeability result: the latest break must be a BOS
-  in the active direction and the newest confirmed pivots must be HH/HL for a
-  bullish trend or LH/LL for a bearish trend. A CHoCH, undefined direction, or
-  mixed structure blocks this requirement.
+  Requires directional correlation between Structure_Timeframe and the LTF/setup
+  timeframe. The structure bias may be established or transitional, while the
+  LTF must have a BOS and clean HH/HL (bullish) or LH/LL (bearish) pivots.
 
 Clear Technical Space
   The latest price must be farther than Boundary_Clearance_ATR (default 1.0)
-  structure-timeframe ATR from every available higher-timeframe Market High,
+  LTF/setup-timeframe ATR from every available higher-timeframe Market High,
   Market Low, resistance trendline zone, and support trendline zone. Being
   inside a trendline zone also blocks it. The dashboard identifies the first
   nearby boundary. A missing/invalid ATR blocks the requirement.
@@ -493,7 +499,7 @@ Healthy Extension
   post-correction run are required.
 
 Good Market Volume
-  The newest closed candle's tick volume is divided by the average of the
+  The newest closed LTF/setup candle's tick volume is divided by the average of the
   preceding Volume_Average_Length candles (default 20). It passes from
   Volume_Minimum_Ratio (default 0.50) through Volume_Maximum_Ratio (default
   2.00), inclusive. This rejects both inactive conditions and volume spikes.
@@ -501,7 +507,7 @@ Good Market Volume
   available across instruments.
 
 Good Price Momentum
-  Momentum is the newest closed candle's true range divided by the average true
+  Momentum is the newest closed LTF/setup candle's true range divided by the average true
   range of the preceding Momentum_Average_Length candles (default 20). True
   range includes gaps from the preceding close, so the measure captures actual
   price travel without imposing a bullish or bearish direction. It passes from
