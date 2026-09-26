@@ -61,8 +61,8 @@ Use_LTF_For_Tradeability (all default true)
   the correlation component of Optimal Conditions. Enabled biases must be
   directional and agree. When LTF is enabled, its latest break must also be a
   BOS. At least one tradeability timeframe must be enabled; initialization
-  rejects a configuration with all three disabled. Biases remain visible on
-  the dashboard even when excluded from tradeability.
+  rejects a configuration with all three disabled. A bias is omitted from the
+  dashboard when its tradeability timeframe is disabled.
 
 Bars_To_Process (default 100; valid 100 or greater)
   Requested count of closed Structure_Timeframe candles replayed on every
@@ -462,22 +462,26 @@ data.
 12. DASHBOARD SYSTEM
 --------------------
 
-Bold chart labels display the HTF, MTF, and LTF market biases, Market Tradeability and
-its reason, plus the Optimal Conditions result, Definite Bias, Technical Space,
-Healthy Extension, Market Volume, Price Momentum, and the optimal-condition
-reason. Labels use the chart foreground color so they remain readable when the
-chart theme changes. Detailed session, indicator, swing, and aggregate-filter
-diagnostics remain part of the internal calculation but no longer clutter the
-chart.
+Bold chart labels display only the enabled HTF, MTF, and LTF market biases,
+Market Tradeability and its reason, plus the Optimal Conditions result, its
+enabled requirement rows, and the optimal-condition reason. Disabled
+timeframes and optimal-condition filters are omitted rather than displayed as
+inactive rows. Labels use the chart foreground color so they remain readable
+when the chart theme changes. Detailed session, indicator, swing, and
+aggregate-filter diagnostics remain part of the internal calculation but no
+longer clutter the chart.
 
 
 12A. OPTIMAL CONDITIONS METER
 -----------------------------
 
-The meter is always enabled as an internal calculation. OPTIMAL is printed only
-when all five requirements below pass simultaneously. Its detailed tuning
-values retain their documented defaults but are intentionally hidden from the
-normal Inputs dialog.
+The meter is always enabled as an internal calculation. The **Optimal
+Conditions** input group exposes one `Use_*_For_Optimal` switch for each of the
+five requirements below. OPTIMAL is printed only when every selected
+requirement passes, and at least one switch must remain enabled. Unselected
+requirements neither affect the result nor appear on the dashboard. Detailed
+tuning values retain their documented defaults but are intentionally hidden
+from the normal Inputs dialog.
 
 Definite Market Bias
   Requires directional correlation between the enabled tradeability
