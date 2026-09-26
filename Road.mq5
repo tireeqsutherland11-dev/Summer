@@ -1,5 +1,5 @@
 #property copyright "Market Trend Analyser conversion"
-#property version   "1.69"
+#property version   "1.70"
 #property strict
 #property description "Road: MT5 port of the Market Trend Analyser Pine Script."
 #property description "Signal/visualisation EA only; the source indicator contains no trading rules."
@@ -466,22 +466,14 @@ void DrawTrendZone(const string id,const datetime from_time,const double from_to
                    const double from_bottom,const datetime to_time,const double to_top,
                    const double to_bottom,const color clr)
   {
-   string channel=g_prefix+"TREND_ZONE_"+id;
-   if(ObjectCreate(0,channel,OBJ_CHANNEL,0,from_time,from_bottom,to_time,to_bottom,
-                   from_time,from_top))
-     {
-      ObjectSetInteger(0,channel,OBJPROP_COLOR,TrendZoneColor(clr,Trendline_Zone_Transparency));
-      ObjectSetInteger(0,channel,OBJPROP_FILL,true);
-      ObjectSetInteger(0,channel,OBJPROP_RAY_RIGHT,true);
-      ObjectSetInteger(0,channel,OBJPROP_BACK,true);
-      ObjectSetInteger(0,channel,OBJPROP_SELECTABLE,false);
-     }
-   DrawSegment("TREND_TOP_"+id,from_time,from_top,to_time,to_top,
-               TrendZoneColor(clr,50),STYLE_SOLID,1);
-   DrawSegment("TREND_BOTTOM_"+id,from_time,from_bottom,to_time,to_bottom,
-               TrendZoneColor(clr,50),STYLE_SOLID,1);
-   ObjectSetInteger(0,g_prefix+"TREND_TOP_"+id,OBJPROP_RAY_RIGHT,true);
-   ObjectSetInteger(0,g_prefix+"TREND_BOTTOM_"+id,OBJPROP_RAY_RIGHT,true);
+   // Keep the ATR-derived zone bounds for qualification, but render their
+   // centre as one thin line. Filled channels become visually very thick on
+   // volatile symbols and MT5 can leave unpainted seams where they overlap.
+   double from_middle=(from_top+from_bottom)/2.0;
+   double to_middle=(to_top+to_bottom)/2.0;
+   DrawSegment("TREND_LINE_"+id,from_time,from_middle,to_time,to_middle,
+               TrendZoneColor(clr,Trendline_Zone_Transparency),STYLE_SOLID,1);
+   ObjectSetInteger(0,g_prefix+"TREND_LINE_"+id,OBJPROP_RAY_RIGHT,true);
   }
 
 bool FindTrendZones(const MqlRates &rates[],const int total,const double threshold,
