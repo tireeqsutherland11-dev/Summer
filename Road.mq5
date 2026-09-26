@@ -1,5 +1,5 @@
 #property copyright "Market Trend Analyser conversion"
-#property version   "1.51"
+#property version   "1.50"
 #property strict
 #property description "Road: MT5 port of the Market Trend Analyser Pine Script."
 #property description "Signal/visualisation EA only; the source indicator contains no trading rules."
@@ -548,26 +548,6 @@ string PriceText(const bool available,const double value)
    return available?DoubleToString(value,_Digits):"-";
   }
 
-string AddReason(const string current,const string reason)
-  {
-   return current+(current==""?"":"; ")+reason;
-  }
-
-string DirectionFilterReason(const bool bullish,const bool ma_long,const bool ma_short,
-                             const bool htf_long,const bool htf_short,const bool in_session,
-                             const bool adx_required,const bool adx_pass,const bool atr_pass)
-  {
-   string reason="";
-   if(Use_MA_Filter && !(bullish?ma_long:ma_short))
-      reason=AddReason(reason,"LTF MA blocks "+(bullish?"long":"short"));
-   if(Use_HTF_MA_Filter && !(bullish?htf_long:htf_short))
-      reason=AddReason(reason,"HTF MA blocks "+(bullish?"long":"short"));
-   if(Use_Session_Filter && !in_session) reason=AddReason(reason,"outside session");
-   if(adx_required && !adx_pass) reason=AddReason(reason,"ADX below minimum");
-   if(Use_ATR_Filter && !atr_pass) reason=AddReason(reason,"ATR outside allowed range");
-   return reason==""?"all applicable filters pass":reason;
-  }
-
 void DrawDashboard(const int structure,const bool have_high,const double last_high,
                    const bool have_low,const double last_low,const bool in_session,
                    const double adx,const bool adx_pass,const double atr,const bool atr_pass,
@@ -575,9 +555,6 @@ void DrawDashboard(const int structure,const bool have_high,const double last_hi
                    const bool tradeable,
                    const bool bull_bos_pass,const bool bear_bos_pass,
                    const bool bull_choch_pass,const bool bear_choch_pass,
-                   const bool ma_long,const bool ma_short,
-                   const bool htf_long,const bool htf_short,
-                   const string bias_reason,const string tradeability_reason,
                    const bool optimal,const bool clear_space,const bool healthy_extension,
                    const bool good_volume,const double volume_ratio,
                    const bool good_momentum,const double momentum_ratio,
@@ -591,37 +568,22 @@ void DrawDashboard(const int structure,const bool have_high,const double last_hi
    string htf=!Use_HTF_MA_Filter?"OFF":close>htf_ma?"ABOVE":"BELOW";
    bool bos_pass=(structure>=0 && bull_bos_pass)||(structure<=0 && bear_bos_pass);
    bool choch_pass=(structure<=0 && bull_choch_pass)||(structure>=0 && bear_choch_pass);
-   // With undefined structure either direction may pass. Explain the passing
-   // side when there is one instead of reporting blockers from the other side.
-   bool bos_bullish=structure>0 || (structure==0 && (bull_bos_pass || !bear_bos_pass));
-   bool choch_bullish=structure<0 || (structure==0 && (bull_choch_pass || !bear_choch_pass));
-   string bos_reason=DirectionFilterReason(bos_bullish,ma_long,ma_short,htf_long,htf_short,
-                                          in_session,Use_ADX_Filter,adx_pass,atr_pass);
-   bool choch_needs_adx=Use_ADX_Filter && Apply_ADX_Filter_To==ROAD_BOS_AND_CHOCH;
-   string choch_reason=DirectionFilterReason(choch_bullish,ma_long,ma_short,htf_long,htf_short,
-                                            in_session,choch_needs_adx,adx_pass,atr_pass);
    Comment("ROAD — Market Trend Analyser\n",
            "Market Bias: ",bias,
-           " — ",bias_reason,
            "\nMarket Tradeability: ",tradeable?"TRADEABLE":"NOT TRADEABLE (TRANSITION)",
-           " — ",tradeability_reason,
            "\nLast High: ",PriceText(have_high,last_high),
            "\nLast Low: ",PriceText(have_low,last_low),"\nSession: ",session,
            "\nADX: ",adx_text,"\nADX Scope: ",!Use_ADX_Filter?"OFF":Apply_ADX_Filter_To==ROAD_BOS_AND_CHOCH?"BOS+CHoCH":"BOS Only",
            "\nATR: ",atr_text,"\nMA (LTF): ",ltf,"\nMA (HTF): ",htf,
-           "\n\nSETUP FILTERS (do not change Bias or Tradeability)",
-           "\nBOS Filters [continuation]: ",bos_pass?"PASS":"BLOCKED"," — ",bos_reason,
-           "\nCHoCH Filters [reversal]: ",choch_pass?"PASS":"BLOCKED"," — ",choch_reason,
-           "\n  MA LTF/HTF = direction alignment; Session = timing; ADX = strength; ATR = volatility.",
-           "\n  These qualify setups only; they do not alter structure signals, alerts, or Optimal.",
+           "\nBOS Filters: ",bos_pass?"PASS":"BLOCKED",
+           "\nCHoCH Filters: ",choch_pass?"PASS":"BLOCKED",
            "\n\nOptimal Conditions: ",!Use_Optimal_Conditions_Meter?"OFF":optimal?"OPTIMAL":"NOT OPTIMAL",
-           "\n  Definite Bias: ",tradeable?"PASS":"BLOCKED"," — requires latest BOS + clean HH/HL or LH/LL",
-           "\n  Technical Space: ",clear_space?"PASS":"BLOCKED"," — clear of HTF boundaries/zones by configured ATR distance",
-           "\n  Healthy Extension: ",healthy_extension?"PASS":"BLOCKED"," — correction-to-close distance <= ",DoubleToString(Maximum_Extension_ATR,1)," ATR",
-           "\n  Market Volume: ",good_volume?"PASS":"BLOCKED"," — ",DoubleToString(volume_ratio,2),"x average; allowed ",DoubleToString(Volume_Minimum_Ratio,2),"–",DoubleToString(Volume_Maximum_Ratio,2),"x",
-           "\n  Price Momentum: ",good_momentum?"PASS":"BLOCKED"," — ",DoubleToString(momentum_ratio,2),"x average range; allowed ",DoubleToString(Momentum_Minimum_Ratio,2),"–",DoubleToString(Momentum_Maximum_Ratio,2),"x",
-           !Use_Optimal_Conditions_Meter?"":"\nOptimal Reason: "+optimal_reason,
-           "\n  Optimal uses Tradeability + space + extension + volume + momentum; not BOS/CHoCH filter PASS.");
+           "\n  Definite Bias: ",tradeable?"PASS":"BLOCKED",
+           "\n  Technical Space: ",clear_space?"PASS":"BLOCKED",
+           "\n  Healthy Extension: ",healthy_extension?"PASS":"BLOCKED",
+           "\n  Market Volume: ",good_volume?"PASS":"BLOCKED"," (",DoubleToString(volume_ratio,2),"x average)",
+           "\n  Price Momentum: ",good_momentum?"PASS":"BLOCKED"," (",DoubleToString(momentum_ratio,2),"x average range)",
+           !Use_Optimal_Conditions_Meter?"":"\nReason: "+optimal_reason);
   }
 
 void Rebuild(const bool permit_alert)
@@ -652,8 +614,6 @@ void Rebuild(const bool permit_alert)
    string newest_signal="";
    bool dashboard_bull_bos=false,dashboard_bear_bos=false;
    bool dashboard_bull_choch=false,dashboard_bear_choch=false;
-   bool dashboard_ma_long=true,dashboard_ma_short=true;
-   bool dashboard_htf_long=true,dashboard_htf_short=true;
    bool dashboard_session=true,dashboard_adx=false,dashboard_atr=false;
 
    for(int i=length;i<total;i++)
@@ -770,8 +730,6 @@ void Rebuild(const bool permit_alert)
          last_htf_ma=htf_ma; dashboard_session=session; dashboard_adx=adx_pass; dashboard_atr=atr_pass;
          dashboard_bull_bos=bull_bos; dashboard_bear_bos=bear_bos;
          dashboard_bull_choch=bull_choch; dashboard_bear_choch=bear_choch;
-         dashboard_ma_long=ma_long; dashboard_ma_short=ma_short;
-         dashboard_htf_long=htf_long; dashboard_htf_short=htf_short;
         }
      }
 
@@ -811,31 +769,11 @@ void Rebuild(const bool permit_alert)
                    last_high_kind>0 && last_low_kind<0) ||
                   (structure<0 && last_break_direction<0 && last_break_was_bos &&
                    last_high_kind<0 && last_low_kind>0);
-   string bias_reason=structure==0?"no confirmed BOS/CHoCH in processed history":
-                      "latest confirmed break is "+newest_signal;
-   string tradeability_reason="clean continuation structure confirmed";
-   if(!tradeable)
-     {
-      tradeability_reason="";
-      if(structure==0) tradeability_reason="bias is undefined";
-      else
-        {
-         if(!last_break_was_bos)
-            tradeability_reason=AddReason(tradeability_reason,"latest break is CHoCH, so structure is transitional");
-         if(last_break_direction!=structure)
-            tradeability_reason=AddReason(tradeability_reason,"latest break direction conflicts with bias");
-         bool clean_pivots=structure>0?(last_high_kind>0 && last_low_kind<0):
-                                        (last_high_kind<0 && last_low_kind>0);
-         if(!clean_pivots)
-            tradeability_reason=AddReason(tradeability_reason,
-               structure>0?"latest pivots are not a clean HH/HL":"latest pivots are not a clean LH/LL");
-        }
-     }
 
    double latest_atr=(Use_ATR_Filter || Use_Optimal_Conditions_Meter)?atr[total-1]:0.0;
    double clearance=latest_atr*Boundary_Clearance_ATR;
    bool clear_space=latest_atr!=EMPTY_VALUE && latest_atr>0.0;
-   string space_reason=clear_space?"":"ATR is unavailable for boundary clearance";
+   string space_reason="";
    if(clear_space && have_market_high && market_high-current_price<=clearance)
      { clear_space=false; space_reason="too close to Market High"; }
    if(clear_space && have_market_low && current_price-market_low<=clearance)
@@ -893,9 +831,7 @@ void Rebuild(const bool permit_alert)
                  Use_ATR_Filter?atr[total-1]:0.0,dashboard_atr,rates[total-1].close,
                  Use_MA_Filter?ma[total-1]:0.0,last_htf_ma,tradeable,
                  dashboard_bull_bos,dashboard_bear_bos,
-                 dashboard_bull_choch,dashboard_bear_choch,
-                 dashboard_ma_long,dashboard_ma_short,dashboard_htf_long,dashboard_htf_short,
-                 bias_reason,tradeability_reason,optimal,clear_space,
+                 dashboard_bull_choch,dashboard_bear_choch,optimal,clear_space,
                  healthy_extension,good_volume,volume_ratio,good_momentum,
                  momentum_ratio,optimal_reason);
    if(permit_alert && newest_signal_time==rates[total-1].time && newest_signal!="")
