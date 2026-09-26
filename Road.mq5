@@ -1,5 +1,5 @@
 #property copyright "Market Trend Analyser conversion"
-#property version   "1.71"
+#property version   "1.72"
 #property strict
 #property description "Road: MT5 port of the Market Trend Analyser Pine Script."
 #property description "Signal/visualisation EA only; the source indicator contains no trading rules."
@@ -52,6 +52,9 @@ input group "CHoCH Display"
 input bool Show_CHoCH_Labels=true;
 input color Bullish_CHoCH_Color=clrLime;
 input color Bearish_CHoCH_Color=clrMagenta;
+
+input group "Lower-Timeframe Structure Display"
+input bool Show_LTF_Structure=true;
 
 input group "Labels and Lines"
 input ROAD_LABEL_SIZE Label_Size=ROAD_SMALL;
@@ -779,6 +782,10 @@ void EvaluateSignificantSR(const datetime chart_time,const double current_price,
 void DrawSignal(const string kind,const int direction,const datetime swing_time,
                 const double level,const MqlRates &bar)
   {
+   // The setup chart can be kept visually clean without disabling structure
+   // analysis.  This guard affects only BOS/CHoCH objects; both timeframe
+   // state machines continue to run for bias, tradeability, and alerts.
+   if(!Show_LTF_Structure && (ENUM_TIMEFRAMES)_Period==SetupTimeframe()) return;
    bool bos=kind=="BOS";
    if((bos && !Show_BOS_Labels) || (!bos && !Show_CHoCH_Labels)) return;
    color clr=direction>0?(bos?Bullish_BOS_Color:Bullish_CHoCH_Color)
