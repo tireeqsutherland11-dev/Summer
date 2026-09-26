@@ -421,13 +421,17 @@ enter the tradeable formula. It is information, not an order instruction.
 --------------------
 
 The chart Comment displays:
-  * Market Bias and structural Market Tradeability.
+  * Market Bias and the confirmed structural event that caused it.
+  * Structural Market Tradeability and a specific explanation of any blocking
+    condition (undefined bias, latest CHoCH, conflicting direction, or an
+    unclean pivot sequence).
   * Most recent confirmed high and low, or "-" when unavailable.
   * Session OFF/IN/OUT.
   * ADX value, configured minimum, pass/block, and scope.
   * ATR value and pass/block.
   * Whether the latest close is above/below each enabled MA.
-  * Aggregate BOS and CHoCH filter pass/block states.
+  * Aggregate BOS and CHoCH filter pass/block states, their intended role, and
+    the exact enabled component(s) currently blocking the relevant direction.
   * The Optimal Conditions result, each requirement state, the latest
     volume-to-average and true-range-to-average ratios, and a specific
     failure-reason list.
@@ -443,6 +447,20 @@ Directional aggregation is bias-aware:
 The MA dashboard words use close > MA for ABOVE and otherwise BELOW, even when
 full-body mode is selected. Thus the word is positional information, while the
 aggregate filter row carries the stricter full-body result.
+
+Filter explanations and effects
+  * BOS Filters qualify a continuation setup in the current bias direction.
+    They combine directional LTF MA, directional HTF MA, session, ADX, and ATR.
+  * CHoCH Filters qualify a possible reversal setup against the current bias.
+    They combine directional LTF MA, directional HTF MA, session, ATR, and ADX
+    only when Apply_ADX_Filter_To is BOS_AND_CHOCH.
+  * LTF/HTF MA describe directional alignment, Session describes timing, ADX
+    describes non-directional trend strength, and ATR describes volatility.
+  * These are setup-qualification filters. They never rewrite confirmed price
+    structure, Market Bias, structural Market Tradeability, drawings, or alerts.
+    They also do not enter the Optimal Conditions formula. In particular, a
+    CHoCH structurally makes Tradeability transitional and therefore blocks the
+    meter's Definite Bias requirement; CHoCH Filters PASS/BLOCKED does not.
 
 
 12A. OPTIMAL CONDITIONS METER
