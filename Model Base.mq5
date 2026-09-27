@@ -2,9 +2,8 @@
 #property link      "https://www.mql5.com"
 #property version   "1.00"
 #property strict
-#property indicator_chart_window
-#property indicator_plots 0
-#property description "Model Base - MT5 conversion of Liquidity Swings [LuxAlgo]."
+#property description "Model Base EA - MT5 conversion of Liquidity Swings [LuxAlgo]."
+#property description "Analysis and visualisation only; this EA does not place trades."
 
 enum MODEL_SWING_AREA
   {
@@ -52,6 +51,7 @@ input color            Swing_Low_Area_Color=clrTeal;
 input MODEL_LABEL_SIZE Labels_Size=MODEL_TINY;
 
 string g_prefix;
+datetime g_last_bar=0;
 
 struct MODEL_SWING
   {
@@ -328,31 +328,47 @@ int OnInit()
       return INIT_PARAMETERS_INCORRECT;
      }
    g_prefix="ModelBase_"+IntegerToString(ChartID())+"_";
-   IndicatorSetString(INDICATOR_SHORTNAME,"Model Base");
+   EventSetTimer(2);
+   // Do not fail initialization while the terminal is still downloading chart
+   // history.  The timer will keep retrying until enough bars are available.
+   RebuildModel();
    return INIT_SUCCEEDED;
   }
 
 void OnDeinit(const int reason)
   {
+   EventKillTimer();
    DeleteModelObjects();
    ChartRedraw();
   }
 
-int OnCalculate(const int rates_total,const int prev_calculated,const datetime &time[],
-                const double &open[],const double &high[],const double &low[],
-                const double &close[],const long &tick_volume[],const long &volume[],
-                const int &spread[])
+void OnTick()
   {
-   static datetime last_bar=0;
-   if(rates_total<2*Pivot_Lookback+2) return 0;
-   if(prev_calculated>0 && time[0]==last_bar) return rates_total;
-   last_bar=time[0];
+   RebuildModel();
+  }
 
-   int wanted=MathMin(Maximum_Bars,rates_total);
+void OnTimer()
+  {
+   RebuildModel();
+  }
+
+void RebuildModel()
+  {
+   datetime current_bar=iTime(_Symbol,(ENUM_TIMEFRAMES)_Period,0);
+   if(current_bar<=0 || current_bar==g_last_bar) return;
+
+   int available=Bars(_Symbol,(ENUM_TIMEFRAMES)_Period);
+   if(available<2*Pivot_Lookback+2) return;
+
+   int wanted=MathMin(Maximum_Bars,available);
    MqlRates rates[];
    ArraySetAsSeries(rates,false);
    int copied=CopyRates(_Symbol,(ENUM_TIMEFRAMES)_Period,0,wanted,rates);
-   if(copied<2*Pivot_Lookback+2) return prev_calculated;
+   if(copied<2*Pivot_Lookback+2) return;
+
+   // Mark the bar handled only after CopyRates succeeds.  A transient history
+   // request failure must remain eligible for the next timer retry.
+   g_last_bar=current_bar;
 
    DeleteModelObjects();
    MODEL_SWING ph,pl;
@@ -384,5 +400,4 @@ int OnCalculate(const int rates_total,const int prev_calculated,const datetime &
      }
 
    ChartRedraw();
-   return rates_total;
   }

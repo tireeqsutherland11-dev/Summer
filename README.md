@@ -2,16 +2,20 @@
 
 ## Model Base
 
-`Model Base.mq5` is an MQL5 custom-indicator conversion of the supplied
+`Model Base.mq5` is an MQL5 Expert Advisor conversion of the supplied
 Liquidity Swings PineScript. It detects delayed pivot highs and lows, draws
 their wick-extremity or full-range liquidity areas, counts overlapping bars,
 accumulates tick volume, and marks levels as dashed after price crosses them.
 Optional lower-timeframe sampling approximates Pine's intrabar volume mode.
+It is analysis/visualisation software only and never places trades.
 
-Install it in `MQL5/Indicators`, compile it in MetaEditor, and attach **Model
-Base** to a chart. `Maximum_Bars` bounds reconstruction time and the number of
-chart objects. MetaTrader tick volume is used because broker-independent
-centralized volume is not universally available.
+Install it in `MQL5/Experts`, compile it in MetaEditor, refresh **Navigator >
+Expert Advisors**, and attach **Model Base** to a chart. Keep Algo Trading
+enabled so its event loop runs. The EA retries on a two-second timer while MT5
+downloads chart history, then rebuilds on each new chart bar. `Maximum_Bars`
+bounds reconstruction time and the number of chart objects. MetaTrader tick
+volume is used because broker-independent centralized volume is not universally
+available.
 
 By default, a geometrically valid pivot is shown only when its confirmation
 window demonstrates a strong departure from the level. The qualification
