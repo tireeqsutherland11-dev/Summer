@@ -52,8 +52,8 @@ Setup_Entry_Timeframe (default PERIOD_M15)
 
 LTF_Timeframe (default PERIOD_M5)
   Supplies the final confirmation bias for timeframe correlation. A definite
-  directional LTF BOS is required when Use_LTF_For_Tradeability is enabled,
-  while matching HTF and MTF biases may be transitional.
+  directional LTF BOS is required when Use_LTF_For_Tradeability is enabled.
+  MTF may be transitional, but HTF must always have an established bias.
 
 Use_HTF_For_Tradeability / Use_MTF_For_Tradeability /
 Use_LTF_For_Tradeability (all default true)
@@ -62,7 +62,8 @@ Use_LTF_For_Tradeability (all default true)
   directional and agree. When LTF is enabled, its latest break must also be a
   BOS. At least one tradeability timeframe must be enabled; initialization
   rejects a configuration with all three disabled. A bias is omitted from the
-  dashboard when its tradeability timeframe is disabled.
+  dashboard when its tradeability timeframe is disabled. The established HTF
+  prerequisite applies even if HTF is not selected for correlation.
 
 Bars_To_Process (default 100; valid 100 or greater)
   Requested count of closed Structure_Timeframe candles replayed on every
@@ -454,13 +455,14 @@ only when its latest break is a CHoCH. The first subsequent BOS completes the
 transition, and later pivot classifications cannot make it transitional again
 unless another CHoCH occurs.
 
-The enabled tradeability timeframe biases correlate when they all point in the
-same direction. The HTF and MTF may be established or transitional. If LTF is
-enabled, it must be definite, meaning its most recent break is a BOS. Thus the
-defaults retain the original all-three behavior, while disabling LTF permits
-HTF/MTF correlation and enabling only HTF permits directional HTF structure to
-stand alone. A CHoCH makes an enabled LTF transitional until a subsequent BOS,
-regardless of later pivot classifications.
+Tradeability always requires an established HTF Bullish or Bearish bias. Its
+latest break must be a continuation BOS that creates a new HH or LL, and its
+latest pivot pair must be clean HH/HL or LH/LL; a transitional HTF bias cannot
+be traded. This prerequisite applies even when HTF is disabled as a correlation
+participant. The enabled tradeability timeframe biases must also point in the
+same direction. MTF may be transitional. If LTF is enabled, it must be definite,
+meaning its most recent break is a BOS. A CHoCH makes an enabled LTF transitional
+until a subsequent BOS, regardless of later pivot classifications.
 
 Market Tradeability prints Tradable when the selected biases meet those rules.
 Optimal Conditions remains a separate quality meter and does not override
@@ -494,10 +496,11 @@ tuning values retain their documented defaults but are intentionally hidden
 from the normal Inputs dialog.
 
 Definite Market Bias
-  Requires directional correlation between the enabled tradeability
-  timeframes. HTF and MTF biases may be established or transitional. When LTF
-  is enabled, its latest break must be a BOS; a CHoCH remains transitional
-  until a later BOS confirms continuation.
+  Requires an established HTF bias with a continuation BOS creating a new HH
+  or LL, plus directional correlation between the enabled tradeability
+  timeframes. MTF may be transitional. When LTF is enabled, its latest break
+  must be a BOS; a CHoCH remains transitional until a later BOS confirms
+  continuation.
 
 Clear Technical Space
   The latest price must be farther than Boundary_Clearance_ATR (default 1.0)

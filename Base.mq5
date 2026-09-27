@@ -1083,9 +1083,11 @@ bool Rebuild(const bool permit_alert)
    structure_state.last_high_kind=last_high_kind; structure_state.last_low_kind=last_low_kind;
    structure_state.have_high=have_high; structure_state.have_low=have_low;
    structure_state.last_high=last_high; structure_state.last_low=last_low;
-   // Only enabled tradeability timeframes participate in correlation. HTF and
-   // MTF may be transitional. When enabled, LTF must have a definite BOS;
-   // CHoCH remains transitional until a subsequent BOS.
+   // Only enabled tradeability timeframes participate in correlation, but a
+   // clean HTF continuation is always the gateway to tradeability. A CHoCH or
+   // an incomplete HH/HL or LH/LL pair leaves the HTF transitional. When
+   // enabled, LTF must likewise have a definite BOS.
+   bool htf_definite=DefiniteBias(structure_state);
    bool ltf_definite=have_ltf && DefiniteSetupBias(ltf_state);
    bool selected_biases_available=(!Use_HTF_For_Tradeability || structure!=0) &&
                                   (!Use_MTF_For_Tradeability || setup_state.direction!=0) &&
@@ -1096,7 +1098,7 @@ bool Rebuild(const bool permit_alert)
                                structure==ltf_state.direction) &&
                               (!Use_MTF_For_Tradeability || !Use_LTF_For_Tradeability ||
                                setup_state.direction==ltf_state.direction);
-   bool bias_ready=selected_biases_available && selected_biases_match &&
+   bool bias_ready=htf_definite && selected_biases_available && selected_biases_match &&
                    (!Use_LTF_For_Tradeability || ltf_definite);
 
    double latest_atr=have_ltf_atr?ltf_atr_values[ltf_total-1]:0.0;
@@ -1173,12 +1175,15 @@ bool Rebuild(const bool permit_alert)
                                 (Use_LTF_For_Tradeability?1:0);
    string tradeability_reason=TradeabilityTimeframesText()+
                               (selected_timeframe_count>1?" correlate":" is directional");
+   tradeability_reason+="; HTF is confirmed by HH/LL BOS";
    if(Use_LTF_For_Tradeability) tradeability_reason+="; LTF is confirmed by BOS";
    if(!tradeable)
      {
       if(Use_MTF_For_Tradeability && !have_setup) tradeability_reason="MTF structure data is unavailable";
       else if(Use_LTF_For_Tradeability && !have_ltf) tradeability_reason="LTF structure data is unavailable";
-      else if(Use_HTF_For_Tradeability && structure==0) tradeability_reason="HTF is consolidating";
+      else if(structure==0) tradeability_reason="HTF is consolidating";
+      else if(!htf_definite)
+         tradeability_reason="HTF bias is transitional (no confirmed HH/LL BOS)";
       else if(Use_MTF_For_Tradeability && setup_state.direction==0) tradeability_reason="MTF is consolidating";
       else if(Use_LTF_For_Tradeability && ltf_state.direction==0) tradeability_reason="LTF is consolidating";
       else if(!selected_biases_match)
