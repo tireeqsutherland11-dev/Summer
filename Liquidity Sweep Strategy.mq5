@@ -174,6 +174,7 @@ input MODEL_LABEL_SIZE Labels_Size=MODEL_TINY;
 string g_prefix="";
 string g_model_prefix="";
 datetime g_model_last_bar=0;
+int g_model_last_bias=0;
 datetime g_last_ltf_bar=0;
 datetime g_last_structure_bar=0;
 datetime g_last_setup_bar=0;
@@ -1298,7 +1299,6 @@ struct MODEL_SWING
    string active_box;
    string zone;
    string level;
-   string label;
   };
 
 uint WithAlpha(const color value,const uchar alpha)
@@ -1341,25 +1341,18 @@ void CreateLevel(const string name,const datetime left,const double price)
    SetCommonObject(name);
   }
 
-string VolumeText(const long value)
+void CreateMTFStructureLabel(const string kind,const MqlRates &pivot,const bool high,
+                             const color colour)
   {
-   double number=(double)value;
-   if(number>=1000000000.0) return DoubleToString(number/1000000000.0,2)+"B";
-   if(number>=1000000.0)    return DoubleToString(number/1000000.0,2)+"M";
-   if(number>=1000.0)       return DoubleToString(number/1000.0,2)+"K";
-   return IntegerToString(value);
-  }
-
-void CreateVolumeLabel(MODEL_SWING &swing,const bool high,const color colour)
-  {
-   double price=high?swing.top:swing.bottom;
-   if(!ObjectCreate(0,swing.label,OBJ_TEXT,0,swing.start,price)) return;
-   ObjectSetString(0,swing.label,OBJPROP_TEXT,VolumeText(swing.volume));
-   ObjectSetString(0,swing.label,OBJPROP_FONT,"Arial");
-   ObjectSetInteger(0,swing.label,OBJPROP_FONTSIZE,(int)Labels_Size);
-   ObjectSetInteger(0,swing.label,OBJPROP_COLOR,colour);
-   ObjectSetInteger(0,swing.label,OBJPROP_ANCHOR,high?ANCHOR_LOWER:ANCHOR_UPPER);
-   SetCommonObject(swing.label);
+   string name=g_model_prefix+"STRUCTURE_"+kind+"_"+(string)pivot.time;
+   double price=high?pivot.high:pivot.low;
+   if(!ObjectCreate(0,name,OBJ_TEXT,0,pivot.time,price)) return;
+   ObjectSetString(0,name,OBJPROP_TEXT,kind);
+   ObjectSetString(0,name,OBJPROP_FONT,"Arial");
+   ObjectSetInteger(0,name,OBJPROP_FONTSIZE,(int)Labels_Size);
+   ObjectSetInteger(0,name,OBJPROP_COLOR,colour);
+   ObjectSetInteger(0,name,OBJPROP_ANCHOR,high?ANCHOR_LOWER:ANCHOR_UPPER);
+   SetCommonObject(name);
   }
 
 double Target(const MODEL_SWING &swing)
@@ -1495,7 +1488,6 @@ void StartSwing(MODEL_SWING &swing,const bool high,const MqlRates &pivot,
    swing.active_box=g_model_prefix+side+"ACTIVE_"+suffix;
    swing.zone=g_model_prefix+side+"ZONE_"+suffix;
    swing.level=g_model_prefix+side+"LEVEL_"+suffix;
-   swing.label=g_model_prefix+side+"LABEL_"+suffix;
    CreateRectangle(swing.active_box,swing.start,swing.top,swing.start,swing.bottom,
                    area_colour,45);
    CreateLevel(swing.level,swing.start,high?swing.top:swing.bottom);
@@ -1519,15 +1511,11 @@ void UpdateSwing(MODEL_SWING &swing,const bool high,const MqlRates &current,
       datetime right=ProjectTime(swing.start,swing.count);
       CreateRectangle(swing.zone,swing.start,swing.top,right,swing.bottom,
                       area_colour,128);
-      CreateVolumeLabel(swing,high,line_colour);
       ObjectSetInteger(0,swing.level,OBJPROP_COLOR,line_colour);
      }
 
    if(swing.qualified)
-     {
       ObjectMove(0,swing.zone,1,ProjectTime(swing.start,swing.count),swing.bottom);
-      ObjectSetString(0,swing.label,OBJPROP_TEXT,VolumeText(swing.volume));
-     }
 
    if(!swing.crossed && ((high && current.close>swing.top) ||
                          (!high && current.close<swing.bottom)))
@@ -1557,6 +1545,7 @@ void RebuildModel()
      {
       DeleteModelObjects();
       g_model_last_bar=0;
+      g_model_last_bias=0;
       return;
      }
    datetime current_bar=iTime(_Symbol,SetupTimeframe(),0);
@@ -1565,7 +1554,16 @@ void RebuildModel()
       DrawStatus("Model Base: waiting for chart history...");
       return;
      }
-   if(current_bar==g_model_last_bar) return;
+   BASE_STRUCTURE_STATE htf_state;
+   MqlRates htf_rates[];
+   int structure_wanted=MathMax(100,MathMin(Bars_To_Process,100000));
+   if(!AnalyseStructure(BASETimeframe(),structure_wanted,htf_state,htf_rates))
+     {
+      DrawStatus("Model Base: waiting for HTF market bias...");
+      return;
+     }
+   int market_bias=htf_state.direction;
+   if(current_bar==g_model_last_bar && market_bias==g_model_last_bias) return;
 
    int minimum=2*Pivot_Lookback+2;
    // CHART_FIRST_VISIBLE_BAR is a shift into data that the chart already has.
@@ -1588,12 +1586,15 @@ void RebuildModel()
    // Mark the bar handled only after CopyRates succeeds. A transient local
    // data failure remains eligible for the next tick or chart-change event.
    g_model_last_bar=current_bar;
+   g_model_last_bias=market_bias;
 
    DeleteModelObjects();
    MODEL_SWING ph,pl;
    ZeroMemory(ph);
    ZeroMemory(pl);
    int high_serial=0,low_serial=0;
+   bool have_previous_high=false,have_previous_low=false;
+   double previous_high=0.0,previous_low=0.0;
 
    // A pivot becomes known Pivot_Lookback bars after its extremity. Counts use
    // that same delayed bar, matching Pine's low[length]/high[length] series.
@@ -1605,13 +1606,41 @@ void RebuildModel()
       bool new_low=IsPivotLow(rates,copied,pivot,Pivot_Lookback) &&
                    StrongDeparture(rates,copied,pivot,now,false);
 
-      if(new_high && Show_Swing_High)
+      bool lower_high=new_high && have_previous_high && rates[pivot].high<previous_high;
+      bool higher_high=new_high && have_previous_high && rates[pivot].high>previous_high;
+      bool higher_low=new_low && have_previous_low && rates[pivot].low>previous_low;
+      bool lower_low=new_low && have_previous_low && rates[pivot].low<previous_low;
+
+      if(new_high)
+        {
+         if(higher_high && Show_Swing_High)
+            CreateMTFStructureLabel("HH",rates[pivot],true,Swing_High_Color);
+         else if(lower_high && Show_Swing_High)
+            CreateMTFStructureLabel("LH",rates[pivot],true,Swing_High_Color);
+         previous_high=rates[pivot].high;
+         have_previous_high=true;
+        }
+      if(new_low)
+        {
+         if(higher_low && Show_Swing_Low)
+            CreateMTFStructureLabel("HL",rates[pivot],false,Swing_Low_Color);
+         else if(lower_low && Show_Swing_Low)
+            CreateMTFStructureLabel("LL",rates[pivot],false,Swing_Low_Color);
+         previous_low=rates[pivot].low;
+         have_previous_low=true;
+        }
+
+      // Liquidity is directional: bearish HTF bias permits only MTF lower
+      // highs, while bullish HTF bias permits only MTF higher lows.
+      bool draw_high=market_bias<0 && lower_high;
+      bool draw_low=market_bias>0 && higher_low;
+      if(draw_high && Show_Swing_High)
          StartSwing(ph,true,rates[pivot],++high_serial,Swing_High_Area_Color);
       else if(Show_Swing_High && ph.active)
          UpdateSwing(ph,true,rates[now],rates[pivot],Swing_High_Color,
                      Swing_High_Area_Color);
 
-      if(new_low && Show_Swing_Low)
+      if(draw_low && Show_Swing_Low)
          StartSwing(pl,false,rates[pivot],++low_serial,Swing_Low_Area_Color);
       else if(Show_Swing_Low && pl.active)
          UpdateSwing(pl,false,rates[now],rates[pivot],Swing_Low_Color,
