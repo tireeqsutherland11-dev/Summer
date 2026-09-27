@@ -13,6 +13,15 @@ Base** to a chart. `Maximum_Bars` bounds reconstruction time and the number of
 chart objects. MetaTrader tick volume is used because broker-independent
 centralized volume is not universally available.
 
+By default, a geometrically valid pivot is shown only when its confirmation
+window demonstrates a strong departure from the level. The qualification
+favours directional tick-volume pressure, candle-body momentum, and an
+efficient one-way move, with relative volume as confirmation. Raw distance is
+only 10% of the score, so a large but hesitant move does not outrank a smaller,
+decisive impulse. The thresholds are available under **Impulse
+Qualification**, and `Require_Strong_Departure` can restore unfiltered pivot
+behaviour when comparison or calibration is needed.
+
 ## Road
 
 Road is a **chart-analysis and alerting Expert Advisor (EA)**. It reconstructs
