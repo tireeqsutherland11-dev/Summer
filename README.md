@@ -156,7 +156,9 @@ break; a candle must close beyond it.
 - `Boundary_Lookback_Bars` is the initial Market High and Market Low search
   window. If just one boundary is missing, its search expands into older
   boundary-timeframe structure in blocks of that size while the boundary that
-  was already found remains anchored to the original window.
+  was already found remains anchored to the original window. Each boundary is
+  the newest confirmed pivot on its side of the current price, so newly formed
+  structure replaces older structure as soon as it is confirmed.
 - The structure, setup, and LTF inputs are all monitored for new bars, so custom
   timeframe orders still refresh correctly.
 - `Use_HTF_For_Tradeability`, `Use_MTF_For_Tradeability`, and

@@ -337,11 +337,12 @@ Boundary_Timeframe (default PERIOD_H4)
   boundaries; lower values create more local boundaries.
 
 Boundary_Lookback_Bars (default 50; valid 1..100000)
-  Number of recent closed SR bars searched. Older padding is loaded only so a
-  pivot near the start can be confirmed. A larger lookback can find more distant
-  extremes but costs processing; the chosen Market High is the highest
-  confirmed pivot high and Market Low is the lowest confirmed pivot low in the
-  actual lookback.
+  Initial number of recent closed SR bars searched. Older padding is loaded only
+  so a pivot near the start can be confirmed. The newest confirmed pivot above
+  price becomes Market High and the newest confirmed pivot below price becomes
+  Market Low. If either side is absent, only that side's window expands into
+  older structure in blocks of Boundary_Lookback_Bars until it is found or all
+  available history has been searched; an already found boundary stays fixed.
 
 SR_Pivot_Length (default 3; valid 1..20)
   Number of closed SR bars required on both sides of a strict pivot. Increasing
