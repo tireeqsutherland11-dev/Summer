@@ -23,6 +23,26 @@ by the current HTF/Structure market bias: a bearish bias draws areas only from
 MTF lower highs (`LH`), while a bullish bias draws areas only from MTF higher
 lows (`HL`). A consolidating HTF bias draws no liquidity area.
 
+### Manual structure and liquidity feedback
+
+Enable `Enable_Manual_Feedback` to display a review panel in the chart's
+top-right corner. To review an identified `HH`, `HL`, `LH`, `LL`, or liquidity
+swing, first select **Correct point** or **Incorrect point**, then click its
+label or liquidity object. The EA places an `OK` or `X` beside the point and
+appends the review to a CSV file.
+
+To report a point the EA missed, select **Missed HH**, **Missed HL**,
+**Missed LH**, **Missed LL**, **Missed liquidity H**, or **Missed liquidity L**,
+then click the precise chart time and price where the point belongs. A gold
+marker confirms the annotation and the one-shot missed-point mode clears after
+the click. **Cancel** clears any active mode without recording feedback.
+
+`Feedback_CSV_File` controls the append-only file name. The CSV includes the
+recording time, symbol, chart timeframe, category, verdict, point time, price,
+and source object name. It is written with MQL5's `FILE_COMMON` flag, so it
+survives EA restarts and can be shared by terminal instances. Chart markers are
+session aids; the CSV is the durable feedback record.
+
 Install the EA in `MQL5/Experts`, compile it in MetaEditor, and attach
 **Liquidity Sweep Strategy** to one chart. Changing chart timeframe is handled
 immediately by `OnChartEvent`, while the shared two-second timer retries builds

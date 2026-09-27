@@ -170,9 +170,15 @@ input color            Swing_Low_Color=clrTeal;
 input color            Swing_Low_Area_Color=clrTeal;
 input MODEL_LABEL_SIZE Labels_Size=MODEL_TINY;
 
+input group "Manual Feedback"
+input bool   Enable_Manual_Feedback=false;
+input string Feedback_CSV_File="Liquidity_Sweep_Feedback.csv";
+
 
 string g_prefix="";
 string g_model_prefix="";
+string g_feedback_prefix="";
+string g_feedback_action="";
 datetime g_model_last_bar=0;
 int g_model_last_bias=0;
 datetime g_last_ltf_bar=0;
@@ -489,7 +495,10 @@ void DrawText(const string id,const datetime time,const double price,const strin
    ObjectSetInteger(0,name,OBJPROP_COLOR,clr);
    ObjectSetInteger(0,name,OBJPROP_FONTSIZE,font_size);
    ObjectSetInteger(0,name,OBJPROP_ANCHOR,below?ANCHOR_UPPER:ANCHOR_LOWER);
-   ObjectSetInteger(0,name,OBJPROP_SELECTABLE,false);
+   // Structure labels become feedback targets when the optional annotation
+   // panel is enabled.  Analytical calculations never depend on selection.
+   ObjectSetInteger(0,name,OBJPROP_SELECTABLE,Enable_Manual_Feedback &&
+                    StringFind(id,"STRUCTURE_")==0);
   }
 
 void DrawSegment(const string id,const datetime from,const double from_price,
@@ -1315,7 +1324,7 @@ datetime ProjectTime(const datetime value,const int bars)
 
 void SetCommonObject(const string name)
   {
-   ObjectSetInteger(0,name,OBJPROP_SELECTABLE,false);
+   ObjectSetInteger(0,name,OBJPROP_SELECTABLE,Enable_Manual_Feedback);
    ObjectSetInteger(0,name,OBJPROP_SELECTED,false);
    ObjectSetInteger(0,name,OBJPROP_HIDDEN,true);
   }
@@ -1330,6 +1339,129 @@ void CreateRectangle(const string name,const datetime left,const double top,
    ObjectSetInteger(0,name,OBJPROP_BACK,true);
    ObjectSetInteger(0,name,OBJPROP_WIDTH,1);
    SetCommonObject(name);
+  }
+
+// Manual review is intentionally stored outside the terminal's chart-object
+// state. FILE_COMMON makes one append-only CSV available to every terminal
+// instance, so annotations survive chart rebuilds and EA restarts.
+bool WriteFeedback(const string category,const string verdict,const datetime point_time,
+                   const double price,const string object_name)
+  {
+   int handle=FileOpen(Feedback_CSV_File,FILE_READ|FILE_WRITE|FILE_CSV|FILE_COMMON|
+                       FILE_SHARE_READ|FILE_SHARE_WRITE,',');
+   if(handle==INVALID_HANDLE)
+     {
+      Print("Liquidity Sweep Strategy: cannot open feedback file ",Feedback_CSV_File,
+            " (error ",GetLastError(),").");
+      return false;
+     }
+   bool empty=FileSize(handle)==0;
+   FileSeek(handle,0,SEEK_END);
+   if(empty)
+      FileWrite(handle,"recorded_at","symbol","timeframe","category","verdict",
+                "point_time","price","object_name");
+   FileWrite(handle,TimeToString(TimeCurrent(),TIME_DATE|TIME_SECONDS),_Symbol,
+             EnumToString((ENUM_TIMEFRAMES)_Period),category,verdict,
+             TimeToString(point_time,TIME_DATE|TIME_MINUTES),
+             DoubleToString(price,_Digits),object_name);
+   FileFlush(handle);
+   FileClose(handle);
+   return true;
+  }
+
+void DrawFeedbackMark(const string text,const datetime point_time,const double price,
+                      const color colour)
+  {
+   string name=g_feedback_prefix+"MARK_"+(string)GetTickCount();
+   if(!ObjectCreate(0,name,OBJ_TEXT,0,point_time,price)) return;
+   ObjectSetString(0,name,OBJPROP_TEXT,text);
+   ObjectSetString(0,name,OBJPROP_FONT,"Arial Bold");
+   ObjectSetInteger(0,name,OBJPROP_FONTSIZE,10);
+   ObjectSetInteger(0,name,OBJPROP_COLOR,colour);
+   ObjectSetInteger(0,name,OBJPROP_ANCHOR,ANCHOR_CENTER);
+   ObjectSetInteger(0,name,OBJPROP_SELECTABLE,false);
+   ObjectSetInteger(0,name,OBJPROP_HIDDEN,true);
+  }
+
+string FeedbackButtonName(const string action) { return g_feedback_prefix+"BUTTON_"+action; }
+
+void CreateFeedbackButton(const string action,const string caption,const int row)
+  {
+   string name=FeedbackButtonName(action);
+   if(ObjectFind(0,name)<0 && !ObjectCreate(0,name,OBJ_BUTTON,0,0,0)) return;
+   ObjectSetInteger(0,name,OBJPROP_CORNER,CORNER_RIGHT_UPPER);
+   ObjectSetInteger(0,name,OBJPROP_XDISTANCE,10);
+   ObjectSetInteger(0,name,OBJPROP_YDISTANCE,20+row*24);
+   ObjectSetInteger(0,name,OBJPROP_XSIZE,100);
+   ObjectSetInteger(0,name,OBJPROP_YSIZE,20);
+   ObjectSetInteger(0,name,OBJPROP_FONTSIZE,8);
+   ObjectSetInteger(0,name,OBJPROP_COLOR,clrWhite);
+   ObjectSetInteger(0,name,OBJPROP_BGCOLOR,g_feedback_action==action?clrDarkOrange:clrDimGray);
+   ObjectSetInteger(0,name,OBJPROP_HIDDEN,true);
+   ObjectSetString(0,name,OBJPROP_TEXT,caption);
+  }
+
+void DrawFeedbackPanel()
+  {
+   if(!Enable_Manual_Feedback) return;
+   CreateFeedbackButton("CORRECT","Correct point",0);
+   CreateFeedbackButton("INCORRECT","Incorrect point",1);
+   CreateFeedbackButton("MISS_HH","Missed HH",2);
+   CreateFeedbackButton("MISS_HL","Missed HL",3);
+   CreateFeedbackButton("MISS_LH","Missed LH",4);
+   CreateFeedbackButton("MISS_LL","Missed LL",5);
+   CreateFeedbackButton("MISS_LIQ_HIGH","Missed liquidity H",6);
+   CreateFeedbackButton("MISS_LIQ_LOW","Missed liquidity L",7);
+   CreateFeedbackButton("CANCEL","Cancel",8);
+  }
+
+void SelectFeedbackAction(const string action)
+  {
+   g_feedback_action=action=="CANCEL"?"":action;
+   DrawFeedbackPanel();
+   ChartRedraw();
+  }
+
+string DetectedFeedbackCategory(const string name)
+  {
+   string kinds[4]={"HH","HL","LH","LL"};
+   for(int i=0;i<4;i++)
+      if(StringFind(name,"STRUCTURE_"+kinds[i]+"_")>=0) return kinds[i];
+   if(StringFind(name,g_model_prefix+"HIGH_")==0) return "LIQUIDITY_HIGH";
+   if(StringFind(name,g_model_prefix+"LOW_")==0) return "LIQUIDITY_LOW";
+   return "";
+  }
+
+void RecordDetectedFeedback(const string name)
+  {
+   if(g_feedback_action!="CORRECT" && g_feedback_action!="INCORRECT") return;
+   string category=DetectedFeedbackCategory(name);
+   if(category=="") return;
+   datetime point_time=(datetime)ObjectGetInteger(0,name,OBJPROP_TIME,0);
+   double price=ObjectGetDouble(0,name,OBJPROP_PRICE,0);
+   string verdict=g_feedback_action=="CORRECT"?"correct":"incorrect";
+   if(WriteFeedback(category,verdict,point_time,price,name))
+     {
+      DrawFeedbackMark(verdict=="correct"?"OK":"X",point_time,price,
+                       verdict=="correct"?clrLime:clrRed);
+      ObjectSetInteger(0,name,OBJPROP_SELECTED,false);
+      ChartRedraw();
+     }
+  }
+
+void RecordMissedFeedback(const int x,const int y)
+  {
+   if(StringFind(g_feedback_action,"MISS_")!=0) return;
+   int window=0; datetime point_time=0; double price=0.0;
+   if(!ChartXYToTimePrice(0,x,y,window,point_time,price)) return;
+   string category=StringSubstr(g_feedback_action,5);
+   if(WriteFeedback(category,"missed",point_time,price,""))
+     {
+      DrawFeedbackMark("MISS "+category,point_time,price,clrGold);
+      g_feedback_action="";
+      DrawFeedbackPanel();
+      ChartRedraw();
+     }
   }
 
 void CreateLevel(const string name,const datetime left,const double price)
@@ -1692,6 +1824,12 @@ int OnInit()
    ENUM_TIMEFRAMES timeframe=BASETimeframe();
    g_prefix="BASE_"+(string)ChartID()+"_";
    g_model_prefix="ModelBase_"+IntegerToString(ChartID())+"_";
+   g_feedback_prefix="Feedback_"+IntegerToString(ChartID())+"_";
+   if(Enable_Manual_Feedback && StringLen(Feedback_CSV_File)==0)
+     {
+      Print("Liquidity Sweep Strategy: Feedback CSV file cannot be empty.");
+      return INIT_PARAMETERS_INCORRECT;
+     }
    if(Use_MA_Filter && (g_ma_handle=iMA(_Symbol,timeframe,MA_Length,0,BASEMAMethod(MA_Type),PRICE_CLOSE))==INVALID_HANDLE) return INIT_FAILED;
    if(Use_HTF_MA_Filter && (g_htf_ma_handle=iMA(_Symbol,HTF_Timeframe,HTF_MA_Length,0,BASEMAMethod(HTF_MA_Type),PRICE_CLOSE))==INVALID_HANDLE) return INIT_FAILED;
    if(Use_ADX_Filter && (g_adx_handle=iADX(_Symbol,timeframe,ADX_Length))==INVALID_HANDLE) return INIT_FAILED;
@@ -1711,6 +1849,7 @@ int OnInit()
       g_last_setup_bar=setup_current;
      }
    RebuildModel();
+   DrawFeedbackPanel();
    return INIT_SUCCEEDED;
   }
 
@@ -1725,6 +1864,7 @@ void OnDeinit(const int reason)
    if(g_trend_atr_handle!=INVALID_HANDLE) IndicatorRelease(g_trend_atr_handle);
    ObjectsDeleteAll(0,g_prefix);
    DeleteModelObjects();
+   ObjectsDeleteAll(0,g_feedback_prefix);
    Comment("");
   }
 
@@ -1763,6 +1903,22 @@ void OnTimer() { RefreshForCurrentChart(); }
 void OnChartEvent(const int id,const long &lparam,const double &dparam,
                   const string &sparam)
   {
+   if(Enable_Manual_Feedback && id==CHARTEVENT_OBJECT_CLICK)
+     {
+      string button_prefix=g_feedback_prefix+"BUTTON_";
+      if(StringFind(sparam,button_prefix)==0)
+        {
+         SelectFeedbackAction(StringSubstr(sparam,StringLen(button_prefix)));
+         ObjectSetInteger(0,sparam,OBJPROP_STATE,false);
+        }
+      else RecordDetectedFeedback(sparam);
+      return;
+     }
+   if(Enable_Manual_Feedback && id==CHARTEVENT_CLICK)
+     {
+      RecordMissedFeedback((int)lparam,(int)dparam);
+      return;
+     }
    if(id!=CHARTEVENT_CHART_CHANGE) return;
    // Force both engines to reconsider their visual ownership immediately.
    // The timer continues retrying if MT5 has not synchronized the new period.
@@ -1773,4 +1929,5 @@ void OnChartEvent(const int id,const long &lparam,const double &dparam,
    if(ModelDisplayEnabled()) ObjectsDeleteAll(0,g_prefix);
    else DeleteModelObjects();
    RefreshForCurrentChart();
+   DrawFeedbackPanel();
   }
