@@ -1,6 +1,6 @@
 #property copyright "PineScript conversion"
 #property link      "https://www.mql5.com"
-#property version   "1.00"
+#property version   "1.10"
 #property strict
 #property description "Model Base EA - MT5 conversion of Liquidity Swings [LuxAlgo]."
 #property description "Analysis and visualisation only; this EA does not place trades."
@@ -34,7 +34,7 @@ input double            Filter_Value=0.0;
 input int               Maximum_Bars=3000;
 
 input group "Impulse Qualification"
-input bool              Require_Strong_Departure=true;
+input bool              Require_Strong_Departure=false;
 input int               Volume_Baseline_Bars=20;
 input double            Minimum_Directional_Pressure=0.60;
 input double            Minimum_Momentum_Efficiency=0.55;
@@ -52,6 +52,23 @@ input MODEL_LABEL_SIZE Labels_Size=MODEL_TINY;
 
 string g_prefix;
 datetime g_last_bar=0;
+
+void DrawStatus(const string text,const color colour=clrSilver)
+  {
+   string name=g_prefix+"STATUS";
+   if(ObjectFind(0,name)<0 && !ObjectCreate(0,name,OBJ_LABEL,0,0,0)) return;
+   ObjectSetInteger(0,name,OBJPROP_CORNER,CORNER_LEFT_UPPER);
+   ObjectSetInteger(0,name,OBJPROP_ANCHOR,ANCHOR_LEFT_UPPER);
+   ObjectSetInteger(0,name,OBJPROP_XDISTANCE,10);
+   ObjectSetInteger(0,name,OBJPROP_YDISTANCE,20);
+   ObjectSetInteger(0,name,OBJPROP_COLOR,colour);
+   ObjectSetInteger(0,name,OBJPROP_FONTSIZE,9);
+   ObjectSetInteger(0,name,OBJPROP_SELECTABLE,false);
+   ObjectSetInteger(0,name,OBJPROP_HIDDEN,true);
+   ObjectSetString(0,name,OBJPROP_FONT,"Arial");
+   ObjectSetString(0,name,OBJPROP_TEXT,text);
+   ChartRedraw();
+  }
 
 struct MODEL_SWING
   {
@@ -328,7 +345,12 @@ int OnInit()
       return INIT_PARAMETERS_INCORRECT;
      }
    g_prefix="ModelBase_"+IntegerToString(ChartID())+"_";
-   EventSetTimer(2);
+   DrawStatus("Model Base: loading chart history...");
+   if(!EventSetTimer(2))
+     {
+      Print("Model Base: could not start the history retry timer.");
+      return INIT_FAILED;
+     }
    // Do not fail initialization while the terminal is still downloading chart
    // history.  The timer will keep retrying until enough bars are available.
    RebuildModel();
@@ -355,16 +377,31 @@ void OnTimer()
 void RebuildModel()
   {
    datetime current_bar=iTime(_Symbol,(ENUM_TIMEFRAMES)_Period,0);
-   if(current_bar<=0 || current_bar==g_last_bar) return;
+   if(current_bar<=0)
+     {
+      DrawStatus("Model Base: waiting for chart history...");
+      return;
+     }
+   if(current_bar==g_last_bar) return;
 
    int available=Bars(_Symbol,(ENUM_TIMEFRAMES)_Period);
-   if(available<2*Pivot_Lookback+2) return;
+   int minimum=2*Pivot_Lookback+2;
+   if(available<minimum)
+     {
+      DrawStatus("Model Base: waiting for history ("+IntegerToString(available)+"/"+
+                 IntegerToString(minimum)+" bars)...");
+      return;
+     }
 
    int wanted=MathMin(Maximum_Bars,available);
    MqlRates rates[];
    ArraySetAsSeries(rates,false);
    int copied=CopyRates(_Symbol,(ENUM_TIMEFRAMES)_Period,0,wanted,rates);
-   if(copied<2*Pivot_Lookback+2) return;
+   if(copied<minimum)
+     {
+      DrawStatus("Model Base: history is synchronising...");
+      return;
+     }
 
    // Mark the bar handled only after CopyRates succeeds.  A transient history
    // request failure must remain eligible for the next timer retry.
@@ -399,5 +436,8 @@ void RebuildModel()
                      Swing_Low_Area_Color);
      }
 
-   ChartRedraw();
+   string filter=Require_Strong_Departure?"strong departure on":"all pivots";
+   DrawStatus("Model Base | swings found: "+IntegerToString(high_serial)+" high, "+
+              IntegerToString(low_serial)+" low | "+filter,
+              (high_serial+low_serial)>0?clrSilver:clrOrange);
   }
