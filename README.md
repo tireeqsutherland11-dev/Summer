@@ -19,11 +19,10 @@ hidden; Base's analytical processing and optional alerts remain active.
 On the MTF chart, the merged identification pass classifies structure points
 as `HH`, `LH`, `HL`, or `LL` using `Swing_Detection_Length`; numeric volume
 labels are not drawn. With a bearish HTF/Structure bias, an MTF liquidity swing
-is drawn only from the `LH` that directly precedes a close below the previous
-`LL`, confirming bearish BOS and forming a new `LL`. With a bullish bias, it is
-drawn only from the `HL` that directly precedes a close above the previous
-`HH`, confirming bullish BOS and forming a new `HH`. Transitional or
-consolidating HTF bias draws no liquidity swing.
+is drawn from an `LH` only when the immediately following structure point is an
+`LL`. With a bullish bias, it is drawn from an `HL` only when the immediately
+following structure point is an `HH`. This rule does not wait for or inspect a
+BOS close. Transitional or consolidating HTF bias draws no liquidity swing.
 
 ### Manual structure and liquidity feedback
 
