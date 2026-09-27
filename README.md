@@ -1,5 +1,22 @@
 # MetaTrader 5 Indicators and Tools
 
+## Liquidity Sweep Strategy
+
+`Liquidity Sweep Strategy.mq5` combines the complete Base market-structure EA
+with the liquidity-area protocol from `Model Base.mq5`. The Base
+`Setup_Entry_Timeframe` input is the single source of truth for the liquidity
+protocol: pivot detection, sweep/cross detection, overlap counts, volume, and
+optional intrabar sampling all run on that timeframe even when the EA is
+attached to a chart with a different period.
+
+Install the EA in `MQL5/Experts`, compile it in MetaEditor, and attach
+**Liquidity Sweep Strategy** to one chart. Configure the Base timeframes as
+usual, then use the three **Liquidity Sweep** input groups to tune the setup
+protocol. `Intrabar_Timeframe`, when enabled, must be lower than
+`Setup_Entry_Timeframe`. The EA preserves Base's analysis, dashboard, drawing,
+filters, and alerts and adds Model Base's liquidity zones; it remains an
+analysis/visualisation EA and does not place trades.
+
 ## Model Base
 
 `Model Base.mq5` is an MQL5 Expert Advisor conversion of the supplied
