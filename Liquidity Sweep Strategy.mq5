@@ -1,5 +1,5 @@
 #property copyright "Base + Model Base conversions"
-#property version   "2.03"
+#property version   "2.04"
 #property strict
 #property description "Liquidity Sweep Strategy: merged Base and Model Base EA."
 #property description "Signal/visualisation EA only; the source indicator contains no trading rules."
@@ -191,6 +191,19 @@ struct BASE_STRUCTURE_STATE
    double last_low;
   };
 
+// A close through the most recent corrective swing creates the new opposing
+// structure extreme immediately: an LH break creates an HH (bearish to
+// bullish), while an HL break creates an LL (bullish to bearish).
+bool IsBullishCHoCH(const int broken_high_kind)
+  {
+   return broken_high_kind<0; // LH
+  }
+
+bool IsBearishCHoCH(const int broken_low_kind)
+  {
+   return broken_low_kind<0; // HL
+  }
+
 ENUM_TIMEFRAMES SetupTimeframe()
   {
    return Setup_Entry_Timeframe==PERIOD_CURRENT?(ENUM_TIMEFRAMES)_Period:Setup_Entry_Timeframe;
@@ -248,13 +261,13 @@ bool AnalyseStructure(const ENUM_TIMEFRAMES timeframe,const int wanted,
          rates[i].close>state.last_high)
         {
          high_broken=true; state.direction=1;
-         state.last_break_was_bos=state.last_high_kind>0;
+         state.last_break_was_bos=!IsBullishCHoCH(state.last_high_kind);
         }
       if(state.have_low && state.last_low_kind!=0 && !low_broken &&
          rates[i].close<state.last_low)
         {
          low_broken=true; state.direction=-1;
-         state.last_break_was_bos=state.last_low_kind>0;
+         state.last_break_was_bos=!IsBearishCHoCH(state.last_low_kind);
         }
      }
    return true;
@@ -865,12 +878,12 @@ void DrawChartTimeframeStructure()
       if(have_high && last_high_kind!=0 && !high_broken && rates[i].close>last_high)
         {
          high_broken=true;
-         DrawSignal(last_high_kind<0?"CHoCH":"BOS",1,last_high_time,last_high,rates[i]);
+         DrawSignal(IsBullishCHoCH(last_high_kind)?"CHoCH":"BOS",1,last_high_time,last_high,rates[i]);
         }
       if(have_low && last_low_kind!=0 && !low_broken && rates[i].close<last_low)
         {
          low_broken=true;
-         DrawSignal(last_low_kind<0?"CHoCH":"BOS",-1,last_low_time,last_low,rates[i]);
+         DrawSignal(IsBearishCHoCH(last_low_kind)?"CHoCH":"BOS",-1,last_low_time,last_low,rates[i]);
         }
      }
    if(Show_Swing_Points && have_high)
@@ -1085,9 +1098,9 @@ bool Rebuild(const bool permit_alert)
       if(bullish_break)
         {
          high_broken=true;
-         // An HH made after an LH is a bullish change of character.  An HH
-         // made by breaking an HH is bullish continuation (BOS).
-         if(last_high_kind<0)
+         // Breaking an LH creates an HH and changes bearish structure to
+         // bullish. Breaking an HH is bullish continuation (BOS).
+         if(IsBullishCHoCH(last_high_kind))
            {
             // Structure events are facts of price action. MA/session/ADX/ATR
             // qualify a setup; they cannot erase a confirmed CHoCH from the
@@ -1108,9 +1121,9 @@ bool Rebuild(const bool permit_alert)
       if(bearish_break)
         {
          low_broken=true;
-         // An LL made after an HL is a bearish change of character.  An LL
-         // made by breaking an LL is bearish continuation (BOS).
-         if(last_low_kind<0)
+         // Breaking an HL creates an LL and changes bullish structure to
+         // bearish. Breaking an LL is bearish continuation (BOS).
+         if(IsBearishCHoCH(last_low_kind))
            {
             if(draw_anchored_structure) DrawSignal("CHoCH",-1,last_low_time,last_low,rates[i]);
             structure=-1;

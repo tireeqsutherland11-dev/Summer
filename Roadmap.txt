@@ -114,18 +114,14 @@ Classification and state
 
 Break classification
   * Close above a typed HH -> bullish BOS and bullish structure.
-  * In bearish structure, a close above a typed LH starts a potential bullish
-    transition. Bullish CHoCH is confirmed only after a subsequent HL forms.
+  * In bearish structure, a close above a typed LH creates an HH and confirms
+    a bearish-to-bullish CHoCH immediately.
   * Close below a typed LL -> bearish BOS and bearish structure.
-  * In bullish structure, a close below a typed HL starts a potential bearish
-    transition. Bearish CHoCH is confirmed only after a subsequent LH forms.
-  * Until that post-break corrective pivot is confirmed, direction remains the
-    prior trend and no CHoCH is drawn, reported, or alerted. A continuation BOS
-    in the prior direction cancels the pending transition.
+  * In bullish structure, a close below a typed HL creates an LL and confirms
+    a bullish-to-bearish CHoCH immediately.
   * An untyped first pivot cannot be broken for a signal.
-  * The bullish and bearish break tests are independent. Candidate reversals
-    still require their later corrective pivot before either can become the
-    stored CHoCH direction/event.
+  * The bullish and bearish break tests are independent. The qualifying close
+    becomes the stored CHoCH direction/event without waiting for another pivot.
 
 Outputs
   Structure_Timeframe events set dashboard market bias, participate in

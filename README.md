@@ -125,9 +125,9 @@ chart-specific prefix.
 
 - **Market Bias** shows the independently replayed Structure, Setup, and LTF
   state. A transition means the latest break is CHoCH rather than continuation.
-- A reversal is not declared on a level break alone: bearish-to-bullish CHoCH
-  requires an LH break followed by a confirmed HL, while bullish-to-bearish
-  CHoCH requires an HL break followed by a confirmed LH.
+- A bearish-to-bullish CHoCH occurs when price closes above an LH, creating an
+  HH. A bullish-to-bearish CHoCH occurs when price closes below an HL, creating
+  an LL. Wicks beyond those levels remain liquidity sweeps rather than CHoCH.
 - **Tradable** always requires an established Bullish or Bearish HTF bias: its
   latest break must be a continuation BOS that creates a new HH or LL, rather
   than a transitional CHoCH. The enabled tradeability timeframe directions
