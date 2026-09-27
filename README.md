@@ -2,28 +2,28 @@
 
 ## Liquidity Sweep Strategy
 
-`Liquidity Sweep Strategy.mq5` contains the complete Base market-structure EA
-and the complete Model Base liquidity-swing EA in one Expert Advisor. Each
-engine retains its own settings, calculations, objects, and object-name prefix.
-The Base analysis, filters, dashboard, boundaries, alerts, and structure logic
-continue to run independently from Model Base's pivot, overlap-count, volume,
-qualification, zone, and level logic.
+`Liquidity Sweep Strategy.mq5` combines the Base market-structure EA and Model
+Base liquidity-zone rendering in one Expert Advisor. Base owns the shared
+pivot detection and HH/HL/LH/LL classification; Model Base retains its
+overlap-count, volume, zone, and level rendering.
 
 The active chart period decides which engine may draw. Model Base draws its
 liquidity objects only when the chart period equals `Setup_Entry_Timeframe`
 (MTF). Base draws its full overlays on `Structure_Timeframe` or
 `Boundary_Timeframe` (HTF), and also draws its chart-timeframe HH/HL/LH/LL
-points on the MTF. This preserves the standalone Base swing detection on the
-setup chart instead of substituting Model Base's separate, typically longer
-liquidity-pivot lookback. On all other chart periods both engines remain
-visually hidden; Base's analytical processing and optional alerts remain active.
+points on the MTF. The same Base structure pass supplies liquidity-swing
+candidates, so chart labels and liquidity zones cannot disagree about pivot
+identity. On all other chart periods both drawing systems remain visually
+hidden; Base's analytical processing and optional alerts remain active.
 
-On the MTF chart, Base identifies structure points as `HH`, `LH`, `HL`, or
-`LL` using `Swing_Detection_Length`; numeric volume labels are not drawn.
-Model Base independently uses `Pivot_Lookback` to select liquidity areas, which
-are filtered by the current HTF/Structure market bias: a bearish bias draws
-areas only from MTF lower highs (`LH`), while a bullish bias draws areas only
-from MTF higher lows (`HL`). A consolidating HTF bias draws no liquidity area.
+On the MTF chart, the merged identification pass classifies structure points
+as `HH`, `LH`, `HL`, or `LL` using `Swing_Detection_Length`; numeric volume
+labels are not drawn. With a bearish HTF/Structure bias, an MTF liquidity swing
+is drawn only from the `LH` that directly precedes a close below the previous
+`LL`, confirming bearish BOS and forming a new `LL`. With a bullish bias, it is
+drawn only from the `HL` that directly precedes a close above the previous
+`HH`, confirming bullish BOS and forming a new `HH`. Transitional or
+consolidating HTF bias draws no liquidity swing.
 
 ### Manual structure and liquidity feedback
 
@@ -50,11 +50,11 @@ Install the EA in `MQL5/Experts`, compile it in MetaEditor, and attach
 **Liquidity Sweep Strategy** to one chart. Changing chart timeframe is handled
 immediately by `OnChartEvent`, while the shared two-second timer retries builds
 until MT5 finishes synchronizing all requested histories. A chart restart is
-therefore not required. Model Base always calculates from
-`Setup_Entry_Timeframe`, including pivot detection, sweep/cross detection,
-overlap counts, volume, and projection. Its liquidity pivots are reconstructed
-from a fixed window of the latest 400 MTF candles, so changing the visible
-range or resizing the chart does not change the identified points. When
+therefore not required. Liquidity processing always uses
+`Setup_Entry_Timeframe`, including shared Base pivot detection, BOS validation,
+sweep/cross detection, overlap counts, volume, and projection. Liquidity swings
+are reconstructed from the latest 300 closed MTF candles, so changing the
+visible range or resizing the chart does not change the identified points. When
 enabled, `Intrabar_Timeframe` must be lower than `Setup_Entry_Timeframe`. The
 merged EA remains analysis and visualisation software and does not place trades.
 
