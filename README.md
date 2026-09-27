@@ -50,9 +50,11 @@ immediately by `OnChartEvent`, while the shared two-second timer retries builds
 until MT5 finishes synchronizing all requested histories. A chart restart is
 therefore not required. Model Base always calculates from
 `Setup_Entry_Timeframe`, including pivot detection, sweep/cross detection,
-overlap counts, volume, and projection. When enabled, `Intrabar_Timeframe` must
-be lower than `Setup_Entry_Timeframe`. The merged EA remains analysis and
-visualisation software and does not place trades.
+overlap counts, volume, and projection. Its liquidity pivots are reconstructed
+from a fixed window of the latest 400 MTF candles, so changing the visible
+range or resizing the chart does not change the identified points. When
+enabled, `Intrabar_Timeframe` must be lower than `Setup_Entry_Timeframe`. The
+merged EA remains analysis and visualisation software and does not place trades.
 
 ## Model Base
 
@@ -66,11 +68,10 @@ It is analysis/visualisation software only and never places trades.
 Install it in `MQL5/Experts`, compile it in MetaEditor, refresh **Navigator >
 Expert Advisors**, and attach **Model Base** to a chart. Keep Algo Trading
 enabled so its event loop runs. The EA attaches immediately and reconstructs
-only the history window already available on the chart; it does not start a
-history-download retry timer. It rebuilds on each new chart bar and when the
-visible chart range changes. `Maximum_Bars` remains a hard upper bound on
-reconstruction time and the number of chart objects. MetaTrader tick volume is
-used because broker-independent centralized volume is not universally available.
+the latest 400 candles, independently of the visible chart range. It does not
+start a history-download retry timer, and rebuilds on each new chart bar and
+when the chart changes. MetaTrader tick volume is used because
+broker-independent centralized volume is not universally available.
 
 By default, every geometrically valid pivot is eligible to display so a newly
 attached EA produces useful output without requiring symbol-specific impulse

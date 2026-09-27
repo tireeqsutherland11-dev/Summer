@@ -1,6 +1,6 @@
 #property copyright "PineScript conversion"
 #property link      "https://www.mql5.com"
-#property version   "1.21"
+#property version   "1.22"
 #property strict
 #property description "Model Base EA - MT5 conversion of Liquidity Swings [LuxAlgo]."
 #property description "Analysis and visualisation only; this EA does not place trades."
@@ -31,7 +31,10 @@ input bool              Intrabar_Precision=false;
 input ENUM_TIMEFRAMES   Intrabar_Timeframe=PERIOD_M1;
 input MODEL_FILTER_MODE Filter_Areas_By=MODEL_FILTER_COUNT;
 input double            Filter_Value=0.0;
-input int               Maximum_Bars=3000;
+
+// Use one deterministic history window so zooming or resizing the chart can
+// never change which liquidity pivots are reconstructed.
+const int LIQUIDITY_HISTORY_BARS=400;
 
 input group "Impulse Qualification"
 input bool              Require_Strong_Departure=false;
@@ -336,9 +339,9 @@ void DeleteModelObjects()
 
 int OnInit()
   {
-   if(Pivot_Lookback<1 || Maximum_Bars<2*Pivot_Lookback+2)
+   if(Pivot_Lookback<1 || LIQUIDITY_HISTORY_BARS<2*Pivot_Lookback+2)
      {
-      Print("Model Base: Pivot Lookback must be positive and Maximum Bars must provide a complete pivot window.");
+      Print("Model Base: Pivot Lookback must be positive and fit in the liquidity history window.");
       return INIT_PARAMETERS_INCORRECT;
      }
    if(Volume_Baseline_Bars<1 || Minimum_Directional_Pressure<0.0 ||
@@ -356,9 +359,8 @@ int OnInit()
      }
    g_prefix="ModelBase_"+IntegerToString(ChartID())+"_";
    DrawStatus("Model Base: attached");
-   // Build only from bars already represented by the chart.  In particular,
-   // do not start a timer or ask Bars() for the symbol's complete history:
-   // either action can make attaching the EA wait for a broker download.
+   // CopyRates requests only the fixed liquidity window, rather than the
+   // symbol's complete history.
    RebuildModel();
    return INIT_SUCCEEDED;
   }
@@ -394,12 +396,7 @@ void RebuildModel()
    if(current_bar==g_last_bar) return;
 
    int minimum=2*Pivot_Lookback+2;
-   // CHART_FIRST_VISIBLE_BAR is a shift into data that the chart already has.
-   // Limiting CopyRates to this local window avoids requesting Maximum_Bars
-   // from the server merely because the EA has just been attached.
-   long first_visible=ChartGetInteger(0,CHART_FIRST_VISIBLE_BAR,0);
-   int local_window=(int)MathMax((long)minimum,first_visible+1);
-   int wanted=MathMin(Maximum_Bars,local_window);
+   int wanted=LIQUIDITY_HISTORY_BARS;
    MqlRates rates[];
    ArraySetAsSeries(rates,false);
    int copied=CopyRates(_Symbol,(ENUM_TIMEFRAMES)_Period,0,wanted,rates);
