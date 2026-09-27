@@ -17,14 +17,21 @@ bounds reconstruction time and the number of chart objects. MetaTrader tick
 volume is used because broker-independent centralized volume is not universally
 available.
 
-By default, a geometrically valid pivot is shown only when its confirmation
-window demonstrates a strong departure from the level. The qualification
-favours directional tick-volume pressure, candle-body momentum, and an
-efficient one-way move, with relative volume as confirmation. Raw distance is
-only 10% of the score, so a large but hesitant move does not outrank a smaller,
-decisive impulse. The thresholds are available under **Impulse
-Qualification**, and `Require_Strong_Departure` can restore unfiltered pivot
-behaviour when comparison or calibration is needed.
+By default, every geometrically valid pivot is eligible to display so a newly
+attached EA produces useful output without requiring symbol-specific impulse
+calibration. Enable `Require_Strong_Departure` to keep only pivots whose
+confirmation window demonstrates a strong departure from the level. The
+optional qualification favours directional tick-volume pressure, candle-body
+momentum, and an efficient one-way move, with relative volume as confirmation.
+Raw distance is only 10% of the score, so a large but hesitant move does not
+outrank a smaller, decisive impulse. The thresholds are available under
+**Impulse Qualification**.
+
+The top-left status line is always created when the EA attaches. It reports
+history-download progress and, after reconstruction, the number of detected
+high and low swings. If the chart reports zero swings with strong-departure
+qualification enabled, disable that option first and then tune its thresholds
+for the symbol and timeframe.
 
 ## Road
 
