@@ -1,5 +1,5 @@
 #property copyright "Base + Model Base conversions"
-#property version   "2.02"
+#property version   "2.03"
 #property strict
 #property description "Liquidity Sweep Strategy: merged Base and Model Base EA."
 #property description "Signal/visualisation EA only; the source indicator contains no trading rules."
@@ -145,7 +145,6 @@ enum MODEL_LABEL_SIZE
   };
 
 input group "Settings"
-input int               Pivot_Lookback=14;
 input MODEL_SWING_AREA  Swing_Area=MODEL_WICK_EXTREMITY;
 input bool              Intrabar_Precision=false;
 input ENUM_TIMEFRAMES   Intrabar_Timeframe=PERIOD_M1;
@@ -154,15 +153,7 @@ input double            Filter_Value=0.0;
 
 // Use one deterministic history window so zooming or resizing the chart can
 // never change which MTF liquidity pivots are reconstructed.
-const int LIQUIDITY_HISTORY_BARS=400;
-
-input group "Impulse Qualification"
-input bool              Require_Strong_Departure=false;
-input int               Volume_Baseline_Bars=20;
-input double            Minimum_Directional_Pressure=0.60;
-input double            Minimum_Momentum_Efficiency=0.55;
-input double            Minimum_Relative_Volume=1.10;
-input double            Minimum_Impulse_Score=60.0;
+const int LIQUIDITY_HISTORY_BARS=300;
 
 input group "Style"
 input bool             Show_Swing_High=true;
@@ -338,9 +329,8 @@ bool BaseDisplayEnabled()
 bool BaseStructureDisplayEnabled()
   {
    // Base's chart-timeframe structure is useful on the setup/MTF chart too.
-   // Keep the remaining Base overlays routed to their HTF charts, but do not
-   // replace Base's Swing_Detection_Length logic with Model Base's independent
-   // Pivot_Lookback logic merely because both engines share one EA.
+   // Keep the remaining Base overlays routed to their HTF charts. Liquidity
+   // identification deliberately shares this same structure method.
    return BaseDisplayEnabled() || ModelDisplayEnabled();
   }
 
@@ -1374,98 +1364,6 @@ double Target(const MODEL_SWING &swing)
    return Filter_Areas_By==MODEL_FILTER_COUNT?(double)swing.count:(double)swing.volume;
   }
 
-bool IsPivotHigh(const MqlRates &rates[],const int total,const int index,const int length)
-  {
-   if(index-length<0 || index+length>=total) return false;
-   // Treat a flat/equal high as one pivot rather than rejecting the entire
-   // liquidity level.  The latest bar in the plateau owns the pivot: older
-   // bars may equal it, while an equal bar to its right supersedes it.  This is
-   // especially important for lower highs which launch an impulsive sell-off.
-   for(int i=index-length;i<index;i++)
-      if(rates[i].high>rates[index].high) return false;
-   for(int i=index+1;i<=index+length;i++)
-      if(rates[i].high>=rates[index].high) return false;
-   return true;
-  }
-
-bool IsPivotLow(const MqlRates &rates[],const int total,const int index,const int length)
-  {
-   if(index-length<0 || index+length>=total) return false;
-   // Apply the same deterministic plateau rule to equal lows.  Selecting one
-   // bar avoids both a missing liquidity level and duplicate levels.
-   for(int i=index-length;i<index;i++)
-      if(rates[i].low<rates[index].low) return false;
-   for(int i=index+1;i<=index+length;i++)
-      if(rates[i].low<=rates[index].low) return false;
-   return true;
-  }
-
-// Scores the confirmed departure from a pivot.  Directional pressure and
-// momentum carry most of the score; raw distance is deliberately only 10% so
-// a large but weak/noisy move cannot qualify merely because it travelled far.
-bool StrongDeparture(const MqlRates &rates[],const int total,const int pivot,
-                     const int confirmed,const bool high)
-  {
-   if(!Require_Strong_Departure) return true;
-   if(pivot<1 || confirmed<=pivot || confirmed>=total) return false;
-
-   double favourable_volume=0.0,total_volume=0.0;
-   double favourable_body=0.0,total_range=0.0;
-   double path=0.0,atr_sum=0.0;
-   int impulse_bars=0;
-   for(int i=pivot+1;i<=confirmed;i++)
-     {
-      double range=rates[i].high-rates[i].low;
-      double body=rates[i].close-rates[i].open;
-      double true_range=MathMax(range,MathMax(MathAbs(rates[i].high-rates[i-1].close),
-                                             MathAbs(rates[i].low-rates[i-1].close)));
-      bool favourable=high?body<0.0:body>0.0;
-      double volume=(double)rates[i].tick_volume;
-      total_volume+=volume;
-      total_range+=range;
-      path+=MathAbs(rates[i].close-rates[i-1].close);
-      atr_sum+=true_range;
-      impulse_bars++;
-      if(favourable)
-        {
-         favourable_volume+=volume;
-         favourable_body+=MathAbs(body);
-        }
-     }
-   if(impulse_bars<1 || total_volume<=0.0 || total_range<=0.0) return false;
-
-   int baseline_start=MathMax(0,pivot-Volume_Baseline_Bars+1);
-   double baseline_volume=0.0;
-   int baseline_bars=0;
-   for(int i=baseline_start;i<=pivot;i++)
-     {
-      baseline_volume+=(double)rates[i].tick_volume;
-      baseline_bars++;
-     }
-   if(baseline_bars<1 || baseline_volume<=0.0) return false;
-
-   double pressure=favourable_volume/total_volume;
-   double momentum=favourable_body/total_range;
-   double relative_volume=(total_volume/impulse_bars)/(baseline_volume/baseline_bars);
-   double departure=high?rates[pivot].high-rates[confirmed].close:
-                         rates[confirmed].close-rates[pivot].low;
-   double average_true_range=atr_sum/impulse_bars;
-   double size_ratio=average_true_range>0.0?MathMax(0.0,departure)/average_true_range:0.0;
-
-   // Volume is capped at twice baseline and distance at two ATRs.  This keeps
-   // either magnitude measure from overwhelming actual directional quality.
-   double volume_component=MathMin(relative_volume/2.0,1.0);
-   double size_component=MathMin(size_ratio/2.0,1.0);
-   double path_efficiency=path>0.0?MathMin(MathMax(0.0,departure)/path,1.0):0.0;
-   double score=40.0*pressure+20.0*momentum+20.0*path_efficiency+
-                10.0*volume_component+10.0*size_component;
-
-   return pressure>=Minimum_Directional_Pressure &&
-          momentum>=Minimum_Momentum_Efficiency &&
-          relative_volume>=Minimum_Relative_Volume &&
-          score>=Minimum_Impulse_Score;
-  }
-
 long OverlapVolume(const MqlRates &bar,const double top,const double bottom)
   {
    if(!Intrabar_Precision)
@@ -1576,14 +1474,17 @@ void RebuildModel()
       DrawStatus("Model Base: waiting for HTF market bias...");
       return;
      }
-   int market_bias=htf_state.direction;
+   // A transitional HTF state is not a bullish or bearish market bias and
+   // therefore cannot authorize either side of MTF liquidity.
+   int market_bias=DefiniteBias(htf_state)?htf_state.direction:0;
    if(current_bar==g_model_last_bar && market_bias==g_model_last_bias) return;
 
-   int minimum=2*Pivot_Lookback+2;
+   int length=MathMax(1,MathMin(50,Swing_Detection_Length));
+   int minimum=2*length+2;
    int wanted=LIQUIDITY_HISTORY_BARS;
    MqlRates rates[];
    ArraySetAsSeries(rates,false);
-   int copied=CopyRates(_Symbol,SetupTimeframe(),0,wanted,rates);
+   int copied=CopyRates(_Symbol,SetupTimeframe(),1,wanted,rates);
    if(copied<minimum)
      {
       DrawStatus("Model Base: attached | insufficient chart bars ("+
@@ -1602,73 +1503,69 @@ void RebuildModel()
    ZeroMemory(ph);
    ZeroMemory(pl);
    int high_serial=0,low_serial=0;
-   bool have_previous_high=false,have_previous_low=false;
-   double previous_high=0.0,previous_low=0.0;
+   bool have_high=false,have_low=false;
+   int last_high_kind=0,last_low_kind=0,last_pivot_side=0;
+   bool have_high_reference=false,have_low_reference=false;
+   double high_reference=0.0,low_reference=0.0;
+   double last_high=0.0,last_low=0.0;
+   MqlRates last_high_bar,last_low_bar;
+   ZeroMemory(last_high_bar);
+   ZeroMemory(last_low_bar);
 
-   // A pivot becomes known Pivot_Lookback bars after its extremity. Counts use
-   // that same delayed bar, matching Pine's low[length]/high[length] series.
-   for(int now=2*Pivot_Lookback;now<copied;now++)
+   // Replay the same alternating MTF structure used for the chart's HH, HL,
+   // LH and LL labels. An LH/HL becomes liquidity only when the immediately
+   // following accepted opposite-side structure point is an LL/HH. No close
+   // through an older level (BOS) is required.
+   for(int now=length;now<copied;now++)
      {
-      int pivot=now-Pivot_Lookback;
-      bool new_high=IsPivotHigh(rates,copied,pivot,Pivot_Lookback) &&
-                    StrongDeparture(rates,copied,pivot,now,true);
-      bool new_low=IsPivotLow(rates,copied,pivot,Pivot_Lookback) &&
-                   StrongDeparture(rates,copied,pivot,now,false);
-
-      bool lower_high=new_high && have_previous_high && rates[pivot].high<previous_high;
-      bool higher_high=new_high && have_previous_high && rates[pivot].high>previous_high;
-      bool higher_low=new_low && have_previous_low && rates[pivot].low>previous_low;
-      bool lower_low=new_low && have_previous_low && rates[pivot].low<previous_low;
-
-      if(new_high)
+      int pivot=now-length;
+      bool started_high=false,started_low=false;
+      if(PivotHigh(rates,copied,pivot,length))
         {
-         // The Base engine is the sole source of HH/LH chart labels.  Its
-         // shorter Swing_Detection_Length must remain identical to standalone
-         // Base; Model Base pivots continue to drive liquidity areas only.
-         previous_high=rates[pivot].high;
-         have_previous_high=true;
+         int kind=0;
+         if(AcceptStructureHigh(rates[pivot].high,have_high,last_high,last_pivot_side,
+                                have_high_reference,high_reference,kind))
+           {
+            last_high_kind=kind;
+            last_high_bar=rates[pivot];
+            if(market_bias>0 && kind>0 && last_low_kind<0 && Show_Swing_Low)
+              {
+               StartSwing(pl,false,last_low_bar,++low_serial,Swing_Low_Area_Color);
+               started_low=true;
+              }
+           }
         }
-      if(new_low)
+      if(PivotLow(rates,copied,pivot,length))
         {
-         // HH/HL/LH/LL labels are rendered by DrawChartTimeframeStructure().
-         previous_low=rates[pivot].low;
-         have_previous_low=true;
+         int kind=0;
+         if(AcceptStructureLow(rates[pivot].low,have_low,last_low,last_pivot_side,
+                               have_low_reference,low_reference,kind))
+           {
+            last_low_kind=kind;
+            last_low_bar=rates[pivot];
+            if(market_bias<0 && kind>0 && last_high_kind<0 && Show_Swing_High)
+              {
+               StartSwing(ph,true,last_high_bar,++high_serial,Swing_High_Area_Color);
+               started_high=true;
+              }
+           }
         }
 
-      // Liquidity is directional: bearish HTF bias permits only MTF lower
-      // highs, while bullish HTF bias permits only MTF higher lows.
-      bool draw_high=market_bias<0 && lower_high;
-      bool draw_low=market_bias>0 && higher_low;
-      if(draw_high && Show_Swing_High)
-         StartSwing(ph,true,rates[pivot],++high_serial,Swing_High_Area_Color);
-      else if(Show_Swing_High && ph.active)
+      if(Show_Swing_High && ph.active && !started_high)
          UpdateSwing(ph,true,rates[now],rates[pivot],Swing_High_Color,
                      Swing_High_Area_Color);
-
-      if(draw_low && Show_Swing_Low)
-         StartSwing(pl,false,rates[pivot],++low_serial,Swing_Low_Area_Color);
-      else if(Show_Swing_Low && pl.active)
+      if(Show_Swing_Low && pl.active && !started_low)
          UpdateSwing(pl,false,rates[now],rates[pivot],Swing_Low_Color,
                      Swing_Low_Area_Color);
      }
 
-   string filter=Require_Strong_Departure?"strong departure on":"all pivots";
-   DrawStatus("Model Base | swings found: "+IntegerToString(high_serial)+" high, "+
-              IntegerToString(low_serial)+" low | "+filter,
+   DrawStatus("Liquidity swings | "+IntegerToString(high_serial)+" high, "+
+              IntegerToString(low_serial)+" low | LH->LL / HL->HH",
               (high_serial+low_serial)>0?clrSilver:clrOrange);
   }
 
 int OnInit()
   {
-   if(Pivot_Lookback<1 || LIQUIDITY_HISTORY_BARS<2*Pivot_Lookback+2 ||
-      Volume_Baseline_Bars<1 || Minimum_Directional_Pressure<0.0 ||
-      Minimum_Directional_Pressure>1.0 || Minimum_Momentum_Efficiency<0.0 ||
-      Minimum_Momentum_Efficiency>1.0 || Minimum_Relative_Volume<0.0 ||
-      Minimum_Impulse_Score<0.0 || Minimum_Impulse_Score>100.0)
-     {
-      Print("Liquidity Sweep Strategy: Model Base settings are outside their valid ranges.");
-      return INIT_PARAMETERS_INCORRECT;
-     }
    if(Intrabar_Precision &&
       PeriodSeconds(Intrabar_Timeframe)>=PeriodSeconds(SetupTimeframe()))
      {
