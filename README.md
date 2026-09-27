@@ -2,24 +2,30 @@
 
 ## Liquidity Sweep Strategy
 
-`Liquidity Sweep Strategy.mq5` combines the complete Base market-structure EA
-with the liquidity-area protocol from `Model Base.mq5`. The Base
-`Setup_Entry_Timeframe` input is the single source of truth for the liquidity
-protocol: pivot detection, sweep/cross detection, overlap counts, volume, and
-optional intrabar sampling all run on that timeframe even when the EA is
-attached to a chart with a different period.
+`Liquidity Sweep Strategy.mq5` contains the complete Base market-structure EA
+and the complete Model Base liquidity-swing EA in one Expert Advisor. Each
+engine retains its own settings, calculations, objects, and object-name prefix.
+The Base analysis, filters, dashboard, boundaries, alerts, and structure logic
+continue to run independently from Model Base's pivot, overlap-count, volume,
+qualification, zone, level, and label logic.
 
-Liquidity swings are filtered by the current Structure/HTF market bias: a
-bearish bias displays only lower-high liquidity, while a bullish bias displays
-only higher-low liquidity. Swing areas are drawn without numeric volume labels.
+The active chart period decides which engine may draw. Model Base draws only
+when the chart period equals `Setup_Entry_Timeframe` (MTF). Base draws only when
+the chart period equals `Structure_Timeframe` or `Boundary_Timeframe` (HTF).
+If timeframe inputs overlap, Model Base has display priority, ensuring the two
+object systems never render together. On all other chart periods both engines
+remain visually hidden; Base's analytical processing and optional alerts remain
+active.
 
 Install the EA in `MQL5/Experts`, compile it in MetaEditor, and attach
-**Liquidity Sweep Strategy** to one chart. Configure the Base timeframes as
-usual, then use the three **Liquidity Sweep** input groups to tune the setup
-protocol. `Intrabar_Timeframe`, when enabled, must be lower than
-`Setup_Entry_Timeframe`. The EA preserves Base's analysis, dashboard, drawing,
-filters, and alerts and adds Model Base's liquidity zones; it remains an
-analysis/visualisation EA and does not place trades.
+**Liquidity Sweep Strategy** to one chart. Changing chart timeframe is handled
+immediately by `OnChartEvent`, while the shared two-second timer retries builds
+until MT5 finishes synchronizing all requested histories. A chart restart is
+therefore not required. Model Base always calculates from
+`Setup_Entry_Timeframe`, including pivot detection, sweep/cross detection,
+overlap counts, volume, and projection. When enabled, `Intrabar_Timeframe` must
+be lower than `Setup_Entry_Timeframe`. The merged EA remains analysis and
+visualisation software and does not place trades.
 
 ## Model Base
 
