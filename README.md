@@ -17,6 +17,12 @@ object systems never render together. On all other chart periods both engines
 remain visually hidden; Base's analytical processing and optional alerts remain
 active.
 
+On the MTF chart, confirmed liquidity pivots are identified only as `HH`, `LH`,
+`HL`, or `LL`; numeric volume labels are not drawn. Liquidity areas are filtered
+by the current HTF/Structure market bias: a bearish bias draws areas only from
+MTF lower highs (`LH`), while a bullish bias draws areas only from MTF higher
+lows (`HL`). A consolidating HTF bias draws no liquidity area.
+
 Install the EA in `MQL5/Experts`, compile it in MetaEditor, and attach
 **Liquidity Sweep Strategy** to one chart. Changing chart timeframe is handled
 immediately by `OnChartEvent`, while the shared two-second timer retries builds
