@@ -1,8 +1,10 @@
 #property copyright "Base + Model Base conversions"
-#property version   "2.10"
+#property version   "2.20"
 #property strict
 #property description "Liquidity Sweep Strategy: merged Base and Model Base EA."
-#property description "Signal/visualisation EA only; the source indicator contains no trading rules."
+#property description "Trades MTF liquidity zones at 1:2 with breakeven at 1:1; by default only in the Strategy Tester."
+
+#include <Trade\Trade.mqh>
 
 enum BASE_MA_TYPE { BASE_SMA=0, BASE_EMA=1 };
 enum BASE_MA_FILTER_MODE { BASE_PRICE_ABOVE_BELOW=0, BASE_FULL_BODY_CLOSE=1 };
@@ -103,7 +105,8 @@ input bool Use_Price_Momentum_For_Optimal=false;
 input group "Alerts"
 input bool Enable_Popup_Alerts=false;
 input bool Enable_Push_Notifications=false;
-input bool Alert_On_Liquidity_Sweep=true; // uses the popup/push switches above
+// Sweep alerts are delivered through the popup/push switches above.
+input bool Alert_On_Liquidity_Sweep=true;
 
 // Internal tuning values are deliberately kept out of the Inputs dialog. The
 // streamlined UI exposes only settings that are useful during normal use.
@@ -162,6 +165,36 @@ input color            Swing_Low_Area_Color=clrTeal;
 input bool             Show_Liquidity_Sweeps=true;
 input MODEL_LABEL_SIZE Labels_Size=MODEL_TINY;
 
+enum LSS_TRADE_MODE
+  {
+   LSS_TRADING_OFF=0,     // Off (analysis only)
+   LSS_TRADING_TESTER=1,  // Strategy Tester only
+   LSS_TRADING_LIVE=2     // Strategy Tester and live charts
+  };
+
+enum LSS_LOT_MODE
+  {
+   LSS_RISK_PERCENT=0,    // Risk % of balance per trade
+   LSS_FIXED_LOTS=1       // Fixed lots
+  };
+
+input group "Trading"
+input LSS_TRADE_MODE Trade_Mode=LSS_TRADING_TESTER;
+input LSS_LOT_MODE   Lot_Sizing=LSS_RISK_PERCENT;
+input double         Risk_Percent=1.0;
+input double         Fixed_Lots=0.10;
+// Take profit in multiples of the initial risk (R).
+input double         Reward_Risk_Ratio=2.0;
+// Move the stop to the entry price at this profit in R (0 disables).
+input double         Breakeven_At_R=1.0;
+// Stop distance beyond the zone's far edge, in setup-timeframe ATRs.
+input double         SL_Buffer_ATR=0.5;
+// Skip a setup whose stop would be wider than this, in setup-timeframe ATRs.
+input double         Max_SL_ATR=2.0;
+// Also skip when a Market High/Low or trendline lies between entry and target.
+input bool           Require_Clear_Path_To_Target=true;
+input ulong          Magic_Number=20260927;
+
 string g_prefix="";
 datetime g_last_ltf_bar=0;
 datetime g_last_structure_bar=0;
@@ -178,6 +211,30 @@ int g_model_last_state=-99;
 bool g_model_draw=false;
 bool g_htf_ready=false;
 int g_sweep_count=0;
+
+CTrade g_trade;
+int g_setup_atr_handle=INVALID_HANDLE;
+// Latest Base analysis, published by Rebuild for the trading layer.
+bool g_conditions_ready=false;
+bool g_tradeable=false;
+string g_optimal_block="";
+bool g_have_clearance=false;
+bool g_boundaries_complete=false;
+double g_clearance=0.0;
+bool g_have_market_high=false,g_have_market_low=false;
+double g_market_high=0.0,g_market_low=0.0;
+double g_trend_top[],g_trend_bottom[],g_trend_slope[];
+datetime g_trend_time=0;
+// Live liquidity zone on the bias side, published by RebuildModel.
+bool g_zone_valid=false;
+int g_zone_side=0;          // -1 sell at an LH zone, 1 buy at an HL zone
+double g_zone_top=0.0,g_zone_bottom=0.0;
+datetime g_zone_id=0;       // time of the zone's swing candle
+datetime g_traded_zone_id=0;
+datetime g_rejected_zone_id=0;
+string g_rejected_reason="";
+string g_trade_status="";
+ulong g_breakeven_failed_ticket=0;
 
 struct BASE_STRUCTURE_STATE
   {
@@ -240,9 +297,16 @@ ENUM_TIMEFRAMES BASETimeframe()
    return Structure_Timeframe==PERIOD_CURRENT?(ENUM_TIMEFRAMES)_Period:Structure_Timeframe;
   }
 
+// The Strategy Tester's non-visual mode (including optimisation) never shows
+// a chart, so nothing is drawn there; analysis and trading still run.
+bool DrawingEnabled()
+  {
+   return MQLInfoInteger(MQL_TESTER)==0 || MQLInfoInteger(MQL_VISUAL_MODE)!=0;
+  }
+
 bool ModelDisplayEnabled()
   {
-   return (ENUM_TIMEFRAMES)_Period==SetupTimeframe();
+   return DrawingEnabled() && (ENUM_TIMEFRAMES)_Period==SetupTimeframe();
   }
 
 bool BaseDisplayEnabled()
@@ -250,7 +314,7 @@ bool BaseDisplayEnabled()
    // The liquidity engine owns the MTF chart, including its HH/HL/LH/LL
    // labels, and has priority if timeframe inputs overlap.  Base overlays
    // belong to the structure (HTF) and boundary charts.
-   if(ModelDisplayEnabled()) return false;
+   if(!DrawingEnabled() || ModelDisplayEnabled()) return false;
    return (ENUM_TIMEFRAMES)_Period==BASETimeframe() ||
           (ENUM_TIMEFRAMES)_Period==BoundaryTimeframe();
   }
@@ -863,6 +927,7 @@ bool FindTrendZones(const MqlRates &rates[],const int total,const double thresho
          swap_int=candidate_touches[rank]; candidate_touches[rank]=candidate_touches[best]; candidate_touches[best]=swap_int;
         }
       double end_y=candidate_projected[rank];
+      RecordTrendZone(end_y+candidate_up[rank],end_y+candidate_down[rank],candidate_slope[rank]);
       if(rank==0)
         {
          projected_top=end_y+candidate_up[rank];
@@ -879,6 +944,19 @@ bool FindTrendZones(const MqlRates &rates[],const int total,const double thresho
    return true;
   }
 
+// Keeps every trendline zone found (nearest first, projected to the latest
+// closed boundary candle) for the trading layer's clearance checks.
+void RecordTrendZone(const double top,const double bottom,const double slope)
+  {
+   int index=ArraySize(g_trend_top);
+   ArrayResize(g_trend_top,index+1,16);
+   ArrayResize(g_trend_bottom,index+1,16);
+   ArrayResize(g_trend_slope,index+1,16);
+   g_trend_top[index]=top;
+   g_trend_bottom[index]=bottom;
+   g_trend_slope[index]=slope;
+  }
+
 void EvaluateTrendlineZones(const MqlRates &rates[],const int total,const double trend_atr,
                             bool &have_resistance,double &resistance_top,
                             double &resistance_bottom,bool &have_support,
@@ -886,6 +964,10 @@ void EvaluateTrendlineZones(const MqlRates &rates[],const int total,const double
   {
    have_resistance=false;
    have_support=false;
+   ArrayResize(g_trend_top,0);
+   ArrayResize(g_trend_bottom,0);
+   ArrayResize(g_trend_slope,0);
+   g_trend_time=total>0?rates[total-1].time:0;
    if(!Show_Trendline_Zones && !Use_Optimal_Conditions_Meter) return;
    if(trend_atr==EMPTY_VALUE || total<2*Trendline_Pivot_Strength+1) return;
    const double fixed_atr_multiplier=0.5;
@@ -1307,6 +1389,26 @@ bool Rebuild(const bool permit_alert)
       else if(Use_LTF_For_Tradeability && !ltf_definite)
          tradeability_reason="LTF bias is transitional (CHoCH has no subsequent BOS)";
      }
+   // Publish the analysis for the trading layer.  Technical space is checked
+   // there at the actual entry price, so it is not part of this summary.
+   string optimal_block="";
+   if(Use_Timeframe_Correlation_For_Optimal && !bias_ready) optimal_block="timeframe correlation";
+   if(Use_Healthy_Extension_For_Optimal && !healthy_extension)
+      optimal_block+=(optimal_block==""?"":", ")+"healthy extension";
+   if(Use_Market_Volume_For_Optimal && !good_volume)
+      optimal_block+=(optimal_block==""?"":", ")+"market volume";
+   if(Use_Price_Momentum_For_Optimal && !good_momentum)
+      optimal_block+=(optimal_block==""?"":", ")+"price momentum";
+   g_tradeable=tradeable;
+   g_optimal_block=optimal_block;
+   g_have_clearance=have_atr;
+   g_boundaries_complete=boundary_total>=BoundaryBars();
+   g_clearance=clearance;
+   g_have_market_high=have_market_high;
+   g_market_high=market_high;
+   g_have_market_low=have_market_low;
+   g_market_low=market_low;
+   g_conditions_ready=true;
    DrawDashboard(BiasText(structure_state),BiasText(setup_state),BiasText(ltf_state),
                  bias_ready,tradeable,tradeability_reason,
                  EntryFilterTooltip(rates[total-1],ma,adx,atr),optimal,clear_space,
@@ -1352,6 +1454,19 @@ bool ValidInputs()
       problem="enable at least one Optimal Conditions requirement";
    else if(!Use_HTF_For_Tradeability && !Use_MTF_For_Tradeability && !Use_LTF_For_Tradeability)
       problem="enable at least one tradeability timeframe";
+   else if(Trade_Mode!=LSS_TRADING_OFF)
+     {
+      if(Lot_Sizing==LSS_RISK_PERCENT && (Risk_Percent<=0.0 || Risk_Percent>100.0))
+         problem="Risk_Percent must be above 0 and at most 100";
+      else if(Lot_Sizing==LSS_FIXED_LOTS && Fixed_Lots<=0.0)
+         problem="Fixed_Lots must be positive";
+      else if(Reward_Risk_Ratio<=0.0)
+         problem="Reward_Risk_Ratio must be positive";
+      else if(Breakeven_At_R<0.0 || Breakeven_At_R>=Reward_Risk_Ratio)
+         problem="Breakeven_At_R must be 0 (off) or below Reward_Risk_Ratio";
+      else if(SL_Buffer_ATR<0.0 || Max_SL_ATR<=0.0)
+         problem="SL_Buffer_ATR must not be negative and Max_SL_ATR must be positive";
+     }
    if(problem=="") return true;
    Print("Liquidity Sweep Strategy: invalid input - ",problem,".");
    return false;
@@ -1648,7 +1763,7 @@ void DeleteModelObjects()
 bool RebuildModel()
   {
    g_model_draw=ModelDisplayEnabled();
-   if(!g_model_draw && !LiquidityAlertsEnabled())
+   if(!g_model_draw && !LiquidityAlertsEnabled() && !TradingActive())
      {
       if(g_model_last_bar!=0) DeleteModelObjects();
       g_model_last_bar=0;
@@ -1658,11 +1773,13 @@ bool RebuildModel()
    datetime current_bar=iTime(_Symbol,timeframe,0);
    if(current_bar<=0)
      {
+      g_zone_valid=false;
       DrawStatus("Liquidity: waiting for "+TimeframeName(timeframe)+" history...",clrOrange);
       return false;
      }
    if(!g_htf_ready)
      {
+      g_zone_valid=false;
       DrawStatus("Liquidity: waiting for the HTF market bias...",clrOrange);
       return false;
      }
@@ -1676,6 +1793,7 @@ bool RebuildModel()
    int copied=CopyRates(_Symbol,timeframe,1,ChartStructureBars(timeframe),rates);
    if(copied<minimum)
      {
+      g_zone_valid=false;
       DrawStatus("Liquidity: insufficient "+TimeframeName(timeframe)+" bars ("+
                  IntegerToString(MathMax(copied,0))+"/"+IntegerToString(minimum)+")",clrOrange);
       return false;
@@ -1699,6 +1817,7 @@ bool RebuildModel()
    BASE_STRUCTURE_EVENT events[];
    ReplayStructure(rates,copied,length,state,points,events);
    DeleteModelObjects();
+   g_trade_status="";
    int point_count=ArraySize(points);
    if(g_model_draw && Show_Swing_Points)
       for(int i=0;i<point_count;i++)
@@ -1762,6 +1881,11 @@ bool RebuildModel()
         }
      }
 
+   // Offer the live (visible, unbroken) zone on the bias side for trading.
+   g_zone_valid=false;
+   if(market_bias<0 && ph.active && ph.qualified && !ph.crossed) SetTradeZone(-1,ph);
+   if(market_bias>0 && pl.active && pl.qualified && !pl.crossed) SetTradeZone(1,pl);
+
    string text="Liquidity "+TimeframeName(timeframe)+" | HTF "+BiasText(g_htf_structure)+" | ";
    if(market_bias<0)
       text+=IntegerToString(high_serial)+" LH->LL swing"+(high_serial==1?"":"s");
@@ -1785,6 +1909,296 @@ bool RebuildModel()
    return true;
   }
 
+// ---------------------------------------------------------------------------
+// Trading.  Entries are taken at the live MTF liquidity zone published by
+// RebuildModel, in the direction of the established HTF bias, and only while
+// the Base analysis (published by Rebuild) says the market is tradable and
+// the enabled optimal conditions pass.
+// ---------------------------------------------------------------------------
+
+bool TradingActive()
+  {
+   if(Trade_Mode==LSS_TRADING_OFF) return false;
+   if(MQLInfoInteger(MQL_TESTER)!=0) return true;
+   return Trade_Mode==LSS_TRADING_LIVE;
+  }
+
+void SetTradeZone(const int side,const MODEL_SWING &swing)
+  {
+   g_zone_valid=true;
+   g_zone_side=side;
+   g_zone_top=swing.top;
+   g_zone_bottom=swing.bottom;
+   g_zone_id=swing.start;
+  }
+
+void DrawTradeStatus(const string text)
+  {
+   if(!ModelDisplayEnabled() || text==g_trade_status) return;
+   g_trade_status=text;
+   string name=g_model_prefix+"TRADE_STATUS";
+   if(ObjectFind(0,name)<0 && !ObjectCreate(0,name,OBJ_LABEL,0,0,0)) return;
+   ObjectSetInteger(0,name,OBJPROP_CORNER,CORNER_LEFT_UPPER);
+   ObjectSetInteger(0,name,OBJPROP_ANCHOR,ANCHOR_LEFT_UPPER);
+   ObjectSetInteger(0,name,OBJPROP_XDISTANCE,10);
+   ObjectSetInteger(0,name,OBJPROP_YDISTANCE,38);
+   ObjectSetInteger(0,name,OBJPROP_COLOR,clrSilver);
+   ObjectSetInteger(0,name,OBJPROP_FONTSIZE,9);
+   ObjectSetInteger(0,name,OBJPROP_SELECTABLE,false);
+   ObjectSetInteger(0,name,OBJPROP_HIDDEN,true);
+   ObjectSetString(0,name,OBJPROP_FONT,"Arial");
+   ObjectSetString(0,name,OBJPROP_TEXT,"Trading: "+text);
+  }
+
+// Journals why a zone was not traded, once per zone and reason.
+void NoteRejection(const string reason)
+  {
+   DrawTradeStatus("blocked at the zone - "+reason);
+   if(g_zone_id==g_rejected_zone_id && reason==g_rejected_reason) return;
+   g_rejected_zone_id=g_zone_id;
+   g_rejected_reason=reason;
+   if(MQLInfoInteger(MQL_OPTIMIZATION)==0)
+      Print("Liquidity Sweep Strategy: ",(g_zone_side<0?"LH":"HL")," zone ",
+            DoubleToString(g_zone_bottom,_Digits),"-",DoubleToString(g_zone_top,_Digits),
+            " not traded: ",reason);
+  }
+
+bool FindPosition(ulong &ticket)
+  {
+   for(int i=PositionsTotal()-1;i>=0;i--)
+     {
+      ulong candidate=PositionGetTicket(i);
+      if(candidate==0) continue;
+      if(PositionGetString(POSITION_SYMBOL)==_Symbol &&
+         (ulong)PositionGetInteger(POSITION_MAGIC)==Magic_Number)
+        {
+         ticket=candidate;
+         return true;
+        }
+     }
+   return false;
+  }
+
+// Aligns a price to the symbol's tick size: direction 1 rounds up, -1 rounds
+// down and 0 rounds to the nearest tick.
+double AlignPrice(const double price,const int direction)
+  {
+   double tick=SymbolInfoDouble(_Symbol,SYMBOL_TRADE_TICK_SIZE);
+   if(tick<=0.0) tick=_Point;
+   double steps=price/tick;
+   if(direction>0) steps=MathCeil(steps-1e-8);
+   else if(direction<0) steps=MathFloor(steps+1e-8);
+   else steps=MathRound(steps);
+   return NormalizeDouble(steps*tick,_Digits);
+  }
+
+// The broker's minimum distance between the market and a stop order.
+double MinimumStopDistance()
+  {
+   long level=MathMax(SymbolInfoInteger(_Symbol,SYMBOL_TRADE_STOPS_LEVEL),
+                      SymbolInfoInteger(_Symbol,SYMBOL_TRADE_FREEZE_LEVEL));
+   return (double)(level+1)*_Point;
+  }
+
+// "At or approaching" a Market High/Low or trendline: within the dashboard's
+// clearance (Boundary_Clearance_ATR x LTF ATR) of the entry price, or, with
+// Require_Clear_Path_To_Target, anywhere between the entry and the target.
+// Trendline zones are projected to the current boundary-timeframe candle.
+string SpaceBlocker(const double entry,const double target)
+  {
+   if(!g_have_clearance) return "LTF ATR is unavailable for the clearance check";
+   // Without the full boundary history an absent Market High/Low or trendline
+   // could simply be unknown, so the space requirement cannot be confirmed.
+   if(!g_boundaries_complete)
+      return "not enough "+TimeframeName(BoundaryTimeframe())+" history yet for the Market High/Low and trendline checks";
+   double path_low=MathMin(entry,target),path_high=MathMax(entry,target);
+   if(g_have_market_high)
+     {
+      if(MathAbs(g_market_high-entry)<=g_clearance) return "at or approaching the Market High";
+      if(Require_Clear_Path_To_Target && g_market_high>path_low && g_market_high<path_high)
+         return "the Market High lies before the target";
+     }
+   if(g_have_market_low)
+     {
+      if(MathAbs(entry-g_market_low)<=g_clearance) return "at or approaching the Market Low";
+      if(Require_Clear_Path_To_Target && g_market_low>path_low && g_market_low<path_high)
+         return "the Market Low lies before the target";
+     }
+   int shift=iBarShift(_Symbol,BoundaryTimeframe(),g_trend_time,false);
+   if(shift<0) shift=0;
+   int count=ArraySize(g_trend_top);
+   for(int i=0;i<count;i++)
+     {
+      double top=g_trend_top[i]+g_trend_slope[i]*shift;
+      double bottom=g_trend_bottom[i]+g_trend_slope[i]*shift;
+      if(entry>=bottom-g_clearance && entry<=top+g_clearance)
+         return "at or approaching a trendline";
+      if(Require_Clear_Path_To_Target && top>path_low && bottom<path_high)
+         return "a trendline lies before the target";
+     }
+   return "";
+  }
+
+// Volume for the trade: Risk_Percent of the balance lost at the stop, or
+// Fixed_Lots.  Returns 0 when the result is below the symbol's minimum.
+double TradeVolume(const bool sell,const double entry,const double sl)
+  {
+   double step=SymbolInfoDouble(_Symbol,SYMBOL_VOLUME_STEP);
+   double minimum=SymbolInfoDouble(_Symbol,SYMBOL_VOLUME_MIN);
+   double maximum=SymbolInfoDouble(_Symbol,SYMBOL_VOLUME_MAX);
+   double lots=Fixed_Lots;
+   if(Lot_Sizing==LSS_RISK_PERCENT)
+     {
+      double loss=0.0;
+      if(!OrderCalcProfit(sell?ORDER_TYPE_SELL:ORDER_TYPE_BUY,_Symbol,1.0,entry,sl,loss) ||
+         loss>=0.0)
+         return 0.0;
+      lots=AccountInfoDouble(ACCOUNT_BALANCE)*Risk_Percent/100.0/(-loss);
+     }
+   if(step>0.0)
+     {
+      lots=MathFloor(lots/step+1e-8)*step;
+      lots=NormalizeDouble(lots,(int)MathMax(0.0,MathCeil(-MathLog10(step)-1e-8)));
+     }
+   if(lots<minimum) return 0.0;
+   return MathMin(lots,maximum);
+  }
+
+// Checks every entry requirement at the current price and, when all pass,
+// fills in the order.  Returns the first failed requirement, or "".
+string PlanEntry(const bool sell,const double entry,const double spread,
+                 double &sl,double &tp,double &lots)
+  {
+   int direction=sell?-1:1;
+   if(!DefiniteBias(g_htf_structure) || g_htf_structure.direction!=direction)
+      return "the HTF bias is not established in the trade direction";
+   if(!g_tradeable) return "the market is not tradable";
+   if(g_optimal_block!="") return "optimal conditions not met ("+g_optimal_block+")";
+   double atr[];
+   if(!CopyIndicator(g_setup_atr_handle,0,1,atr) || atr[0]==EMPTY_VALUE || atr[0]<=0.0)
+      return "the MTF ATR is unavailable";
+
+   // The stop sits beyond the zone's far edge by SL_Buffer_ATR MTF ATRs.  A
+   // sell stop is triggered by the ask, so the spread is added to keep it
+   // behind the zone as drawn on the (bid) chart.
+   double buffer=SL_Buffer_ATR*atr[0];
+   sl=sell?AlignPrice(g_zone_top+buffer+spread,1):AlignPrice(g_zone_bottom-buffer,-1);
+   double risk=sell?sl-entry:entry-sl;
+   double minimum=MinimumStopDistance();
+   if(risk<minimum)
+     {
+      risk=minimum;
+      sl=sell?AlignPrice(entry+risk,1):AlignPrice(entry-risk,-1);
+      risk=sell?sl-entry:entry-sl;
+     }
+   if(risk>Max_SL_ATR*atr[0])
+      return "a stop beyond the zone would exceed "+DoubleToString(Max_SL_ATR,1)+" MTF ATR";
+   tp=AlignPrice(sell?entry-Reward_Risk_Ratio*risk:entry+Reward_Risk_Ratio*risk,0);
+
+   string space=SpaceBlocker(entry,tp);
+   if(space!="") return space;
+
+   lots=TradeVolume(sell,entry,sl);
+   if(lots<=0.0) return "the position size is below the minimum volume";
+   double margin=0.0;
+   if(OrderCalcMargin(sell?ORDER_TYPE_SELL:ORDER_TYPE_BUY,_Symbol,lots,entry,margin) &&
+      margin>AccountInfoDouble(ACCOUNT_MARGIN_FREE))
+      return "insufficient free margin";
+   return "";
+  }
+
+// Enters when price is inside the live zone and every requirement passes.
+// Each zone is traded at most once, with one position open at a time.
+void CheckEntry()
+  {
+   ulong ticket=0;
+   if(FindPosition(ticket))
+     {
+      DrawTradeStatus("position open");
+      return;
+     }
+   if(!g_zone_valid || !g_conditions_ready)
+     {
+      DrawTradeStatus("no live liquidity zone");
+      return;
+     }
+   string zone_text=(g_zone_side<0?"sell LH zone ":"buy HL zone ")+
+                    DoubleToString(g_zone_bottom,_Digits)+"-"+DoubleToString(g_zone_top,_Digits);
+   if(g_zone_id==g_traded_zone_id)
+     {
+      DrawTradeStatus(zone_text+" already traded");
+      return;
+     }
+   MqlTick tick;
+   if(!SymbolInfoTick(_Symbol,tick) || tick.bid<=0.0 || tick.ask<=0.0) return;
+   bool sell=g_zone_side<0;
+   double entry=sell?tick.bid:tick.ask;
+   if(entry<g_zone_bottom || entry>g_zone_top)
+     {
+      DrawTradeStatus("waiting for price to reach the "+zone_text);
+      return;
+     }
+   if(MQLInfoInteger(MQL_TESTER)==0 &&
+      (TerminalInfoInteger(TERMINAL_TRADE_ALLOWED)==0 || MQLInfoInteger(MQL_TRADE_ALLOWED)==0))
+     {
+      NoteRejection("Algo Trading is disabled");
+      return;
+     }
+   double sl=0.0,tp=0.0,lots=0.0;
+   string reason=PlanEntry(sell,entry,tick.ask-tick.bid,sl,tp,lots);
+   if(reason!="")
+     {
+      NoteRejection(reason);
+      return;
+     }
+   string comment="LSS "+(sell?"LH ":"HL ")+DoubleToString(sell?g_zone_top:g_zone_bottom,_Digits);
+   bool sent=sell?g_trade.Sell(lots,_Symbol,0.0,sl,tp,comment)
+                 :g_trade.Buy(lots,_Symbol,0.0,sl,tp,comment);
+   uint retcode=g_trade.ResultRetcode();
+   // A zone is used up even when the request fails, so a rejected order
+   // (for example invalid stops) cannot be resent on every tick.
+   g_traded_zone_id=g_zone_id;
+   if(sent && (retcode==TRADE_RETCODE_DONE || retcode==TRADE_RETCODE_PLACED))
+     {
+      DrawTradeStatus("position open");
+      if(MQLInfoInteger(MQL_OPTIMIZATION)==0)
+         Print("Liquidity Sweep Strategy: ",sell?"sell ":"buy ",DoubleToString(lots,2),
+               " at ",DoubleToString(entry,_Digits)," SL ",DoubleToString(sl,_Digits),
+               " TP ",DoubleToString(tp,_Digits)," (",zone_text,")");
+     }
+   else
+      Print("Liquidity Sweep Strategy: order for the ",zone_text," failed - ",
+            g_trade.ResultRetcodeDescription());
+  }
+
+// Moves the stop to the entry price once price has travelled Breakeven_At_R
+// times the initial risk.  The initial risk is recovered from the take profit
+// (TP = Reward_Risk_Ratio x risk), so nothing has to survive a restart.
+void ManagePosition()
+  {
+   if(Breakeven_At_R<=0.0) return;
+   ulong ticket=0;
+   if(!FindPosition(ticket)) return;
+   double open=PositionGetDouble(POSITION_PRICE_OPEN);
+   double sl=PositionGetDouble(POSITION_SL);
+   double tp=PositionGetDouble(POSITION_TP);
+   if(tp<=0.0 || sl<=0.0) return;
+   bool buy=(ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE)==POSITION_TYPE_BUY;
+   bool at_breakeven=buy?sl>=open:sl<=open;
+   if(at_breakeven || ticket==g_breakeven_failed_ticket) return;
+   double risk=MathAbs(tp-open)/Reward_Risk_Ratio;
+   MqlTick tick;
+   if(risk<=0.0 || !SymbolInfoTick(_Symbol,tick)) return;
+   double progress=buy?tick.bid-open:open-tick.ask;
+   if(progress<Breakeven_At_R*risk || progress<MinimumStopDistance()) return;
+   if(!g_trade.PositionModify(ticket,open,tp))
+     {
+      g_breakeven_failed_ticket=ticket;
+      Print("Liquidity Sweep Strategy: moving the stop to breakeven failed - ",
+            g_trade.ResultRetcodeDescription());
+     }
+  }
+
 int OnInit()
   {
    if(!ValidInputs()) return INIT_PARAMETERS_INCORRECT;
@@ -1797,6 +2211,9 @@ int OnInit()
    g_model_last_bar=0;
    g_model_last_state=-99;
    g_htf_ready=false;
+   g_conditions_ready=false;
+   g_zone_valid=false;
+   g_trade_status="";
    ENUM_TIMEFRAMES timeframe=BASETimeframe();
    g_prefix="BASE_"+(string)ChartID()+"_";
    g_model_prefix="ModelBase_"+IntegerToString(ChartID())+"_";
@@ -1806,6 +2223,14 @@ int OnInit()
    if(Use_ATR_Filter && (g_atr_handle=iATR(_Symbol,timeframe,ATR_Length))==INVALID_HANDLE) return INIT_FAILED;
    if((g_ltf_atr_handle=iATR(_Symbol,LTFTimeframe(),ATR_Length))==INVALID_HANDLE) return INIT_FAILED;
    if((g_trend_atr_handle=iATR(_Symbol,BoundaryTimeframe(),ATR_Length))==INVALID_HANDLE) return INIT_FAILED;
+   if(Trade_Mode!=LSS_TRADING_OFF)
+     {
+      if((g_setup_atr_handle=iATR(_Symbol,SetupTimeframe(),ATR_Length))==INVALID_HANDLE) return INIT_FAILED;
+      g_trade.SetExpertMagicNumber(Magic_Number);
+      g_trade.SetDeviationInPoints(20);
+      g_trade.SetTypeFillingBySymbol(_Symbol);
+      g_trade.LogLevel(LOG_LEVEL_ERRORS);
+     }
    if(!EventSetTimer(2)) return INIT_FAILED;
    RefreshForCurrentChart();
    return INIT_SUCCEEDED;
@@ -1820,6 +2245,8 @@ void OnDeinit(const int reason)
    if(g_atr_handle!=INVALID_HANDLE) IndicatorRelease(g_atr_handle);
    if(g_ltf_atr_handle!=INVALID_HANDLE) IndicatorRelease(g_ltf_atr_handle);
    if(g_trend_atr_handle!=INVALID_HANDLE) IndicatorRelease(g_trend_atr_handle);
+   if(g_setup_atr_handle!=INVALID_HANDLE) IndicatorRelease(g_setup_atr_handle);
+   g_setup_atr_handle=INVALID_HANDLE;
    g_ma_handle=INVALID_HANDLE;
    g_htf_ma_handle=INVALID_HANDLE;
    g_adx_handle=INVALID_HANDLE;
@@ -1863,7 +2290,13 @@ void RefreshForCurrentChart()
    RebuildModel();
   }
 
-void OnTick() { RefreshForCurrentChart(); }
+void OnTick()
+  {
+   RefreshForCurrentChart();
+   if(!TradingActive()) return;
+   ManagePosition();
+   CheckEntry();
+  }
 void OnTimer() { RefreshForCurrentChart(); }
 
 void OnChartEvent(const int id,const long &lparam,const double &dparam,

@@ -55,11 +55,65 @@ build until MT5 has synchronised every requested history, so a chart restart
 is not required. All series are loaded before any chart object is replaced, so
 a build that is still waiting for data keeps the previous drawing. When
 enabled, `Intrabar_Timeframe` must be lower than `Setup_Entry_Timeframe`; its
-candles are loaded with one copy per build. The merged EA remains analysis and
-visualisation software and does not place trades.
+candles are loaded with one copy per build.
 
 Install the EA in `MQL5/Experts`, compile it in MetaEditor, and attach
 **Liquidity Sweep Strategy** to one chart.
+
+### Trading and the Strategy Tester
+
+The EA can trade the liquidity zones it identifies. `Trade_Mode` chooses where:
+**Strategy Tester only** (the default), **Strategy Tester and live charts**, or
+**Off**. The default means a chart that runs the EA for analysis never places
+orders; choose the live option deliberately.
+
+A trade is entered when price reaches the live liquidity zone on the setup
+timeframe: a sell when the bid enters the LH zone (bearish bias), a buy when
+the ask enters the HL zone (bullish bias). A zone is live while its level is
+visible and no MTF candle has closed beyond it. At that moment all of the
+following must hold:
+
+- The HTF bias is established in the trade direction: its latest break is a
+  BOS, not a transitional CHoCH, and not consolidating.
+- The dashboard's Market Tradeability is **Tradable**.
+- Every enabled Optimal Conditions requirement passes. Technical space is
+  checked at the actual entry price rather than the price at the last candle
+  close.
+- Price is not at or approaching a Market High/Low or trendline: the entry is
+  farther than the dashboard's clearance (`Boundary_Clearance_ATR` x LTF ATR)
+  from each of them, and with `Require_Clear_Path_To_Target` (on by default)
+  none of them lies between the entry and the take profit. Trading waits
+  until enough `Boundary_Timeframe` history exists to find these levels.
+- The zone has not been traded before, and no other position with this EA's
+  `Magic_Number` is open on the symbol.
+
+Exits:
+
+- **Stop loss** sits beyond the zone's far edge (the LH high or the HL low) by
+  `SL_Buffer_ATR` (default 0.5) setup-timeframe ATRs; sells add the spread
+  because their stop triggers on the ask. A setup is skipped rather than
+  squeezed when that stop would exceed `Max_SL_ATR` (default 2.0) ATRs, which
+  keeps the target realistic.
+- **Take profit** is `Reward_Risk_Ratio` (default 2.0) times the risk, 1:2.
+- **Breakeven**: once price has moved `Breakeven_At_R` (default 1.0) times the
+  risk in favour, the stop moves to the entry price. The risk is recovered
+  from the take profit, so this also works after a restart.
+- **Size** risks `Risk_Percent` (default 1%) of the balance at the stop, or
+  uses `Fixed_Lots` when `Lot_Sizing` is set to fixed lots.
+
+Each rejected zone is written to the Journal once with its reason (for example
+"at or approaching the Market High" or "optimal conditions not met (market
+volume)"), and each entry with its lots, stop and target. On the MTF chart a
+second status line shows the trading state.
+
+To run a test, open the Strategy Tester (Ctrl+R), select **Liquidity Sweep
+Strategy**, the symbol and a date range, and use **Every tick based on real
+ticks** or **Every tick** modelling: entries happen when price touches a zone,
+which **Open prices only** cannot reproduce. Any chart period works and gives
+the same trades; choose the setup timeframe (M15 by default) to watch the
+zones in visual mode. Non-visual runs and optimisation skip all drawing for
+speed. The EA needs about 320 candles of `Boundary_Timeframe` history (roughly
+three months of H4) before it trades.
 
 ## Model Base
 
