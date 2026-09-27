@@ -1,4 +1,19 @@
-# Road for MetaTrader 5
+# MetaTrader 5 Indicators and Tools
+
+## Model Base
+
+`Model Base.mq5` is an MQL5 custom-indicator conversion of the supplied
+Liquidity Swings PineScript. It detects delayed pivot highs and lows, draws
+their wick-extremity or full-range liquidity areas, counts overlapping bars,
+accumulates tick volume, and marks levels as dashed after price crosses them.
+Optional lower-timeframe sampling approximates Pine's intrabar volume mode.
+
+Install it in `MQL5/Indicators`, compile it in MetaEditor, and attach **Model
+Base** to a chart. `Maximum_Bars` bounds reconstruction time and the number of
+chart objects. MetaTrader tick volume is used because broker-independent
+centralized volume is not universally available.
+
+## Road
 
 Road is a **chart-analysis and alerting Expert Advisor (EA)**. It reconstructs
 market structure from closed candles, draws BOS/CHoCH and boundary overlays,
