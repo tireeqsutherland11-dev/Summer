@@ -34,6 +34,14 @@ input MODEL_FILTER_MODE Filter_Areas_By=MODEL_FILTER_COUNT;
 input double            Filter_Value=0.0;
 input int               Maximum_Bars=3000;
 
+input group "Impulse Qualification"
+input bool              Require_Strong_Departure=true;
+input int               Volume_Baseline_Bars=20;
+input double            Minimum_Directional_Pressure=0.60;
+input double            Minimum_Momentum_Efficiency=0.55;
+input double            Minimum_Relative_Volume=1.10;
+input double            Minimum_Impulse_Score=60.0;
+
 input group "Style"
 input bool             Show_Swing_High=true;
 input color            Swing_High_Color=clrRed;
@@ -144,6 +152,72 @@ bool IsPivotLow(const MqlRates &rates[],const int total,const int index,const in
    return true;
   }
 
+// Scores the confirmed departure from a pivot.  Directional pressure and
+// momentum carry most of the score; raw distance is deliberately only 10% so
+// a large but weak/noisy move cannot qualify merely because it travelled far.
+bool StrongDeparture(const MqlRates &rates[],const int total,const int pivot,
+                     const int confirmed,const bool high)
+  {
+   if(!Require_Strong_Departure) return true;
+   if(pivot<1 || confirmed<=pivot || confirmed>=total) return false;
+
+   double favourable_volume=0.0,total_volume=0.0;
+   double favourable_body=0.0,total_range=0.0;
+   double path=0.0,atr_sum=0.0;
+   int impulse_bars=0;
+   for(int i=pivot+1;i<=confirmed;i++)
+     {
+      double range=rates[i].high-rates[i].low;
+      double body=rates[i].close-rates[i].open;
+      double true_range=MathMax(range,MathMax(MathAbs(rates[i].high-rates[i-1].close),
+                                             MathAbs(rates[i].low-rates[i-1].close)));
+      bool favourable=high?body<0.0:body>0.0;
+      double volume=(double)rates[i].tick_volume;
+      total_volume+=volume;
+      total_range+=range;
+      path+=MathAbs(rates[i].close-rates[i-1].close);
+      atr_sum+=true_range;
+      impulse_bars++;
+      if(favourable)
+        {
+         favourable_volume+=volume;
+         favourable_body+=MathAbs(body);
+        }
+     }
+   if(impulse_bars<1 || total_volume<=0.0 || total_range<=0.0) return false;
+
+   int baseline_start=MathMax(0,pivot-Volume_Baseline_Bars+1);
+   double baseline_volume=0.0;
+   int baseline_bars=0;
+   for(int i=baseline_start;i<=pivot;i++)
+     {
+      baseline_volume+=(double)rates[i].tick_volume;
+      baseline_bars++;
+     }
+   if(baseline_bars<1 || baseline_volume<=0.0) return false;
+
+   double pressure=favourable_volume/total_volume;
+   double momentum=favourable_body/total_range;
+   double relative_volume=(total_volume/impulse_bars)/(baseline_volume/baseline_bars);
+   double departure=high?rates[pivot].high-rates[confirmed].close:
+                         rates[confirmed].close-rates[pivot].low;
+   double average_true_range=atr_sum/impulse_bars;
+   double size_ratio=average_true_range>0.0?MathMax(0.0,departure)/average_true_range:0.0;
+
+   // Volume is capped at twice baseline and distance at two ATRs.  This keeps
+   // either magnitude measure from overwhelming actual directional quality.
+   double volume_component=MathMin(relative_volume/2.0,1.0);
+   double size_component=MathMin(size_ratio/2.0,1.0);
+   double path_efficiency=path>0.0?MathMin(MathMax(0.0,departure)/path,1.0):0.0;
+   double score=40.0*pressure+20.0*momentum+20.0*path_efficiency+
+                10.0*volume_component+10.0*size_component;
+
+   return pressure>=Minimum_Directional_Pressure &&
+          momentum>=Minimum_Momentum_Efficiency &&
+          relative_volume>=Minimum_Relative_Volume &&
+          score>=Minimum_Impulse_Score;
+  }
+
 long OverlapVolume(const MqlRates &bar,const double top,const double bottom)
   {
    if(!Intrabar_Precision)
@@ -240,6 +314,14 @@ int OnInit()
       Print("Model Base: Pivot Lookback must be positive and Maximum Bars must provide a complete pivot window.");
       return INIT_PARAMETERS_INCORRECT;
      }
+   if(Volume_Baseline_Bars<1 || Minimum_Directional_Pressure<0.0 ||
+      Minimum_Directional_Pressure>1.0 || Minimum_Momentum_Efficiency<0.0 ||
+      Minimum_Momentum_Efficiency>1.0 || Minimum_Relative_Volume<0.0 ||
+      Minimum_Impulse_Score<0.0 || Minimum_Impulse_Score>100.0)
+     {
+      Print("Model Base: impulse qualification settings are outside their valid ranges.");
+      return INIT_PARAMETERS_INCORRECT;
+     }
    if(Intrabar_Precision && PeriodSeconds(Intrabar_Timeframe)>=PeriodSeconds((ENUM_TIMEFRAMES)_Period))
      {
       Print("Model Base: Intrabar Timeframe must be lower than the chart timeframe.");
@@ -283,8 +365,10 @@ int OnCalculate(const int rates_total,const int prev_calculated,const datetime &
    for(int now=2*Pivot_Lookback;now<copied;now++)
      {
       int pivot=now-Pivot_Lookback;
-      bool new_high=IsPivotHigh(rates,copied,pivot,Pivot_Lookback);
-      bool new_low=IsPivotLow(rates,copied,pivot,Pivot_Lookback);
+      bool new_high=IsPivotHigh(rates,copied,pivot,Pivot_Lookback) &&
+                    StrongDeparture(rates,copied,pivot,now,true);
+      bool new_low=IsPivotLow(rates,copied,pivot,Pivot_Lookback) &&
+                   StrongDeparture(rates,copied,pivot,now,false);
 
       if(new_high && Show_Swing_High)
          StartSwing(ph,true,rates[pivot],++high_serial,Swing_High_Area_Color);
