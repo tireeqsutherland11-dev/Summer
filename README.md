@@ -7,21 +7,23 @@ and the complete Model Base liquidity-swing EA in one Expert Advisor. Each
 engine retains its own settings, calculations, objects, and object-name prefix.
 The Base analysis, filters, dashboard, boundaries, alerts, and structure logic
 continue to run independently from Model Base's pivot, overlap-count, volume,
-qualification, zone, level, and label logic.
+qualification, zone, and level logic.
 
-The active chart period decides which engine may draw. Model Base draws only
-when the chart period equals `Setup_Entry_Timeframe` (MTF). Base draws only when
-the chart period equals `Structure_Timeframe` or `Boundary_Timeframe` (HTF).
-If timeframe inputs overlap, Model Base has display priority, ensuring the two
-object systems never render together. On all other chart periods both engines
-remain visually hidden; Base's analytical processing and optional alerts remain
-active.
+The active chart period decides which engine may draw. Model Base draws its
+liquidity objects only when the chart period equals `Setup_Entry_Timeframe`
+(MTF). Base draws its full overlays on `Structure_Timeframe` or
+`Boundary_Timeframe` (HTF), and also draws its chart-timeframe HH/HL/LH/LL
+points on the MTF. This preserves the standalone Base swing detection on the
+setup chart instead of substituting Model Base's separate, typically longer
+liquidity-pivot lookback. On all other chart periods both engines remain
+visually hidden; Base's analytical processing and optional alerts remain active.
 
-On the MTF chart, confirmed liquidity pivots are identified only as `HH`, `LH`,
-`HL`, or `LL`; numeric volume labels are not drawn. Liquidity areas are filtered
-by the current HTF/Structure market bias: a bearish bias draws areas only from
-MTF lower highs (`LH`), while a bullish bias draws areas only from MTF higher
-lows (`HL`). A consolidating HTF bias draws no liquidity area.
+On the MTF chart, Base identifies structure points as `HH`, `LH`, `HL`, or
+`LL` using `Swing_Detection_Length`; numeric volume labels are not drawn.
+Model Base independently uses `Pivot_Lookback` to select liquidity areas, which
+are filtered by the current HTF/Structure market bias: a bearish bias draws
+areas only from MTF lower highs (`LH`), while a bullish bias draws areas only
+from MTF higher lows (`HL`). A consolidating HTF bias draws no liquidity area.
 
 ### Manual structure and liquidity feedback
 
