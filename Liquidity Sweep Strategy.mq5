@@ -171,7 +171,7 @@ input color            Swing_Low_Area_Color=clrTeal;
 input MODEL_LABEL_SIZE Labels_Size=MODEL_TINY;
 
 input group "Manual Feedback"
-input bool   Enable_Manual_Feedback=false;
+input bool   Enable_Manual_Feedback=true;
 input string Feedback_CSV_File="Liquidity_Sweep_Feedback.csv";
 
 
@@ -1397,6 +1397,9 @@ void CreateFeedbackButton(const string action,const string caption,const int row
    ObjectSetInteger(0,name,OBJPROP_FONTSIZE,8);
    ObjectSetInteger(0,name,OBJPROP_COLOR,clrWhite);
    ObjectSetInteger(0,name,OBJPROP_BGCOLOR,g_feedback_action==action?clrDarkOrange:clrDimGray);
+   ObjectSetInteger(0,name,OBJPROP_ZORDER,100);
+   ObjectSetInteger(0,name,OBJPROP_SELECTABLE,true);
+   ObjectSetInteger(0,name,OBJPROP_SELECTED,false);
    ObjectSetInteger(0,name,OBJPROP_HIDDEN,true);
    ObjectSetString(0,name,OBJPROP_TEXT,caption);
   }
@@ -1413,6 +1416,9 @@ void DrawFeedbackPanel()
    CreateFeedbackButton("MISS_LIQ_HIGH","Missed liquidity H",6);
    CreateFeedbackButton("MISS_LIQ_LOW","Missed liquidity L",7);
    CreateFeedbackButton("CANCEL","Cancel",8);
+   // Object creation is asynchronous.  Force the panel onto the chart now so
+   // it also appears when the market is closed and no tick follows OnInit.
+   ChartRedraw();
   }
 
 void SelectFeedbackAction(const string action)
@@ -1427,8 +1433,9 @@ string DetectedFeedbackCategory(const string name)
    string kinds[4]={"HH","HL","LH","LL"};
    for(int i=0;i<4;i++)
       if(StringFind(name,"STRUCTURE_"+kinds[i]+"_")>=0) return kinds[i];
-   if(StringFind(name,g_model_prefix+"HIGH_")==0) return "LIQUIDITY_HIGH";
-   if(StringFind(name,g_model_prefix+"LOW_")==0) return "LIQUIDITY_LOW";
+   // Liquidity objects use the compact H_/L_ prefixes created by StartSwing.
+   if(StringFind(name,g_model_prefix+"H_")==0) return "LIQUIDITY_HIGH";
+   if(StringFind(name,g_model_prefix+"L_")==0) return "LIQUIDITY_LOW";
    return "";
   }
 

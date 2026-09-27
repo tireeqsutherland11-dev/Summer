@@ -25,8 +25,9 @@ lows (`HL`). A consolidating HTF bias draws no liquidity area.
 
 ### Manual structure and liquidity feedback
 
-Enable `Enable_Manual_Feedback` to display a review panel in the chart's
-top-right corner. To review an identified `HH`, `HL`, `LH`, `LL`, or liquidity
+The `Enable_Manual_Feedback` input is enabled by default and displays a review
+panel in the chart's top-right corner. Disable it when the annotation controls
+are not needed. To review an identified `HH`, `HL`, `LH`, `LL`, or liquidity
 swing, first select **Correct point** or **Incorrect point**, then click its
 label or liquidity object. The EA places an `OK` or `X` beside the point and
 appends the review to a CSV file.
