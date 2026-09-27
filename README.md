@@ -28,6 +28,11 @@ Raw distance is only 10% of the score, so a large but hesitant move does not
 outrank a smaller, decisive impulse. The thresholds are available under
 **Impulse Qualification**.
 
+Equal-high and equal-low plateaus are treated as a single liquidity swing at
+the latest bar in the plateau. This prevents a lower-high liquidity level (or
+higher-low counterpart) from disappearing merely because adjacent candles
+printed the same extremity, while also avoiding duplicate levels.
+
 The top-left status line is always created when the EA attaches. It immediately
 reports the number of detected high and low swings, or identifies when the
 visible chart does not yet contain a complete pivot window. If the chart
