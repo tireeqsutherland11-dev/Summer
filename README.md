@@ -153,6 +153,10 @@ break; a candle must close beyond it.
 
 - `Bars_To_Process` controls replay depth and therefore startup/rebuild cost.
   Start with the default 100 and raise it only when more context is needed.
+- `Boundary_Lookback_Bars` is the initial Market High and Market Low search
+  window. If just one boundary is missing, its search expands into older
+  boundary-timeframe structure in blocks of that size while the boundary that
+  was already found remains anchored to the original window.
 - The structure, setup, and LTF inputs are all monitored for new bars, so custom
   timeframe orders still refresh correctly.
 - `Use_HTF_For_Tradeability`, `Use_MTF_For_Tradeability`, and

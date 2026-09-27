@@ -742,8 +742,9 @@ void EvaluateTrendlineZones(bool &have_resistance,double &resistance_top,
    have_support=FindTrendZones(rates,total,threshold,false,support_top,support_bottom);
   }
 
-// Market High is the highest confirmed swing high in the boundary lookback;
-// Market Low is the lowest confirmed swing low in those same bars.
+// Market High/Low start with the configured lookback.  If only one side of
+// the current structure is present, only the missing side is allowed to reach
+// farther into the older structure until a valid boundary is found.
 void EvaluateSignificantSR(const datetime chart_time,const double current_price,
                            bool &have_market_high,double &market_high,
                            bool &have_market_low,double &market_low)
@@ -751,59 +752,75 @@ void EvaluateSignificantSR(const datetime chart_time,const double current_price,
    have_market_high=false;
    have_market_low=false;
    int length=MathMax(1,MathMin(20,SR_Pivot_Length));
-   // Include older padding so a swing near the start of the lookback window
-   // can still be identified without making the padding part of the search.
-   MqlRates rates[]; ArraySetAsSeries(rates,false);
-   int total=CopyRates(_Symbol,BoundaryTimeframe(),1,Boundary_Lookback_Bars+length,rates);
-   if(total<Boundary_Lookback_Bars+length) return;
-   int first=total-Boundary_Lookback_Bars;
-
+   int step=MathMax(1,Boundary_Lookback_Bars);
+   int high_lookback=step,low_lookback=step;
    int high_index=-1,low_index=-1;
    double high_price=0.0,low_price=0.0;
-   for(int i=first;i<total-length;i++)
+   datetime high_time=0,low_time=0;
+   MqlRates rates[]; ArraySetAsSeries(rates,false);
+   while(high_index<0 || low_index<0)
      {
-      if(PivotHigh(rates,total,i,length))
+      int requested=MathMax(high_lookback,low_lookback)+length;
+      int total=CopyRates(_Symbol,BoundaryTimeframe(),1,requested,rates);
+      if(total<step+length) return;
+
+      if(high_index<0)
         {
-         double level=rates[i].high;
-         if(high_index<0 || level>high_price)
+         int first=MathMax(0,total-high_lookback);
+         for(int i=first;i<total-length;i++)
            {
-            high_index=i;
-            high_price=level;
+            if(!PivotHigh(rates,total,i,length) || rates[i].high<=current_price) continue;
+            if(high_index<0 || rates[i].high>high_price)
+              {
+               high_index=i;
+               high_price=rates[i].high;
+               high_time=rates[i].time;
+              }
            }
         }
-      if(PivotLow(rates,total,i,length))
+      if(low_index<0)
         {
-         double level=rates[i].low;
-         if(low_index<0 || level<low_price)
+         int first=MathMax(0,total-low_lookback);
+         for(int i=first;i<total-length;i++)
            {
-            low_index=i;
-            low_price=level;
+            if(!PivotLow(rates,total,i,length) || rates[i].low>=current_price) continue;
+            if(low_index<0 || rates[i].low<low_price)
+              {
+               low_index=i;
+               low_price=rates[i].low;
+               low_time=rates[i].time;
+              }
            }
         }
+
+      // A short copy means all currently available older history was searched.
+      if((high_index>=0 && low_index>=0) || total<requested) break;
+      if(high_index<0) high_lookback+=step;
+      if(low_index<0) low_lookback+=step;
      }
 
-   if(high_index>=0 && high_price>current_price)
+   if(high_index>=0)
      {
       have_market_high=true;
       market_high=high_price;
       if(Show_HTF_Support_Resistance)
         {
          string key="HTF_SR_MARKET_HIGH";
-         DrawSegment(key,rates[high_index].time,high_price,chart_time,
+         DrawSegment(key,high_time,high_price,chart_time,
                      high_price,clrBlack,SR_Line_Style,SR_Line_Width);
          ObjectSetInteger(0,g_prefix+key,OBJPROP_RAY_RIGHT,true);
          if(Show_SR_Labels)
             DrawText(key+"_LABEL",chart_time,high_price,"Market High",clrBlack,false,8);
         }
      }
-   if(low_index>=0 && low_price<current_price)
+   if(low_index>=0)
      {
       have_market_low=true;
       market_low=low_price;
       if(Show_HTF_Support_Resistance)
         {
          string key="HTF_SR_MARKET_LOW";
-         DrawSegment(key,rates[low_index].time,low_price,chart_time,
+         DrawSegment(key,low_time,low_price,chart_time,
                      low_price,clrBlack,SR_Line_Style,SR_Line_Width);
          ObjectSetInteger(0,g_prefix+key,OBJPROP_RAY_RIGHT,true);
          if(Show_SR_Labels)
