@@ -67,14 +67,14 @@ The EA can trade the liquidity zones it identifies. `Trade_Mode` chooses where:
 **Off**. The default means a chart that runs the EA for analysis never places
 orders; choose the live option deliberately.
 
-A trade waits for the live liquidity zone on the setup timeframe to be
-swept: an MTF candle's wick trades beyond the zone's level (above the LH high
-for a sell in a bearish bias, below the HL low for a buy in a bullish bias)
-and the candle closes back inside. This is the candle marked with the sweep
-arrow. A zone is live while its level is visible and no MTF candle has closed
-beyond it. The entry is taken within the next `Entry_Window_Candles` (default
-3) MTF candles, on the first tick at which the zone is still live, price is
-back inside the swept level, and all of the following hold:
+A trade is taken on a liquidity sweep of the zone on the setup timeframe:
+price breaks past the zone and then re-enters it. For a sell in a bearish bias
+that means trading above the LH zone's top and coming back inside it; for a
+buy in a bullish bias, trading below the HL zone's bottom and coming back
+inside. The break can be a wick or a full candle close beyond the zone. The
+entry is taken immediately, on the first tick back inside the zone, provided
+the break happened no more than `Entry_Window_Candles` (default 3) MTF
+candles earlier and all of the following hold:
 
 - The HTF bias is established in the trade direction: its latest break is a
   BOS, not a transitional CHoCH, and not consolidating.
@@ -90,16 +90,15 @@ back inside the swept level, and all of the following hold:
 - The zone has not been traded before, and no other position with this EA's
   `Magic_Number` is open on the symbol.
 
-A zone's liquidity is taken by its first sweep, so if the window closes
-without an entry, or a candle in it closes beyond the level, the zone is not
-traded.
+If price does not re-enter within that window, the break is treated as a
+genuine breakout and the zone is not traded.
 
 Exits:
 
-- **Stop loss** sits beyond the most extreme wick since the sweep (the sweep
-  wick, or a deeper one printed later in the window, including the forming
-  candle) by `SL_Buffer_ATR` (default 0.5) setup-timeframe ATRs; sells add the
-  spread because their stop triggers on the ask. A setup is skipped rather
+- **Stop loss** sits beyond the furthest price reached since the break
+  (including the forming candle) by `SL_Buffer_ATR` (default 0.5)
+  setup-timeframe ATRs; sells add the spread because their stop triggers on
+  the ask. A setup is skipped rather
   than squeezed when that stop would exceed `Max_SL_ATR` (default 2.0) ATRs,
   which keeps the target realistic.
 - **Take profit** is `Reward_Risk_Ratio` (default 2.0) times the risk, 1:2.

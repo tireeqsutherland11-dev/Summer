@@ -1,5 +1,5 @@
 #property copyright "Base + Model Base conversions"
-#property version   "2.31"
+#property version   "2.40"
 #property strict
 #property description "Liquidity Sweep Strategy: merged Base and Model Base EA."
 #property description "Trades MTF liquidity-zone sweeps at 1:2 with breakeven at 1:1; by default only in the Strategy Tester."
@@ -232,9 +232,10 @@ bool g_zone_valid=false;
 int g_zone_side=0;          // -1 sell at an LH zone, 1 buy at an HL zone
 double g_zone_top=0.0,g_zone_bottom=0.0;
 datetime g_zone_id=0;       // time of the zone's swing candle
-datetime g_zone_sweep_time=0;   // candle that swept the zone (0 = not yet)
-double g_zone_sweep_price=0.0;  // that candle's wick extreme beyond the zone
-bool g_zone_fresh_sweep=false;  // the entry window after the sweep is still open
+datetime g_zone_break_time=0;     // closed candle that first broke past the zone (0 = none)
+double g_zone_break_extreme=0.0;  // furthest price beyond the zone since that break
+datetime g_live_break_zone=0;     // zone whose break was seen on ticks of the forming candle
+datetime g_live_break_time=0;     // that forming candle
 datetime g_traded_zone_id=0;
 datetime g_rejected_zone_id=0;
 string g_rejected_reason="";
@@ -1486,8 +1487,8 @@ struct MODEL_SWING
    bool crossed;
    bool qualified;
    bool swept;
-   datetime sweep_time;     // candle that swept the level (0 = not swept)
-   double sweep_price;      // that candle's wick extreme beyond the level
+   datetime break_time;     // first candle that traded beyond the level (0 = none)
+   double break_extreme;    // furthest price beyond the level since then
    int  serial;
    int  pivot;              // bar index of the liquidity swing
    int  count;
@@ -1619,8 +1620,8 @@ void StartSwing(MODEL_SWING &swing,const bool high,const MqlRates &pivot_bar,con
    swing.crossed=false;
    swing.qualified=false;
    swing.swept=false;
-   swing.sweep_time=0;
-   swing.sweep_price=0.0;
+   swing.break_time=0;
+   swing.break_extreme=0.0;
    swing.serial=serial;
    swing.pivot=pivot;
    swing.count=0;
@@ -1699,8 +1700,6 @@ bool UpdateSwing(MODEL_SWING &swing,const bool high,const MqlRates &rates[],cons
 
    double level=high?swing.top:swing.bottom;
    bool swept=false;
-   // sweep_price keeps the most extreme wick from the sweep candle onwards, so
-   // a stop placed after a later, deeper wick is still beyond all of them.
    if(!swing.crossed && ((high && rates[now].close>swing.top) ||
                          (!high && rates[now].close<swing.bottom)))
      {
@@ -1712,15 +1711,24 @@ bool UpdateSwing(MODEL_SWING &swing,const bool high,const MqlRates &rates[],cons
            ((high && rates[now].high>swing.top) || (!high && rates[now].low<swing.bottom)))
      {
       swing.swept=true;
-      swing.sweep_time=rates[now].time;
-      swing.sweep_price=high?rates[now].high:rates[now].low;
       swept=true;
       g_sweep_count++;
       DrawSweep(swing,high,rates[now],line_colour);
      }
-   else if(swing.swept && !swing.crossed)
-      swing.sweep_price=high?MathMax(swing.sweep_price,rates[now].high)
-                            :MathMin(swing.sweep_price,rates[now].low);
+   // For trading, remember the first candle that traded beyond the visible
+   // level, by wick or by close, and the furthest price reached since then.
+   if(swing.qualified)
+     {
+      double beyond=high?rates[now].high:rates[now].low;
+      if(swing.break_time==0 && (high?beyond>swing.top:beyond<swing.bottom))
+        {
+         swing.break_time=rates[now].time;
+         swing.break_extreme=beyond;
+        }
+      else if(swing.break_time!=0)
+         swing.break_extreme=high?MathMax(swing.break_extreme,beyond)
+                                 :MathMin(swing.break_extreme,beyond);
+     }
 
    datetime active_right=swing.crossed?swing.start:ProjectTime(rates[now].time,3);
    ObjectMove(0,swing.active_box,1,active_right,swing.bottom);
@@ -1899,13 +1907,18 @@ bool RebuildModel()
         }
      }
 
-   // Offer the live (visible, unbroken) zone on the bias side for trading.
+   // Offer the visible zone on the bias side for trading while it is unbroken
+   // or its break is recent enough for price to re-enter it (a sweep).  The
+   // break candle must be one of the newest Entry_Window_Candles closed MTF
+   // candles, so the forming candle is at most Entry_Window_Candles later.
    g_zone_valid=false;
    datetime window_start=rates[MathMax(0,copied-Entry_Window_Candles)].time;
-   if(market_bias<0 && ph.active && ph.qualified && !ph.crossed)
-      SetTradeZone(-1,ph,window_start);
-   if(market_bias>0 && pl.active && pl.qualified && !pl.crossed)
-      SetTradeZone(1,pl,window_start);
+   if(market_bias<0 && ph.active && ph.qualified &&
+      (ph.break_time==0 || ph.break_time>=window_start))
+      SetTradeZone(-1,ph);
+   if(market_bias>0 && pl.active && pl.qualified &&
+      (pl.break_time==0 || pl.break_time>=window_start))
+      SetTradeZone(1,pl);
 
    string text="Liquidity "+TimeframeName(timeframe)+" | HTF "+BiasText(g_htf_structure)+" | ";
    if(market_bias<0)
@@ -1944,19 +1957,15 @@ bool TradingActive()
    return Trade_Mode==LSS_TRADING_LIVE;
   }
 
-// Publishes the live zone.  Its sweep is "fresh" while the sweep candle is one
-// of the newest Entry_Window_Candles closed MTF candles (window_start is the
-// oldest of them), which limits the entry to that many candles after it.
-void SetTradeZone(const int side,const MODEL_SWING &swing,const datetime window_start)
+void SetTradeZone(const int side,const MODEL_SWING &swing)
   {
    g_zone_valid=true;
    g_zone_side=side;
    g_zone_top=swing.top;
    g_zone_bottom=swing.bottom;
    g_zone_id=swing.start;
-   g_zone_sweep_time=swing.sweep_time;
-   g_zone_sweep_price=swing.sweep_price;
-   g_zone_fresh_sweep=swing.swept && swing.sweep_time>=window_start;
+   g_zone_break_time=swing.break_time;
+   g_zone_break_extreme=swing.break_extreme;
   }
 
 void DrawTradeStatus(const string text)
@@ -2105,12 +2114,14 @@ string PlanEntry(const bool sell,const double entry,const double spread,
    if(!CopyIndicator(g_setup_atr_handle,0,1,atr) || atr[0]==EMPTY_VALUE || atr[0]<=0.0)
       return "the MTF ATR is unavailable";
 
-   // The sweep has already traded beyond the zone, so the stop sits beyond
-   // the most extreme wick since the sweep, including the forming MTF candle,
-   // by SL_Buffer_ATR MTF ATRs.  A sell stop is triggered by the ask, so the
-   // spread is added to keep it behind the wick as drawn on the (bid) chart.
+   // Price has already traded beyond the zone, so the stop sits beyond the
+   // furthest price since the break, including the forming MTF candle, by
+   // SL_Buffer_ATR MTF ATRs.  A sell stop is triggered by the ask, so the
+   // spread is added to keep it behind that extreme as drawn on the (bid) chart.
    double buffer=SL_Buffer_ATR*atr[0];
-   double extreme=sell?MathMax(g_zone_top,g_zone_sweep_price):MathMin(g_zone_bottom,g_zone_sweep_price);
+   double extreme=sell?g_zone_top:g_zone_bottom;
+   if(g_zone_break_time!=0)
+      extreme=sell?MathMax(extreme,g_zone_break_extreme):MathMin(extreme,g_zone_break_extreme);
    double forming=sell?iHigh(_Symbol,SetupTimeframe(),0):iLow(_Symbol,SetupTimeframe(),0);
    if(forming>0.0) extreme=sell?MathMax(extreme,forming):MathMin(extreme,forming);
    sl=sell?AlignPrice(extreme+buffer+spread,1):AlignPrice(extreme-buffer,-1);
@@ -2123,7 +2134,7 @@ string PlanEntry(const bool sell,const double entry,const double spread,
       risk=sell?sl-entry:entry-sl;
      }
    if(risk>Max_SL_ATR*atr[0])
-      return "a stop beyond the sweep would exceed "+DoubleToString(Max_SL_ATR,1)+" MTF ATR";
+      return "a stop beyond the break would exceed "+DoubleToString(Max_SL_ATR,1)+" MTF ATR";
    tp=AlignPrice(sell?entry-Reward_Risk_Ratio*risk:entry+Reward_Risk_Ratio*risk,0);
 
    string space=SpaceBlocker(entry,tp);
@@ -2138,12 +2149,12 @@ string PlanEntry(const bool sell,const double entry,const double spread,
    return "";
   }
 
-// Enters after the live zone has been swept: an MTF candle's wick traded
-// beyond the zone's level and the candle closed back inside.  The entry is
-// taken within Entry_Window_Candles MTF candles after the sweep candle, on the
-// first tick at which every requirement passes and price is still back inside
-// the swept level.  A zone is swept once, so each zone is traded at most once,
-// with one position open at a time.
+// Enters on a liquidity sweep of the zone: price breaks past the zone (a wick
+// or a close beyond its level) and then re-enters it.  The entry is taken on
+// the first tick back inside the zone at which every requirement passes, as
+// long as the break candle is at most Entry_Window_Candles MTF candles old;
+// after that the break is treated as a genuine breakout.  Each zone is traded
+// at most once, with one position open at a time.
 void CheckEntry()
   {
    ulong ticket=0;
@@ -2167,22 +2178,35 @@ void CheckEntry()
    MqlTick tick;
    if(!SymbolInfoTick(_Symbol,tick) || tick.bid<=0.0 || tick.ask<=0.0) return;
    bool sell=g_zone_side<0;
-   if(g_zone_sweep_time==0)
+   // Chart (bid) prices decide break and re-entry, as drawn.
+   bool beyond=sell?tick.bid>g_zone_top:tick.bid<g_zone_bottom;
+   datetime break_time=g_zone_break_time;
+   if(break_time==0)
      {
-      DrawTradeStatus("waiting for a sweep of the "+zone_text);
+      if(beyond && g_live_break_zone!=g_zone_id)
+        {
+         g_live_break_zone=g_zone_id;
+         g_live_break_time=iTime(_Symbol,SetupTimeframe(),0);
+        }
+      if(g_live_break_zone==g_zone_id) break_time=g_live_break_time;
+     }
+   if(break_time==0)
+     {
+      DrawTradeStatus("waiting for price to break past the "+zone_text);
       return;
      }
-   if(!g_zone_fresh_sweep)
+   int age=iBarShift(_Symbol,SetupTimeframe(),break_time,false);
+   if(age<0 || age>Entry_Window_Candles)
      {
-      DrawTradeStatus(zone_text+" was swept without an entry");
+      DrawTradeStatus(zone_text+" broke out without re-entering in time");
+      return;
+     }
+   if(beyond)
+     {
+      DrawTradeStatus("price broke past the "+zone_text+"; waiting for it to re-enter");
       return;
      }
    double entry=sell?tick.bid:tick.ask;
-   if(sell?entry>g_zone_top:entry<g_zone_bottom)
-     {
-      DrawTradeStatus(zone_text+" swept; waiting for price to return inside the level");
-      return;
-     }
    if(MQLInfoInteger(MQL_TESTER)==0 &&
       (TerminalInfoInteger(TERMINAL_TRADE_ALLOWED)==0 || MQLInfoInteger(MQL_TRADE_ALLOWED)==0))
      {
@@ -2258,7 +2282,7 @@ int OnInit()
    g_htf_ready=false;
    g_conditions_ready=false;
    g_zone_valid=false;
-   g_zone_fresh_sweep=false;
+   g_zone_break_time=0;
    g_trade_status="";
    ENUM_TIMEFRAMES timeframe=BASETimeframe();
    g_prefix="BASE_"+(string)ChartID()+"_";
