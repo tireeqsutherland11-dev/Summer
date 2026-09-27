@@ -767,29 +767,27 @@ void EvaluateSignificantSR(const datetime chart_time,const double current_price,
       if(high_index<0)
         {
          int first=MathMax(0,total-high_lookback);
-         for(int i=first;i<total-length;i++)
+         // Walk backward so the boundary follows the newest confirmed
+         // structure point, rather than the most extreme point in the window.
+         for(int i=total-length-1;i>=first;i--)
            {
             if(!PivotHigh(rates,total,i,length) || rates[i].high<=current_price) continue;
-            if(high_index<0 || rates[i].high>high_price)
-              {
-               high_index=i;
-               high_price=rates[i].high;
-               high_time=rates[i].time;
-              }
+            high_index=i;
+            high_price=rates[i].high;
+            high_time=rates[i].time;
+            break;
            }
         }
       if(low_index<0)
         {
          int first=MathMax(0,total-low_lookback);
-         for(int i=first;i<total-length;i++)
+         for(int i=total-length-1;i>=first;i--)
            {
             if(!PivotLow(rates,total,i,length) || rates[i].low>=current_price) continue;
-            if(low_index<0 || rates[i].low<low_price)
-              {
-               low_index=i;
-               low_price=rates[i].low;
-               low_time=rates[i].time;
-              }
+            low_index=i;
+            low_price=rates[i].low;
+            low_time=rates[i].time;
+            break;
            }
         }
 
