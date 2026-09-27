@@ -1,5 +1,5 @@
 #property copyright "Base + Model Base conversions"
-#property version   "2.00"
+#property version   "2.01"
 #property strict
 #property description "Liquidity Sweep Strategy: merged Base and Model Base EA."
 #property description "Signal/visualisation EA only; the source indicator contains no trading rules."
@@ -151,7 +151,10 @@ input bool              Intrabar_Precision=false;
 input ENUM_TIMEFRAMES   Intrabar_Timeframe=PERIOD_M1;
 input MODEL_FILTER_MODE Filter_Areas_By=MODEL_FILTER_COUNT;
 input double            Filter_Value=0.0;
-input int               Maximum_Bars=3000;
+
+// Use one deterministic history window so zooming or resizing the chart can
+// never change which MTF liquidity pivots are reconstructed.
+const int LIQUIDITY_HISTORY_BARS=400;
 
 input group "Impulse Qualification"
 input bool              Require_Strong_Departure=false;
@@ -1566,12 +1569,7 @@ void RebuildModel()
    if(current_bar==g_model_last_bar && market_bias==g_model_last_bias) return;
 
    int minimum=2*Pivot_Lookback+2;
-   // CHART_FIRST_VISIBLE_BAR is a shift into data that the chart already has.
-   // Limiting CopyRates to this local window avoids requesting Maximum_Bars
-   // from the server merely because the EA has just been attached.
-   long first_visible=ChartGetInteger(0,CHART_FIRST_VISIBLE_BAR,0);
-   int local_window=(int)MathMax((long)minimum,first_visible+1);
-   int wanted=MathMin(Maximum_Bars,local_window);
+   int wanted=LIQUIDITY_HISTORY_BARS;
    MqlRates rates[];
    ArraySetAsSeries(rates,false);
    int copied=CopyRates(_Symbol,SetupTimeframe(),0,wanted,rates);
@@ -1655,7 +1653,7 @@ void RebuildModel()
 
 int OnInit()
   {
-   if(Pivot_Lookback<1 || Maximum_Bars<2*Pivot_Lookback+2 ||
+   if(Pivot_Lookback<1 || LIQUIDITY_HISTORY_BARS<2*Pivot_Lookback+2 ||
       Volume_Baseline_Bars<1 || Minimum_Directional_Pressure<0.0 ||
       Minimum_Directional_Pressure>1.0 || Minimum_Momentum_Efficiency<0.0 ||
       Minimum_Momentum_Efficiency>1.0 || Minimum_Relative_Volume<0.0 ||
