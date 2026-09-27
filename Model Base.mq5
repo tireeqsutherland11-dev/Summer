@@ -1,6 +1,6 @@
 #property copyright "PineScript conversion"
 #property link      "https://www.mql5.com"
-#property version   "1.20"
+#property version   "1.21"
 #property strict
 #property description "Model Base EA - MT5 conversion of Liquidity Swings [LuxAlgo]."
 #property description "Analysis and visualisation only; this EA does not place trades."
@@ -156,16 +156,26 @@ double Target(const MODEL_SWING &swing)
 bool IsPivotHigh(const MqlRates &rates[],const int total,const int index,const int length)
   {
    if(index-length<0 || index+length>=total) return false;
-   for(int i=index-length;i<=index+length;i++)
-      if(i!=index && rates[i].high>=rates[index].high) return false;
+   // Treat a flat/equal high as one pivot rather than rejecting the entire
+   // liquidity level.  The latest bar in the plateau owns the pivot: older
+   // bars may equal it, while an equal bar to its right supersedes it.  This is
+   // especially important for lower highs which launch an impulsive sell-off.
+   for(int i=index-length;i<index;i++)
+      if(rates[i].high>rates[index].high) return false;
+   for(int i=index+1;i<=index+length;i++)
+      if(rates[i].high>=rates[index].high) return false;
    return true;
   }
 
 bool IsPivotLow(const MqlRates &rates[],const int total,const int index,const int length)
   {
    if(index-length<0 || index+length>=total) return false;
-   for(int i=index-length;i<=index+length;i++)
-      if(i!=index && rates[i].low<=rates[index].low) return false;
+   // Apply the same deterministic plateau rule to equal lows.  Selecting one
+   // bar avoids both a missing liquidity level and duplicate levels.
+   for(int i=index-length;i<index;i++)
+      if(rates[i].low<rates[index].low) return false;
+   for(int i=index+1;i<=index+length;i++)
+      if(rates[i].low<=rates[index].low) return false;
    return true;
   }
 
