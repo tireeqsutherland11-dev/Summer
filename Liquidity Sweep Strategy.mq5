@@ -1,5 +1,5 @@
 #property copyright "Base + Model Base conversions"
-#property version   "2.01"
+#property version   "2.02"
 #property strict
 #property description "Liquidity Sweep Strategy: merged Base and Model Base EA."
 #property description "Signal/visualisation EA only; the source indicator contains no trading rules."
@@ -333,6 +333,15 @@ bool BaseDisplayEnabled()
    if(ModelDisplayEnabled()) return false;
    return (ENUM_TIMEFRAMES)_Period==BASETimeframe() ||
           (ENUM_TIMEFRAMES)_Period==BoundaryTimeframe();
+  }
+
+bool BaseStructureDisplayEnabled()
+  {
+   // Base's chart-timeframe structure is useful on the setup/MTF chart too.
+   // Keep the remaining Base overlays routed to their HTF charts, but do not
+   // replace Base's Swing_Detection_Length logic with Model Base's independent
+   // Pivot_Lookback logic merely because both engines share one EA.
+   return BaseDisplayEnabled() || ModelDisplayEnabled();
   }
 
 ENUM_MA_METHOD BASEMAMethod(const BASE_MA_TYPE value)
@@ -784,10 +793,21 @@ void DrawSignal(const string kind,const int direction,const datetime swing_time,
 
 void DrawStructurePoint(const string kind,const datetime time,const double price)
   {
-   if(!Show_Swing_Points) return;
+   if(!Show_Swing_Points || !BaseStructureDisplayEnabled()) return;
    bool low=kind=="HL" || kind=="LL";
    color clr=low?clrTeal:clrIndianRed;
-   DrawText("STRUCTURE_"+kind+"_"+(string)time,time,price,kind,clr,low,(int)Label_Size);
+   // Structure points also belong on the MTF chart, where the other Base
+   // overlays intentionally remain hidden.  Create the label directly rather
+   // than passing through DrawText's general Base-display routing guard.
+   string name=g_prefix+"STRUCTURE_"+kind+"_"+(string)time;
+   if(ObjectFind(0,name)>=0 || !ObjectCreate(0,name,OBJ_TEXT,0,time,price)) return;
+   ObjectSetString(0,name,OBJPROP_TEXT,kind);
+   ObjectSetString(0,name,OBJPROP_FONT,"Arial");
+   ObjectSetInteger(0,name,OBJPROP_FONTSIZE,(int)Label_Size);
+   ObjectSetInteger(0,name,OBJPROP_COLOR,clr);
+   ObjectSetInteger(0,name,OBJPROP_ANCHOR,low?ANCHOR_UPPER:ANCHOR_LOWER);
+   ObjectSetInteger(0,name,OBJPROP_SELECTABLE,false);
+   ObjectSetInteger(0,name,OBJPROP_HIDDEN,true);
   }
 
 // Structure drawings deliberately follow the chart period, while the state
@@ -796,7 +816,7 @@ void DrawStructurePoint(const string kind,const datetime time,const double price
 // on the structure timeframe (for example, 100 H1 bars become 400 M15 bars).
 void DrawChartTimeframeStructure()
   {
-   if(!BaseDisplayEnabled()) return;
+   if(!BaseStructureDisplayEnabled()) return;
    ENUM_TIMEFRAMES chart_timeframe=(ENUM_TIMEFRAMES)_Period;
    int structure_seconds=PeriodSeconds(BASETimeframe());
    int chart_seconds=PeriodSeconds(chart_timeframe);
@@ -1344,20 +1364,6 @@ void CreateLevel(const string name,const datetime left,const double price)
    SetCommonObject(name);
   }
 
-void CreateMTFStructureLabel(const string kind,const MqlRates &pivot,const bool high,
-                             const color colour)
-  {
-   string name=g_model_prefix+"STRUCTURE_"+kind+"_"+(string)pivot.time;
-   double price=high?pivot.high:pivot.low;
-   if(!ObjectCreate(0,name,OBJ_TEXT,0,pivot.time,price)) return;
-   ObjectSetString(0,name,OBJPROP_TEXT,kind);
-   ObjectSetString(0,name,OBJPROP_FONT,"Arial");
-   ObjectSetInteger(0,name,OBJPROP_FONTSIZE,(int)Labels_Size);
-   ObjectSetInteger(0,name,OBJPROP_COLOR,colour);
-   ObjectSetInteger(0,name,OBJPROP_ANCHOR,high?ANCHOR_LOWER:ANCHOR_UPPER);
-   SetCommonObject(name);
-  }
-
 double Target(const MODEL_SWING &swing)
   {
    return Filter_Areas_By==MODEL_FILTER_COUNT?(double)swing.count:(double)swing.volume;
@@ -1611,19 +1617,15 @@ void RebuildModel()
 
       if(new_high)
         {
-         if(higher_high && Show_Swing_High)
-            CreateMTFStructureLabel("HH",rates[pivot],true,Swing_High_Color);
-         else if(lower_high && Show_Swing_High)
-            CreateMTFStructureLabel("LH",rates[pivot],true,Swing_High_Color);
+         // The Base engine is the sole source of HH/LH chart labels.  Its
+         // shorter Swing_Detection_Length must remain identical to standalone
+         // Base; Model Base pivots continue to drive liquidity areas only.
          previous_high=rates[pivot].high;
          have_previous_high=true;
         }
       if(new_low)
         {
-         if(higher_low && Show_Swing_Low)
-            CreateMTFStructureLabel("HL",rates[pivot],false,Swing_Low_Color);
-         else if(lower_low && Show_Swing_Low)
-            CreateMTFStructureLabel("LL",rates[pivot],false,Swing_Low_Color);
+         // HH/HL/LH/LL labels are rendered by DrawChartTimeframeStructure().
          previous_low=rates[pivot].low;
          have_previous_low=true;
         }
