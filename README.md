@@ -9,6 +9,10 @@ protocol: pivot detection, sweep/cross detection, overlap counts, volume, and
 optional intrabar sampling all run on that timeframe even when the EA is
 attached to a chart with a different period.
 
+Liquidity swings are filtered by the current Structure/HTF market bias: a
+bearish bias displays only lower-high liquidity, while a bullish bias displays
+only higher-low liquidity. Swing areas are drawn without numeric volume labels.
+
 Install the EA in `MQL5/Experts`, compile it in MetaEditor, and attach
 **Liquidity Sweep Strategy** to one chart. Configure the Base timeframes as
 usual, then use the three **Liquidity Sweep** input groups to tune the setup

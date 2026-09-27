@@ -129,6 +129,7 @@ string g_prefix="";
 datetime g_last_ltf_bar=0;
 datetime g_last_structure_bar=0;
 datetime g_last_setup_bar=0;
+int g_market_bias=0;
 int g_ma_handle=INVALID_HANDLE;
 int g_htf_ma_handle=INVALID_HANDLE;
 int g_adx_handle=INVALID_HANDLE;
@@ -1193,7 +1194,8 @@ bool Rebuild(const bool permit_alert)
                  momentum_ratio,optimal_reason);
    if(permit_alert && newest_signal_time==rates[total-1].time && newest_signal!="")
       SendBASEAlert(newest_signal,newest_signal_time);
-   RebuildLiquidityModel();
+   g_market_bias=structure;
+   RebuildLiquidityModel(g_market_bias);
    ChartRedraw();
    return true;
   }
@@ -1209,13 +1211,6 @@ enum MODEL_FILTER_MODE
   {
    MODEL_FILTER_COUNT=0,
    MODEL_FILTER_VOLUME=1
-  };
-
-enum MODEL_LABEL_SIZE
-  {
-   MODEL_TINY=7,
-   MODEL_SMALL=9,
-   MODEL_NORMAL=11
   };
 
 input group "Liquidity Sweep Settings"
@@ -1242,10 +1237,10 @@ input color            Swing_High_Area_Color=clrRed;
 input bool             Show_Swing_Low=true;
 input color            Swing_Low_Color=clrTeal;
 input color            Swing_Low_Area_Color=clrTeal;
-input MODEL_LABEL_SIZE Labels_Size=MODEL_TINY;
 
 string g_liquidity_prefix="";
 datetime g_last_liquidity_bar=0;
+int g_last_liquidity_bias=0;
 
 void DrawStatus(const string text,const color colour=clrSilver)
   {
@@ -1278,7 +1273,6 @@ struct MODEL_SWING
    string active_box;
    string zone;
    string level;
-   string label;
   };
 
 uint WithAlpha(const color value,const uchar alpha)
@@ -1319,27 +1313,6 @@ void CreateLevel(const string name,const datetime left,const double price)
    ObjectSetInteger(0,name,OBJPROP_COLOR,clrNONE);
    ObjectSetInteger(0,name,OBJPROP_WIDTH,1);
    SetCommonObject(name);
-  }
-
-string VolumeText(const long value)
-  {
-   double number=(double)value;
-   if(number>=1000000000.0) return DoubleToString(number/1000000000.0,2)+"B";
-   if(number>=1000000.0)    return DoubleToString(number/1000000.0,2)+"M";
-   if(number>=1000.0)       return DoubleToString(number/1000.0,2)+"K";
-   return IntegerToString(value);
-  }
-
-void CreateVolumeLabel(MODEL_SWING &swing,const bool high,const color colour)
-  {
-   double price=high?swing.top:swing.bottom;
-   if(!ObjectCreate(0,swing.label,OBJ_TEXT,0,swing.start,price)) return;
-   ObjectSetString(0,swing.label,OBJPROP_TEXT,VolumeText(swing.volume));
-   ObjectSetString(0,swing.label,OBJPROP_FONT,"Arial");
-   ObjectSetInteger(0,swing.label,OBJPROP_FONTSIZE,(int)Labels_Size);
-   ObjectSetInteger(0,swing.label,OBJPROP_COLOR,colour);
-   ObjectSetInteger(0,swing.label,OBJPROP_ANCHOR,high?ANCHOR_LOWER:ANCHOR_UPPER);
-   SetCommonObject(swing.label);
   }
 
 double Target(const MODEL_SWING &swing)
@@ -1475,7 +1448,6 @@ void StartSwing(MODEL_SWING &swing,const bool high,const MqlRates &pivot,
    swing.active_box=g_liquidity_prefix+side+"ACTIVE_"+suffix;
    swing.zone=g_liquidity_prefix+side+"ZONE_"+suffix;
    swing.level=g_liquidity_prefix+side+"LEVEL_"+suffix;
-   swing.label=g_liquidity_prefix+side+"LABEL_"+suffix;
    CreateRectangle(swing.active_box,swing.start,swing.top,swing.start,swing.bottom,
                    area_colour,45);
    CreateLevel(swing.level,swing.start,high?swing.top:swing.bottom);
@@ -1499,15 +1471,11 @@ void UpdateSwing(MODEL_SWING &swing,const bool high,const MqlRates &current,
       datetime right=ProjectTime(swing.start,swing.count);
       CreateRectangle(swing.zone,swing.start,swing.top,right,swing.bottom,
                       area_colour,128);
-      CreateVolumeLabel(swing,high,line_colour);
       ObjectSetInteger(0,swing.level,OBJPROP_COLOR,line_colour);
      }
 
    if(swing.qualified)
-     {
       ObjectMove(0,swing.zone,1,ProjectTime(swing.start,swing.count),swing.bottom);
-      ObjectSetString(0,swing.label,OBJPROP_TEXT,VolumeText(swing.volume));
-     }
 
    if(!swing.crossed && ((high && current.close>swing.top) ||
                          (!high && current.close<swing.bottom)))
@@ -1528,7 +1496,7 @@ void DeleteModelObjects()
    ObjectsDeleteAll(0,g_liquidity_prefix);
   }
 
-void RebuildLiquidityModel()
+void RebuildLiquidityModel(const int market_bias)
   {
    datetime current_bar=iTime(_Symbol,SetupTimeframe(),0);
    if(current_bar<=0)
@@ -1536,7 +1504,7 @@ void RebuildLiquidityModel()
       DrawStatus("Liquidity Sweep: waiting for setup timeframe history...");
       return;
      }
-   if(current_bar==g_last_liquidity_bar) return;
+   if(current_bar==g_last_liquidity_bar && market_bias==g_last_liquidity_bias) return;
 
    int minimum=2*Pivot_Lookback+2;
    // The liquidity protocol is explicitly bound to Base's Setup/Entry
@@ -1556,12 +1524,15 @@ void RebuildLiquidityModel()
    // Mark the bar handled only after CopyRates succeeds. A transient local
    // data failure remains eligible for the next tick or chart-change event.
    g_last_liquidity_bar=current_bar;
+   g_last_liquidity_bias=market_bias;
 
    DeleteModelObjects();
    MODEL_SWING ph,pl;
    ZeroMemory(ph);
    ZeroMemory(pl);
    int high_serial=0,low_serial=0;
+   bool have_previous_high=false,have_previous_low=false;
+   double previous_high=0.0,previous_low=0.0;
 
    // A pivot becomes known Pivot_Lookback bars after its extremity. Counts use
    // that same delayed bar, matching Pine's low[length]/high[length] series.
@@ -1573,13 +1544,36 @@ void RebuildLiquidityModel()
       bool new_low=IsPivotLow(rates,copied,pivot,Pivot_Lookback) &&
                    StrongDeparture(rates,copied,pivot,now,false);
 
-      if(new_high && Show_Swing_High)
+      // Liquidity follows the current Structure/HTF market bias.  In a
+      // bearish market only a lower high supplies relevant buy-side
+      // liquidity; in a bullish market only a higher low supplies relevant
+      // sell-side liquidity.  Keep tracking every confirmed liquidity pivot
+      // so LH/HL is classified against the preceding same-side swing even
+      // when that preceding swing is not itself displayed.
+      bool lower_high=new_high && have_previous_high &&
+                      rates[pivot].high<previous_high;
+      bool higher_low=new_low && have_previous_low &&
+                      rates[pivot].low>previous_low;
+      if(new_high)
+        {
+         previous_high=rates[pivot].high;
+         have_previous_high=true;
+        }
+      if(new_low)
+        {
+         previous_low=rates[pivot].low;
+         have_previous_low=true;
+        }
+      bool draw_high=market_bias<0 && lower_high;
+      bool draw_low=market_bias>0 && higher_low;
+
+      if(draw_high && Show_Swing_High)
          StartSwing(ph,true,rates[pivot],++high_serial,Swing_High_Area_Color);
       else if(Show_Swing_High && ph.active)
          UpdateSwing(ph,true,rates[now],rates[pivot],Swing_High_Color,
                      Swing_High_Area_Color);
 
-      if(new_low && Show_Swing_Low)
+      if(draw_low && Show_Swing_Low)
          StartSwing(pl,false,rates[pivot],++low_serial,Swing_Low_Area_Color);
       else if(Show_Swing_Low && pl.active)
          UpdateSwing(pl,false,rates[now],rates[pivot],Swing_Low_Color,
@@ -1665,7 +1659,7 @@ void CheckForBar()
    if(current==0 || structure_current==0 || setup_current==0) return;
    // Retry the setup protocol independently while MT5 is still loading its
    // history. Once processed, its own bar guard makes this call inexpensive.
-   RebuildLiquidityModel();
+   RebuildLiquidityModel(g_market_bias);
    bool changed=current!=g_last_ltf_bar || structure_current!=g_last_structure_bar ||
                 setup_current!=g_last_setup_bar;
    if(changed)
