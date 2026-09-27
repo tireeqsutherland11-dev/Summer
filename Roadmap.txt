@@ -446,6 +446,14 @@ follows:
                         rather than continuation.
   Consolidating:        no confirmed directional break exists in replay history.
 
+A CHoCH is confirmed as a two-step structure sequence. Bullish CHoCH first
+closes above an LH to create an HH, then requires the immediately following
+opposite-side structure point to be an HL. Bearish CHoCH first closes below an
+HL to create an LL, then requires the immediately following opposite-side
+structure point to be an LH. A candidate break does not change bias, draw a
+CHoCH signal, or alert until that corrective pivot is confirmed; a different
+next pivot classification invalidates the candidate.
+
 The MTF and LTF use the event sequence directly: each is transitional
 only when its latest break is a CHoCH. The first subsequent BOS completes the
 transition, and later pivot classifications cannot make it transitional again
