@@ -438,12 +438,12 @@ Road independently replays confirmed structure on Structure_Timeframe (HTF),
 Setup_Entry_Timeframe (MTF), and LTF_Timeframe. The HTF bias is classified as
 follows:
 
-  Bullish:              latest break is bullish BOS and latest pivots are HH/HL.
+  Bullish:              latest break is bullish BOS.
   Bullish (Transition): bullish direction exists, but the latest break is CHoCH
-                        or the latest pivot pair is not yet a clean HH/HL.
-  Bearish:              latest break is bearish BOS and latest pivots are LH/LL.
+                        rather than continuation.
+  Bearish:              latest break is bearish BOS.
   Bearish (Transition): bearish direction exists, but the latest break is CHoCH
-                        or the latest pivot pair is not yet a clean LH/LL.
+                        rather than continuation.
   Consolidating:        no confirmed directional break exists in replay history.
 
 The MTF and LTF use the event sequence directly: each is transitional
@@ -452,11 +452,12 @@ transition, and later pivot classifications cannot make it transitional again
 unless another CHoCH occurs.
 
 Tradeability always requires an established HTF Bullish or Bearish bias. Its
-latest break must be a continuation BOS that creates a new HH or LL, and its
-latest pivot pair must be clean HH/HL or LH/LL; a transitional HTF bias cannot
-be traded. This prerequisite applies even when HTF is disabled as a correlation
-participant. The enabled tradeability timeframe biases must also point in the
-same direction. MTF may be transitional. If LTF is enabled, it must be definite,
+latest break must be a continuation BOS that creates a new HH or LL; a
+transitional HTF bias cannot be traded. New pivots formed without a structure
+break do not alter that event-derived state. This prerequisite applies even
+when HTF is disabled as a correlation participant. The enabled tradeability
+timeframe biases must also point in the same direction. MTF may be transitional.
+If LTF is enabled, it must be definite,
 meaning its most recent break is a BOS. A CHoCH makes an enabled LTF transitional
 until a subsequent BOS, regardless of later pivot classifications.
 

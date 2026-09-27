@@ -232,10 +232,10 @@ bool AnalyseStructure(const ENUM_TIMEFRAMES timeframe,const int wanted,
 
 bool DefiniteBias(const BASE_STRUCTURE_STATE &state)
   {
-   return (state.direction>0 && state.last_break_was_bos &&
-           state.last_high_kind>0 && state.last_low_kind<0) ||
-          (state.direction<0 && state.last_break_was_bos &&
-           state.last_high_kind<0 && state.last_low_kind>0);
+   // Pivot labels can change while price is merely forming a pullback. They
+   // must not put an established trend back into transition: only an actual
+   // counter-trend CHoCH does that, and the following BOS ends it.
+   return state.direction!=0 && state.last_break_was_bos;
   }
 
 bool DefiniteSetupBias(const BASE_STRUCTURE_STATE &state)
@@ -1097,9 +1097,10 @@ bool Rebuild(const bool permit_alert)
    structure_state.have_high=have_high; structure_state.have_low=have_low;
    structure_state.last_high=last_high; structure_state.last_low=last_low;
    // Only enabled tradeability timeframes participate in correlation, but a
-   // clean HTF continuation is always the gateway to tradeability. A CHoCH or
-   // an incomplete HH/HL or LH/LL pair leaves the HTF transitional. When
-   // enabled, LTF must likewise have a definite BOS.
+   // clean HTF continuation is always the gateway to tradeability. A CHoCH
+   // leaves the HTF transitional until the next BOS; unbroken pullback pivots
+   // do not change its established bias. When enabled, LTF must likewise have
+   // a definite BOS.
    bool htf_definite=DefiniteBias(structure_state);
    bool ltf_definite=have_ltf && DefiniteSetupBias(ltf_state);
    bool selected_biases_available=(!Use_HTF_For_Tradeability || structure!=0) &&

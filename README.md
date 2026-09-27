@@ -125,6 +125,9 @@ chart-specific prefix.
 
 - **Market Bias** shows the independently replayed Structure, Setup, and LTF
   state. A transition means the latest break is CHoCH rather than continuation.
+- New pivot labels formed during an ordinary pullback do not change an
+  established bias to transitional. The bias transitions only after price
+  closes through the opposing corrective swing and confirms a CHoCH.
 - A bearish-to-bullish CHoCH occurs when price closes above an LH, creating an
   HH. A bullish-to-bearish CHoCH occurs when price closes below an HL, creating
   an LL. Wicks beyond those levels remain liquidity sweeps rather than CHoCH.
