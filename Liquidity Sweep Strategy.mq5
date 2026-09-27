@@ -1,8 +1,8 @@
 #property copyright "Base + Model Base conversions"
-#property version   "2.20"
+#property version   "2.30"
 #property strict
 #property description "Liquidity Sweep Strategy: merged Base and Model Base EA."
-#property description "Trades MTF liquidity zones at 1:2 with breakeven at 1:1; by default only in the Strategy Tester."
+#property description "Trades MTF liquidity-zone sweeps at 1:2 with breakeven at 1:1; by default only in the Strategy Tester."
 
 #include <Trade\Trade.mqh>
 
@@ -230,6 +230,9 @@ bool g_zone_valid=false;
 int g_zone_side=0;          // -1 sell at an LH zone, 1 buy at an HL zone
 double g_zone_top=0.0,g_zone_bottom=0.0;
 datetime g_zone_id=0;       // time of the zone's swing candle
+datetime g_zone_sweep_time=0;   // candle that swept the zone (0 = not yet)
+double g_zone_sweep_price=0.0;  // that candle's wick extreme beyond the zone
+bool g_zone_fresh_sweep=false;  // the sweep candle is the latest closed MTF candle
 datetime g_traded_zone_id=0;
 datetime g_rejected_zone_id=0;
 string g_rejected_reason="";
@@ -1479,6 +1482,8 @@ struct MODEL_SWING
    bool crossed;
    bool qualified;
    bool swept;
+   datetime sweep_time;     // candle that swept the level (0 = not swept)
+   double sweep_price;      // that candle's wick extreme beyond the level
    int  serial;
    int  pivot;              // bar index of the liquidity swing
    int  count;
@@ -1610,6 +1615,8 @@ void StartSwing(MODEL_SWING &swing,const bool high,const MqlRates &pivot_bar,con
    swing.crossed=false;
    swing.qualified=false;
    swing.swept=false;
+   swing.sweep_time=0;
+   swing.sweep_price=0.0;
    swing.serial=serial;
    swing.pivot=pivot;
    swing.count=0;
@@ -1699,6 +1706,8 @@ bool UpdateSwing(MODEL_SWING &swing,const bool high,const MqlRates &rates[],cons
            ((high && rates[now].high>swing.top) || (!high && rates[now].low<swing.bottom)))
      {
       swing.swept=true;
+      swing.sweep_time=rates[now].time;
+      swing.sweep_price=high?rates[now].high:rates[now].low;
       swept=true;
       g_sweep_count++;
       DrawSweep(swing,high,rates[now],line_colour);
@@ -1883,8 +1892,10 @@ bool RebuildModel()
 
    // Offer the live (visible, unbroken) zone on the bias side for trading.
    g_zone_valid=false;
-   if(market_bias<0 && ph.active && ph.qualified && !ph.crossed) SetTradeZone(-1,ph);
-   if(market_bias>0 && pl.active && pl.qualified && !pl.crossed) SetTradeZone(1,pl);
+   if(market_bias<0 && ph.active && ph.qualified && !ph.crossed)
+      SetTradeZone(-1,ph,rates[copied-1].time);
+   if(market_bias>0 && pl.active && pl.qualified && !pl.crossed)
+      SetTradeZone(1,pl,rates[copied-1].time);
 
    string text="Liquidity "+TimeframeName(timeframe)+" | HTF "+BiasText(g_htf_structure)+" | ";
    if(market_bias<0)
@@ -1923,13 +1934,19 @@ bool TradingActive()
    return Trade_Mode==LSS_TRADING_LIVE;
   }
 
-void SetTradeZone(const int side,const MODEL_SWING &swing)
+// Publishes the live zone.  Its sweep is "fresh" only while the sweep candle
+// is the newest closed MTF candle, which limits the entry to the MTF candle
+// that follows the sweep.
+void SetTradeZone(const int side,const MODEL_SWING &swing,const datetime latest_closed)
   {
    g_zone_valid=true;
    g_zone_side=side;
    g_zone_top=swing.top;
    g_zone_bottom=swing.bottom;
    g_zone_id=swing.start;
+   g_zone_sweep_time=swing.sweep_time;
+   g_zone_sweep_price=swing.sweep_price;
+   g_zone_fresh_sweep=swing.swept && swing.sweep_time==latest_closed;
   }
 
 void DrawTradeStatus(const string text)
@@ -2078,11 +2095,13 @@ string PlanEntry(const bool sell,const double entry,const double spread,
    if(!CopyIndicator(g_setup_atr_handle,0,1,atr) || atr[0]==EMPTY_VALUE || atr[0]<=0.0)
       return "the MTF ATR is unavailable";
 
-   // The stop sits beyond the zone's far edge by SL_Buffer_ATR MTF ATRs.  A
-   // sell stop is triggered by the ask, so the spread is added to keep it
-   // behind the zone as drawn on the (bid) chart.
+   // The sweep wick has already traded beyond the zone, so the stop sits
+   // beyond the wick's extreme by SL_Buffer_ATR MTF ATRs.  A sell stop is
+   // triggered by the ask, so the spread is added to keep it behind the wick
+   // as drawn on the (bid) chart.
    double buffer=SL_Buffer_ATR*atr[0];
-   sl=sell?AlignPrice(g_zone_top+buffer+spread,1):AlignPrice(g_zone_bottom-buffer,-1);
+   sl=sell?AlignPrice(MathMax(g_zone_top,g_zone_sweep_price)+buffer+spread,1)
+          :AlignPrice(MathMin(g_zone_bottom,g_zone_sweep_price)-buffer,-1);
    double risk=sell?sl-entry:entry-sl;
    double minimum=MinimumStopDistance();
    if(risk<minimum)
@@ -2092,7 +2111,7 @@ string PlanEntry(const bool sell,const double entry,const double spread,
       risk=sell?sl-entry:entry-sl;
      }
    if(risk>Max_SL_ATR*atr[0])
-      return "a stop beyond the zone would exceed "+DoubleToString(Max_SL_ATR,1)+" MTF ATR";
+      return "a stop beyond the sweep would exceed "+DoubleToString(Max_SL_ATR,1)+" MTF ATR";
    tp=AlignPrice(sell?entry-Reward_Risk_Ratio*risk:entry+Reward_Risk_Ratio*risk,0);
 
    string space=SpaceBlocker(entry,tp);
@@ -2107,8 +2126,12 @@ string PlanEntry(const bool sell,const double entry,const double spread,
    return "";
   }
 
-// Enters when price is inside the live zone and every requirement passes.
-// Each zone is traded at most once, with one position open at a time.
+// Enters after the live zone has been swept: an MTF candle's wick traded
+// beyond the zone's level and the candle closed back inside.  The entry is
+// taken during the following MTF candle, on the first tick at which every
+// requirement passes and price is still back inside the swept level.  A zone
+// is swept once, so each zone is traded at most once, with one position open
+// at a time.
 void CheckEntry()
   {
    ulong ticket=0;
@@ -2132,10 +2155,20 @@ void CheckEntry()
    MqlTick tick;
    if(!SymbolInfoTick(_Symbol,tick) || tick.bid<=0.0 || tick.ask<=0.0) return;
    bool sell=g_zone_side<0;
-   double entry=sell?tick.bid:tick.ask;
-   if(entry<g_zone_bottom || entry>g_zone_top)
+   if(g_zone_sweep_time==0)
      {
-      DrawTradeStatus("waiting for price to reach the "+zone_text);
+      DrawTradeStatus("waiting for a sweep of the "+zone_text);
+      return;
+     }
+   if(!g_zone_fresh_sweep)
+     {
+      DrawTradeStatus(zone_text+" was swept without an entry");
+      return;
+     }
+   double entry=sell?tick.bid:tick.ask;
+   if(sell?entry>g_zone_top:entry<g_zone_bottom)
+     {
+      DrawTradeStatus(zone_text+" swept; waiting for price to return inside the level");
       return;
      }
    if(MQLInfoInteger(MQL_TESTER)==0 &&
@@ -2213,6 +2246,7 @@ int OnInit()
    g_htf_ready=false;
    g_conditions_ready=false;
    g_zone_valid=false;
+   g_zone_fresh_sweep=false;
    g_trade_status="";
    ENUM_TIMEFRAMES timeframe=BASETimeframe();
    g_prefix="BASE_"+(string)ChartID()+"_";

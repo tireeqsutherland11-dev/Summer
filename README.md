@@ -67,11 +67,14 @@ The EA can trade the liquidity zones it identifies. `Trade_Mode` chooses where:
 **Off**. The default means a chart that runs the EA for analysis never places
 orders; choose the live option deliberately.
 
-A trade is entered when price reaches the live liquidity zone on the setup
-timeframe: a sell when the bid enters the LH zone (bearish bias), a buy when
-the ask enters the HL zone (bullish bias). A zone is live while its level is
-visible and no MTF candle has closed beyond it. At that moment all of the
-following must hold:
+A trade waits for the live liquidity zone on the setup timeframe to be
+swept: an MTF candle's wick trades beyond the zone's level (above the LH high
+for a sell in a bearish bias, below the HL low for a buy in a bullish bias)
+and the candle closes back inside. This is the candle marked with the sweep
+arrow. A zone is live while its level is visible and no MTF candle has closed
+beyond it. The entry is taken during the next MTF candle, on the first tick
+at which price is still back inside the swept level and all of the following
+hold:
 
 - The HTF bias is established in the trade direction: its latest break is a
   BOS, not a transitional CHoCH, and not consolidating.
@@ -87,13 +90,16 @@ following must hold:
 - The zone has not been traded before, and no other position with this EA's
   `Magic_Number` is open on the symbol.
 
+A zone's liquidity is taken by its first sweep, so if that next MTF candle
+closes without an entry, the zone is not traded.
+
 Exits:
 
-- **Stop loss** sits beyond the zone's far edge (the LH high or the HL low) by
-  `SL_Buffer_ATR` (default 0.5) setup-timeframe ATRs; sells add the spread
-  because their stop triggers on the ask. A setup is skipped rather than
-  squeezed when that stop would exceed `Max_SL_ATR` (default 2.0) ATRs, which
-  keeps the target realistic.
+- **Stop loss** sits beyond the sweep wick's extreme (which is beyond the
+  zone) by `SL_Buffer_ATR` (default 0.5) setup-timeframe ATRs; sells add the
+  spread because their stop triggers on the ask. A setup is skipped rather
+  than squeezed when that stop would exceed `Max_SL_ATR` (default 2.0) ATRs,
+  which keeps the target realistic.
 - **Take profit** is `Reward_Risk_Ratio` (default 2.0) times the risk, 1:2.
 - **Breakeven**: once price has moved `Breakeven_At_R` (default 1.0) times the
   risk in favour, the stop moves to the entry price. The risk is recovered
@@ -108,8 +114,8 @@ second status line shows the trading state.
 
 To run a test, open the Strategy Tester (Ctrl+R), select **Liquidity Sweep
 Strategy**, the symbol and a date range, and use **Every tick based on real
-ticks** or **Every tick** modelling: entries happen when price touches a zone,
-which **Open prices only** cannot reproduce. Any chart period works and gives
+ticks** or **Every tick** modelling so the entry conditions and stops are
+checked tick by tick; **Open prices only** cannot reproduce them. Any chart period works and gives
 the same trades; choose the setup timeframe (M15 by default) to watch the
 zones in visual mode. Non-visual runs and optimisation skip all drawing for
 speed. The EA needs about 320 candles of `Boundary_Timeframe` history (roughly
