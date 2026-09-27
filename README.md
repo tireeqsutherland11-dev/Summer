@@ -72,9 +72,9 @@ swept: an MTF candle's wick trades beyond the zone's level (above the LH high
 for a sell in a bearish bias, below the HL low for a buy in a bullish bias)
 and the candle closes back inside. This is the candle marked with the sweep
 arrow. A zone is live while its level is visible and no MTF candle has closed
-beyond it. The entry is taken during the next MTF candle, on the first tick
-at which price is still back inside the swept level and all of the following
-hold:
+beyond it. The entry is taken within the next `Entry_Window_Candles` (default
+3) MTF candles, on the first tick at which the zone is still live, price is
+back inside the swept level, and all of the following hold:
 
 - The HTF bias is established in the trade direction: its latest break is a
   BOS, not a transitional CHoCH, and not consolidating.
@@ -90,13 +90,15 @@ hold:
 - The zone has not been traded before, and no other position with this EA's
   `Magic_Number` is open on the symbol.
 
-A zone's liquidity is taken by its first sweep, so if that next MTF candle
-closes without an entry, the zone is not traded.
+A zone's liquidity is taken by its first sweep, so if the window closes
+without an entry, or a candle in it closes beyond the level, the zone is not
+traded.
 
 Exits:
 
-- **Stop loss** sits beyond the sweep wick's extreme (which is beyond the
-  zone) by `SL_Buffer_ATR` (default 0.5) setup-timeframe ATRs; sells add the
+- **Stop loss** sits beyond the most extreme wick since the sweep (the sweep
+  wick, or a deeper one printed later in the window, including the forming
+  candle) by `SL_Buffer_ATR` (default 0.5) setup-timeframe ATRs; sells add the
   spread because their stop triggers on the ask. A setup is skipped rather
   than squeezed when that stop would exceed `Max_SL_ATR` (default 2.0) ATRs,
   which keeps the target realistic.

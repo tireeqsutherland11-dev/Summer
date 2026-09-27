@@ -1,5 +1,5 @@
 #property copyright "Base + Model Base conversions"
-#property version   "2.30"
+#property version   "2.31"
 #property strict
 #property description "Liquidity Sweep Strategy: merged Base and Model Base EA."
 #property description "Trades MTF liquidity-zone sweeps at 1:2 with breakeven at 1:1; by default only in the Strategy Tester."
@@ -191,6 +191,8 @@ input double         Breakeven_At_R=1.0;
 input double         SL_Buffer_ATR=0.5;
 // Skip a setup whose stop would be wider than this, in setup-timeframe ATRs.
 input double         Max_SL_ATR=2.0;
+// MTF candles after the sweep candle during which an entry may be taken.
+input int            Entry_Window_Candles=3;
 // Also skip when a Market High/Low or trendline lies between entry and target.
 input bool           Require_Clear_Path_To_Target=true;
 input ulong          Magic_Number=20260927;
@@ -232,7 +234,7 @@ double g_zone_top=0.0,g_zone_bottom=0.0;
 datetime g_zone_id=0;       // time of the zone's swing candle
 datetime g_zone_sweep_time=0;   // candle that swept the zone (0 = not yet)
 double g_zone_sweep_price=0.0;  // that candle's wick extreme beyond the zone
-bool g_zone_fresh_sweep=false;  // the sweep candle is the latest closed MTF candle
+bool g_zone_fresh_sweep=false;  // the entry window after the sweep is still open
 datetime g_traded_zone_id=0;
 datetime g_rejected_zone_id=0;
 string g_rejected_reason="";
@@ -1469,6 +1471,8 @@ bool ValidInputs()
          problem="Breakeven_At_R must be 0 (off) or below Reward_Risk_Ratio";
       else if(SL_Buffer_ATR<0.0 || Max_SL_ATR<=0.0)
          problem="SL_Buffer_ATR must not be negative and Max_SL_ATR must be positive";
+      else if(Entry_Window_Candles<1 || Entry_Window_Candles>100)
+         problem="Entry_Window_Candles must be between 1 and 100";
      }
    if(problem=="") return true;
    Print("Liquidity Sweep Strategy: invalid input - ",problem,".");
@@ -1695,6 +1699,8 @@ bool UpdateSwing(MODEL_SWING &swing,const bool high,const MqlRates &rates[],cons
 
    double level=high?swing.top:swing.bottom;
    bool swept=false;
+   // sweep_price keeps the most extreme wick from the sweep candle onwards, so
+   // a stop placed after a later, deeper wick is still beyond all of them.
    if(!swing.crossed && ((high && rates[now].close>swing.top) ||
                          (!high && rates[now].close<swing.bottom)))
      {
@@ -1712,6 +1718,9 @@ bool UpdateSwing(MODEL_SWING &swing,const bool high,const MqlRates &rates[],cons
       g_sweep_count++;
       DrawSweep(swing,high,rates[now],line_colour);
      }
+   else if(swing.swept && !swing.crossed)
+      swing.sweep_price=high?MathMax(swing.sweep_price,rates[now].high)
+                            :MathMin(swing.sweep_price,rates[now].low);
 
    datetime active_right=swing.crossed?swing.start:ProjectTime(rates[now].time,3);
    ObjectMove(0,swing.active_box,1,active_right,swing.bottom);
@@ -1892,10 +1901,11 @@ bool RebuildModel()
 
    // Offer the live (visible, unbroken) zone on the bias side for trading.
    g_zone_valid=false;
+   datetime window_start=rates[MathMax(0,copied-Entry_Window_Candles)].time;
    if(market_bias<0 && ph.active && ph.qualified && !ph.crossed)
-      SetTradeZone(-1,ph,rates[copied-1].time);
+      SetTradeZone(-1,ph,window_start);
    if(market_bias>0 && pl.active && pl.qualified && !pl.crossed)
-      SetTradeZone(1,pl,rates[copied-1].time);
+      SetTradeZone(1,pl,window_start);
 
    string text="Liquidity "+TimeframeName(timeframe)+" | HTF "+BiasText(g_htf_structure)+" | ";
    if(market_bias<0)
@@ -1934,10 +1944,10 @@ bool TradingActive()
    return Trade_Mode==LSS_TRADING_LIVE;
   }
 
-// Publishes the live zone.  Its sweep is "fresh" only while the sweep candle
-// is the newest closed MTF candle, which limits the entry to the MTF candle
-// that follows the sweep.
-void SetTradeZone(const int side,const MODEL_SWING &swing,const datetime latest_closed)
+// Publishes the live zone.  Its sweep is "fresh" while the sweep candle is one
+// of the newest Entry_Window_Candles closed MTF candles (window_start is the
+// oldest of them), which limits the entry to that many candles after it.
+void SetTradeZone(const int side,const MODEL_SWING &swing,const datetime window_start)
   {
    g_zone_valid=true;
    g_zone_side=side;
@@ -1946,7 +1956,7 @@ void SetTradeZone(const int side,const MODEL_SWING &swing,const datetime latest_
    g_zone_id=swing.start;
    g_zone_sweep_time=swing.sweep_time;
    g_zone_sweep_price=swing.sweep_price;
-   g_zone_fresh_sweep=swing.swept && swing.sweep_time==latest_closed;
+   g_zone_fresh_sweep=swing.swept && swing.sweep_time>=window_start;
   }
 
 void DrawTradeStatus(const string text)
@@ -2095,13 +2105,15 @@ string PlanEntry(const bool sell,const double entry,const double spread,
    if(!CopyIndicator(g_setup_atr_handle,0,1,atr) || atr[0]==EMPTY_VALUE || atr[0]<=0.0)
       return "the MTF ATR is unavailable";
 
-   // The sweep wick has already traded beyond the zone, so the stop sits
-   // beyond the wick's extreme by SL_Buffer_ATR MTF ATRs.  A sell stop is
-   // triggered by the ask, so the spread is added to keep it behind the wick
-   // as drawn on the (bid) chart.
+   // The sweep has already traded beyond the zone, so the stop sits beyond
+   // the most extreme wick since the sweep, including the forming MTF candle,
+   // by SL_Buffer_ATR MTF ATRs.  A sell stop is triggered by the ask, so the
+   // spread is added to keep it behind the wick as drawn on the (bid) chart.
    double buffer=SL_Buffer_ATR*atr[0];
-   sl=sell?AlignPrice(MathMax(g_zone_top,g_zone_sweep_price)+buffer+spread,1)
-          :AlignPrice(MathMin(g_zone_bottom,g_zone_sweep_price)-buffer,-1);
+   double extreme=sell?MathMax(g_zone_top,g_zone_sweep_price):MathMin(g_zone_bottom,g_zone_sweep_price);
+   double forming=sell?iHigh(_Symbol,SetupTimeframe(),0):iLow(_Symbol,SetupTimeframe(),0);
+   if(forming>0.0) extreme=sell?MathMax(extreme,forming):MathMin(extreme,forming);
+   sl=sell?AlignPrice(extreme+buffer+spread,1):AlignPrice(extreme-buffer,-1);
    double risk=sell?sl-entry:entry-sl;
    double minimum=MinimumStopDistance();
    if(risk<minimum)
@@ -2128,10 +2140,10 @@ string PlanEntry(const bool sell,const double entry,const double spread,
 
 // Enters after the live zone has been swept: an MTF candle's wick traded
 // beyond the zone's level and the candle closed back inside.  The entry is
-// taken during the following MTF candle, on the first tick at which every
-// requirement passes and price is still back inside the swept level.  A zone
-// is swept once, so each zone is traded at most once, with one position open
-// at a time.
+// taken within Entry_Window_Candles MTF candles after the sweep candle, on the
+// first tick at which every requirement passes and price is still back inside
+// the swept level.  A zone is swept once, so each zone is traded at most once,
+// with one position open at a time.
 void CheckEntry()
   {
    ulong ticket=0;
