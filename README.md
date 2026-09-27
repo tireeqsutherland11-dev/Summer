@@ -11,11 +11,12 @@ It is analysis/visualisation software only and never places trades.
 
 Install it in `MQL5/Experts`, compile it in MetaEditor, refresh **Navigator >
 Expert Advisors**, and attach **Model Base** to a chart. Keep Algo Trading
-enabled so its event loop runs. The EA retries on a two-second timer while MT5
-downloads chart history, then rebuilds on each new chart bar. `Maximum_Bars`
-bounds reconstruction time and the number of chart objects. MetaTrader tick
-volume is used because broker-independent centralized volume is not universally
-available.
+enabled so its event loop runs. The EA attaches immediately and reconstructs
+only the history window already available on the chart; it does not start a
+history-download retry timer. It rebuilds on each new chart bar and when the
+visible chart range changes. `Maximum_Bars` remains a hard upper bound on
+reconstruction time and the number of chart objects. MetaTrader tick volume is
+used because broker-independent centralized volume is not universally available.
 
 By default, every geometrically valid pivot is eligible to display so a newly
 attached EA produces useful output without requiring symbol-specific impulse
@@ -27,11 +28,11 @@ Raw distance is only 10% of the score, so a large but hesitant move does not
 outrank a smaller, decisive impulse. The thresholds are available under
 **Impulse Qualification**.
 
-The top-left status line is always created when the EA attaches. It reports
-history-download progress and, after reconstruction, the number of detected
-high and low swings. If the chart reports zero swings with strong-departure
-qualification enabled, disable that option first and then tune its thresholds
-for the symbol and timeframe.
+The top-left status line is always created when the EA attaches. It immediately
+reports the number of detected high and low swings, or identifies when the
+visible chart does not yet contain a complete pivot window. If the chart
+reports zero swings with strong-departure qualification enabled, disable that
+option first and then tune its thresholds for the symbol and timeframe.
 
 ## Road
 

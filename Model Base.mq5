@@ -1,6 +1,6 @@
 #property copyright "PineScript conversion"
 #property link      "https://www.mql5.com"
-#property version   "1.10"
+#property version   "1.20"
 #property strict
 #property description "Model Base EA - MT5 conversion of Liquidity Swings [LuxAlgo]."
 #property description "Analysis and visualisation only; this EA does not place trades."
@@ -345,21 +345,16 @@ int OnInit()
       return INIT_PARAMETERS_INCORRECT;
      }
    g_prefix="ModelBase_"+IntegerToString(ChartID())+"_";
-   DrawStatus("Model Base: loading chart history...");
-   if(!EventSetTimer(2))
-     {
-      Print("Model Base: could not start the history retry timer.");
-      return INIT_FAILED;
-     }
-   // Do not fail initialization while the terminal is still downloading chart
-   // history.  The timer will keep retrying until enough bars are available.
+   DrawStatus("Model Base: attached");
+   // Build only from bars already represented by the chart.  In particular,
+   // do not start a timer or ask Bars() for the symbol's complete history:
+   // either action can make attaching the EA wait for a broker download.
    RebuildModel();
    return INIT_SUCCEEDED;
   }
 
 void OnDeinit(const int reason)
   {
-   EventKillTimer();
    DeleteModelObjects();
    ChartRedraw();
   }
@@ -369,8 +364,12 @@ void OnTick()
    RebuildModel();
   }
 
-void OnTimer()
+void OnChartEvent(const int id,const long &lparam,const double &dparam,
+                  const string &sparam)
   {
+   if(id!=CHARTEVENT_CHART_CHANGE) return;
+   // A chart change can expose more locally available bars without a new tick.
+   g_last_bar=0;
    RebuildModel();
   }
 
@@ -384,27 +383,26 @@ void RebuildModel()
      }
    if(current_bar==g_last_bar) return;
 
-   int available=Bars(_Symbol,(ENUM_TIMEFRAMES)_Period);
    int minimum=2*Pivot_Lookback+2;
-   if(available<minimum)
-     {
-      DrawStatus("Model Base: waiting for history ("+IntegerToString(available)+"/"+
-                 IntegerToString(minimum)+" bars)...");
-      return;
-     }
-
-   int wanted=MathMin(Maximum_Bars,available);
+   // CHART_FIRST_VISIBLE_BAR is a shift into data that the chart already has.
+   // Limiting CopyRates to this local window avoids requesting Maximum_Bars
+   // from the server merely because the EA has just been attached.
+   long first_visible=ChartGetInteger(0,CHART_FIRST_VISIBLE_BAR,0);
+   int local_window=(int)MathMax((long)minimum,first_visible+1);
+   int wanted=MathMin(Maximum_Bars,local_window);
    MqlRates rates[];
    ArraySetAsSeries(rates,false);
    int copied=CopyRates(_Symbol,(ENUM_TIMEFRAMES)_Period,0,wanted,rates);
    if(copied<minimum)
      {
-      DrawStatus("Model Base: history is synchronising...");
+      DrawStatus("Model Base: attached | insufficient chart bars ("+
+                 IntegerToString(MathMax(copied,0))+"/"+
+                 IntegerToString(minimum)+")",clrOrange);
       return;
      }
 
-   // Mark the bar handled only after CopyRates succeeds.  A transient history
-   // request failure must remain eligible for the next timer retry.
+   // Mark the bar handled only after CopyRates succeeds. A transient local
+   // data failure remains eligible for the next tick or chart-change event.
    g_last_bar=current_bar;
 
    DeleteModelObjects();
