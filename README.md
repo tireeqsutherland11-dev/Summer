@@ -129,9 +129,11 @@ chart-specific prefix.
 - A reversal is not declared on a level break alone: bearish-to-bullish CHoCH
   requires an LH break followed by a confirmed HL, while bullish-to-bearish
   CHoCH requires an HL break followed by a confirmed LH.
-- **Tradable** requires the enabled tradeability timeframe directions to agree.
-  When LTF participation is enabled, its latest break must be BOS. It is an
-  analytical state, not an instruction to place a trade.
+- **Tradable** always requires an established Bullish or Bearish HTF bias: its
+  latest break must be a continuation BOS that creates a new HH or LL, rather
+  than a transitional CHoCH. The enabled tradeability timeframe directions
+  must also agree, and when LTF participation is enabled its latest break must
+  be BOS. It is an analytical state, not an instruction to place a trade.
 - **Optimal Conditions** applies only the requirements enabled in the
   **Optimal Conditions** input group. By default it checks timeframe
   correlation, boundary clearance, extension, relative tick volume, and
@@ -152,7 +154,7 @@ break; a candle must close beyond it.
   `Use_LTF_For_Tradeability` independently control which market biases must
   correlate. At least one must remain enabled. This supports HTF-only, HTF/MTF,
   all-three, and other combinations. Disabled timeframe biases are hidden from
-  the dashboard.
+  the dashboard, but the established HTF-bias prerequisite always applies.
 - The five `Use_*_For_Optimal` inputs independently choose which requirements
   determine the Optimal Conditions result. At least one must remain enabled;
   disabled requirements are omitted from both the result and the dashboard.
