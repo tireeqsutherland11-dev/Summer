@@ -7,55 +7,59 @@ Base liquidity-zone rendering in one Expert Advisor. Base owns the shared
 pivot detection and HH/HL/LH/LL classification; Model Base retains its
 overlap-count, volume, zone, and level rendering.
 
-The active chart period decides which engine may draw. Model Base draws its
-liquidity objects only when the chart period equals `Setup_Entry_Timeframe`
-(MTF). Base draws its full overlays on `Structure_Timeframe` or
-`Boundary_Timeframe` (HTF), and also draws its chart-timeframe HH/HL/LH/LL
-points on the MTF. The same Base structure pass supplies liquidity-swing
-candidates, so chart labels and liquidity zones cannot disagree about pivot
-identity. On all other chart periods both drawing systems remain visually
-hidden; Base's analytical processing and optional alerts remain active.
+The active chart period decides which engine may draw. The liquidity engine
+draws only when the chart period equals `Setup_Entry_Timeframe` (MTF). Base
+draws its full overlays and dashboard on `Structure_Timeframe` or
+`Boundary_Timeframe` (HTF). On all other chart periods nothing is drawn, while
+Base's analytical processing and optional alerts remain active.
 
-On the MTF chart, the merged identification pass classifies structure points
-as `HH`, `LH`, `HL`, or `LL` using `Swing_Detection_Length`; numeric volume
-labels are not drawn. With a bearish HTF/Structure bias, an MTF liquidity swing
-is drawn from an `LH` only when the immediately following structure point is an
-`LL`. With a bullish bias, it is drawn from an `HL` only when the immediately
-following structure point is an `HH`. This rule does not wait for or inspect a
-BOS close. Transitional or consolidating HTF bias draws no liquidity swing.
+On the MTF chart one structure replay of the setup timeframe supplies both the
+`HH`, `HL`, `LH`, and `LL` labels and the liquidity swings, so a zone can never
+disagree with the labels beside it. The replay covers the same elapsed time as
+`Bars_To_Process` does on the structure timeframe (100 H1 candles become 400
+M15 candles) and uses `Swing_Detection_Length`; numeric volume labels are not
+drawn. With an established bearish HTF bias, an `LH` becomes a liquidity swing
+when the next structure low is an `LL`. With an established bullish bias, an
+`HL` becomes a liquidity swing when the next structure high is an `HH`. Each
+swing is identified once, even if a more extreme `HH`/`LL` later replaces the
+first one in the same leg. This rule does not wait for or inspect a BOS close.
+A transitional or consolidating HTF bias identifies no liquidity swing, and the
+status line in the top-left corner says so.
 
-### Manual structure and liquidity feedback
+The status line reports the setup timeframe, the HTF bias, the number of
+liquidity swings, and how many were swept.
 
-The `Enable_Manual_Feedback` input is enabled by default and displays a review
-panel in the chart's top-right corner. Disable it when the annotation controls
-are not needed. To review an identified `HH`, `HL`, `LH`, `LL`, or liquidity
-swing, first select **Correct point** or **Incorrect point**, then click its
-label or liquidity object. The EA places an `OK` or `X` beside the point and
-appends the review to a CSV file.
+### Liquidity sweeps
 
-To report a point the EA missed, select **Missed HH**, **Missed HL**,
-**Missed LH**, **Missed LL**, **Missed liquidity H**, or **Missed liquidity L**,
-then click the precise chart time and price where the point belongs. A gold
-marker confirms the annotation and the one-shot missed-point mode clears after
-the click. **Cancel** clears any active mode without recording feedback.
+A liquidity level stays live until a candle closes beyond it (the level then
+turns dashed, as in Model Base). When a candle's wick trades beyond a live
+level but the candle closes back inside, the resting liquidity has been swept:
+the first sweep of each level is marked with an arrow on that candle (hover
+it for the level). `Show_Liquidity_Sweeps` toggles the markers.
 
-`Feedback_CSV_File` controls the append-only file name. The CSV includes the
-recording time, symbol, chart timeframe, category, verdict, point time, price,
-and source object name. It is written with MQL5's `FILE_COMMON` flag, so it
-survives EA restarts and can be shared by terminal instances. Chart markers are
-session aids; the CSV is the durable feedback record.
+With `Alert_On_Liquidity_Sweep` enabled (the default), a sweep on the newest
+closed MTF candle raises an alert through the same `Enable_Popup_Alerts` and
+`Enable_Push_Notifications` switches as the structure alerts; both are off by
+default. Sweep alerts work on any chart period: away from the MTF chart the
+liquidity engine runs without drawing whenever sweep alerts can be delivered.
+No alert is raised by the initial build after attaching.
+
+### Performance and refresh
+
+Both engines only work when a relevant candle closes (LTF, MTF, or HTF) or the
+HTF state changes; other ticks and timer events cost a few time lookups.
+Scrolling, zooming, and resizing never redraw the chart, because every window
+is fixed in candles rather than taken from the visible range. Changing the
+chart period reinitialises the EA, and the shared two-second timer retries a
+build until MT5 has synchronised every requested history, so a chart restart
+is not required. All series are loaded before any chart object is replaced, so
+a build that is still waiting for data keeps the previous drawing. When
+enabled, `Intrabar_Timeframe` must be lower than `Setup_Entry_Timeframe`; its
+candles are loaded with one copy per build. The merged EA remains analysis and
+visualisation software and does not place trades.
 
 Install the EA in `MQL5/Experts`, compile it in MetaEditor, and attach
-**Liquidity Sweep Strategy** to one chart. Changing chart timeframe is handled
-immediately by `OnChartEvent`, while the shared two-second timer retries builds
-until MT5 finishes synchronizing all requested histories. A chart restart is
-therefore not required. Liquidity processing always uses
-`Setup_Entry_Timeframe`, including shared Base pivot detection, BOS validation,
-sweep/cross detection, overlap counts, volume, and projection. Liquidity swings
-are reconstructed from the latest 300 closed MTF candles, so changing the
-visible range or resizing the chart does not change the identified points. When
-enabled, `Intrabar_Timeframe` must be lower than `Setup_Entry_Timeframe`. The
-merged EA remains analysis and visualisation software and does not place trades.
+**Liquidity Sweep Strategy** to one chart.
 
 ## Model Base
 
@@ -69,10 +73,19 @@ It is analysis/visualisation software only and never places trades.
 Install it in `MQL5/Experts`, compile it in MetaEditor, refresh **Navigator >
 Expert Advisors**, and attach **Model Base** to a chart. Keep Algo Trading
 enabled so its event loop runs. The EA attaches immediately and reconstructs
-the latest 400 candles, independently of the visible chart range. It does not
-start a history-download retry timer, and rebuilds on each new chart bar and
-when the chart changes. MetaTrader tick volume is used because
+the latest 400 closed candles, independently of the visible chart range, so a
+partly formed candle can neither confirm a pivot nor cross a level. It rebuilds
+once per new chart candle; scrolling and zooming do not redraw it. A two-second
+retry timer runs only while chart or intrabar history is still loading and
+stops as soon as a build completes. MetaTrader tick volume is used because
 broker-independent centralized volume is not universally available.
+
+As in the Pine source, only the newest swing on each side is tracked. When a
+new pivot replaces it, its live projection box is removed, an unbroken level
+ends at the new pivot's candle, and a level that never passed the filter is
+removed. Zone widths are measured in candles, so they stay correct across
+weekends and session gaps. With `Intrabar_Precision`, the lower-timeframe
+candles are loaded with one copy per build.
 
 By default, every geometrically valid pivot is eligible to display so a newly
 attached EA produces useful output without requiring symbol-specific impulse
@@ -91,33 +104,37 @@ printed the same extremity, while also avoiding duplicate levels.
 
 The top-left status line is always created when the EA attaches. It immediately
 reports the number of detected high and low swings, or identifies when the
-visible chart does not yet contain a complete pivot window. If the chart
-reports zero swings with strong-departure qualification enabled, disable that
-option first and then tune its thresholds for the symbol and timeframe.
+chart does not yet contain a complete pivot window. If the chart reports zero
+swings with strong-departure qualification enabled, disable that option first
+and then tune its thresholds for the symbol and timeframe.
 
-## Road
+## Base
 
-Road is a **chart-analysis and alerting Expert Advisor (EA)**. It reconstructs
+`Base.mq5` (formerly Road) is a **chart-analysis and alerting Expert Advisor
+(EA)**. It reconstructs
 market structure from closed candles, draws BOS/CHoCH and boundary overlays,
 and reports multi-timeframe tradeability and market conditions. It never
 places, modifies, or closes trades.
 
 ## Install and start
 
-1. Copy `Road.mq5` into the terminal's `MQL5/Experts` directory.
+1. Copy `Base.mq5` into the terminal's `MQL5/Experts` directory.
 2. Open the file in MetaEditor and compile it. Resolve every compiler error or
    warning before continuing.
-3. In MetaTrader 5, refresh **Navigator > Expert Advisors**, then drag **Road**
-   onto a chart.
+3. In MetaTrader 5, refresh **Navigator > Expert Advisors**, then drag **Base**
+   onto a chart. An invalid input is reported in the Experts tab with the
+   input's name and valid range.
 4. Leave the default timeframes for the intended H4 boundary / H1 structure /
    M15 setup / M5 confirmation workflow, or deliberately select alternatives.
-5. Keep **Algo Trading** enabled if you want the EA event loop to run. Road
+5. Keep **Algo Trading** enabled if you want the EA event loop to run. Base
    itself does not submit orders.
 6. Enable terminal push notifications and provide a MetaQuotes ID before
    turning on `Enable_Push_Notifications`.
 
-Road may initially show no output while MT5 downloads the requested histories
-and calculates indicator buffers. Its two-second timer retries automatically.
+Base may initially show no output while MT5 downloads the requested histories
+and calculates indicator buffers. Its two-second timer retries automatically,
+including straight after a chart timeframe change. Every series is loaded
+before existing chart objects are replaced, so a retry never blanks the chart.
 Attach one instance per chart; each instance owns only chart objects bearing its
 chart-specific prefix.
 
@@ -132,13 +149,19 @@ chart-specific prefix.
   HH, and then form an HL as the immediately following opposite-side structure
   point. A bullish-to-bearish CHoCH requires price to close below an HL,
   creating an LL, and then form an LH next. Until that corrective pivot is
-  confirmed, the break is only a CHoCH candidate. Wicks beyond the broken
-  levels remain liquidity sweeps rather than CHoCH.
+  confirmed, the break is only a CHoCH candidate. The corrective pivot must
+  form after the breaking close: a swing printed before the close (for
+  example the low of a sharp V-reversal, confirmed a few candles later) can
+  neither confirm nor cancel the candidate. Wicks beyond the broken levels
+  remain liquidity sweeps rather than CHoCH.
 - **Tradable** always requires an established Bullish or Bearish HTF bias: its
   latest break must be a continuation BOS that creates a new HH or LL, rather
   than a transitional CHoCH. The enabled tradeability timeframe directions
   must also agree, and when LTF participation is enabled its latest break must
   be BOS. It is an analytical state, not an instruction to place a trade.
+- Hover **Market Tradeability** to see the entry filters (MA, HTF MA,
+  session, ADX, ATR) for the latest closed structure candle: whether a long or
+  short BOS/CHoCH setup would pass, and each filter's reading.
 - **Optimal Conditions** applies only the requirements enabled in the
   **Optimal Conditions** input group. By default it checks timeframe
   correlation, boundary clearance, extension, relative tick volume, and
@@ -147,18 +170,19 @@ chart-specific prefix.
   independent of the qualification filters.
 
 All calculations use closed candles. A wick beyond a swing is not considered a
-break; a candle must close beyond it.
+break; a candle must close beyond it. A swing high must be above the
+`Swing_Detection_Length` candles on its left and above the same number on its
+right; equal highs (a double top) form one swing at the latest of the equal
+candles rather than no swing at all. Swing lows mirror this rule.
 
 ## Configuration notes
 
 - `Bars_To_Process` controls replay depth and therefore startup/rebuild cost.
   Start with the default 100 and raise it only when more context is needed.
-- `Boundary_Lookback_Bars` is the initial Market High and Market Low search
-  window. If just one boundary is missing, its search expands into older
-  boundary-timeframe structure in blocks of that size while the boundary that
-  was already found remains anchored to the original window. Each boundary is
-  the newest confirmed pivot on its side of the current price, so newly formed
-  structure replaces older structure as soon as it is confirmed.
+- `Boundary_Lookback_Bars` is the Market High and Market Low search window on
+  `Boundary_Timeframe`. Market High is the highest confirmed swing high in the
+  window and is drawn only while it is above the current price; Market Low is
+  the lowest confirmed swing low and is drawn only while it is below price.
 - The structure, setup, and LTF inputs are all monitored for new bars, so custom
   timeframe orders still refresh correctly.
 - `Use_HTF_For_Tradeability`, `Use_MTF_For_Tradeability`, and

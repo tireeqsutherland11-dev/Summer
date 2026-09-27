@@ -1,6 +1,6 @@
 #property copyright "PineScript conversion"
 #property link      "https://www.mql5.com"
-#property version   "1.22"
+#property version   "1.30"
 #property strict
 #property description "Model Base EA - MT5 conversion of Liquidity Swings [LuxAlgo]."
 #property description "Analysis and visualisation only; this EA does not place trades."
@@ -55,6 +55,7 @@ input MODEL_LABEL_SIZE Labels_Size=MODEL_TINY;
 
 string g_prefix;
 datetime g_last_bar=0;
+bool g_retry_timer=false;
 
 void DrawStatus(const string text,const color colour=clrSilver)
   {
@@ -79,6 +80,7 @@ struct MODEL_SWING
    bool crossed;
    bool qualified;
    int  serial;
+   int  pivot;              // bar index of the swing candle
    int  count;
    long volume;
    datetime start;
@@ -100,6 +102,15 @@ datetime ProjectTime(const datetime value,const int bars)
    int seconds=PeriodSeconds((ENUM_TIMEFRAMES)_Period);
    if(seconds<=0) seconds=60;
    return value+(datetime)(bars*seconds);
+  }
+
+// Time of a bar index; indices beyond the newest closed candle are projected.
+// Pine measures zone widths in bars, which keeps them correct across weekends
+// and session gaps where wall-clock projection would fall short.
+datetime BarTime(const MqlRates &rates[],const int total,const int index)
+  {
+   if(index<total) return rates[index].time;
+   return ProjectTime(rates[total-1].time,index-(total-1));
   }
 
 void SetCommonObject(const string name)
@@ -248,37 +259,61 @@ bool StrongDeparture(const MqlRates &rates[],const int total,const int pivot,
           score>=Minimum_Impulse_Score;
   }
 
-long OverlapVolume(const MqlRates &bar,const double top,const double bottom)
+// Loads every lower-timeframe candle in the window with one CopyRates call
+// and maps each chart candle to its slice (first index and count), instead of
+// one CopyRates call per candle and per swing.
+bool LoadIntrabar(const MqlRates &rates[],const int total,MqlRates &intrabar[],
+                  int &first[],int &count[])
+  {
+   ArrayResize(first,total);
+   ArrayResize(count,total);
+   ArrayInitialize(first,0);
+   ArrayInitialize(count,0);
+   int seconds=PeriodSeconds((ENUM_TIMEFRAMES)_Period);
+   ArraySetAsSeries(intrabar,false);
+   int copied=CopyRates(_Symbol,Intrabar_Timeframe,rates[0].time,
+                        rates[total-1].time+seconds-1,intrabar);
+   if(copied<=0) return false;
+   int cursor=0;
+   for(int bar=0;bar<total;bar++)
+     {
+      while(cursor<copied && intrabar[cursor].time<rates[bar].time) cursor++;
+      first[bar]=cursor;
+      while(cursor<copied && intrabar[cursor].time<rates[bar].time+seconds) cursor++;
+      count[bar]=cursor-first[bar];
+     }
+   return true;
+  }
+
+long OverlapVolume(const MqlRates &rates[],const int index,const double top,const double bottom,
+                   const MqlRates &intrabar[],const int &intrabar_first[],
+                   const int &intrabar_count[])
   {
    if(!Intrabar_Precision)
-      return bar.low<top && bar.high>bottom?(long)bar.tick_volume:0;
-
-   MqlRates lower[];
-   ArraySetAsSeries(lower,false);
-   datetime finish=bar.time+PeriodSeconds((ENUM_TIMEFRAMES)_Period)-1;
-   int copied=CopyRates(_Symbol,Intrabar_Timeframe,bar.time,finish,lower);
-   if(copied<=0) return 0;
+      return rates[index].low<top && rates[index].high>bottom?(long)rates[index].tick_volume:0;
    long result=0;
-   for(int i=0;i<copied;i++)
-      if(lower[i].low<top && lower[i].high>bottom)
-         result+=(long)lower[i].tick_volume;
+   int last=intrabar_first[index]+intrabar_count[index];
+   for(int i=intrabar_first[index];i<last;i++)
+      if(intrabar[i].low<top && intrabar[i].high>bottom)
+         result+=(long)intrabar[i].tick_volume;
    return result;
   }
 
-void StartSwing(MODEL_SWING &swing,const bool high,const MqlRates &pivot,
+void StartSwing(MODEL_SWING &swing,const bool high,const MqlRates &pivot_bar,const int pivot,
                 const int serial,const color area_colour)
   {
    swing.active=true;
    swing.crossed=false;
    swing.qualified=false;
    swing.serial=serial;
+   swing.pivot=pivot;
    swing.count=0;
    swing.volume=0;
-   swing.start=pivot.time;
-   swing.top=high?pivot.high:(Swing_Area==MODEL_WICK_EXTREMITY?
-                             MathMin(pivot.open,pivot.close):pivot.high);
+   swing.start=pivot_bar.time;
+   swing.top=high?pivot_bar.high:(Swing_Area==MODEL_WICK_EXTREMITY?
+                                  MathMin(pivot_bar.open,pivot_bar.close):pivot_bar.high);
    swing.bottom=high?(Swing_Area==MODEL_WICK_EXTREMITY?
-                      MathMax(pivot.open,pivot.close):pivot.low):pivot.low;
+                      MathMax(pivot_bar.open,pivot_bar.close):pivot_bar.low):pivot_bar.low;
    string side=high?"H_":"L_";
    string suffix=IntegerToString(serial);
    swing.active_box=g_prefix+side+"ACTIVE_"+suffix;
@@ -290,46 +325,64 @@ void StartSwing(MODEL_SWING &swing,const bool high,const MqlRates &pivot,
    CreateLevel(swing.level,swing.start,high?swing.top:swing.bottom);
   }
 
-void UpdateSwing(MODEL_SWING &swing,const bool high,const MqlRates &current,
-                 const MqlRates &counted_bar,const color line_colour,
-                 const color area_colour)
+// Pine keeps one live box per side and moves it to each new pivot; an older
+// unbroken level ends at the new pivot's bar and a level that never passed
+// the filter is removed.  Mirror that when a swing is replaced instead of
+// leaving its projection boxes stretched across the chart.
+void FinishSwing(MODEL_SWING &swing,const bool high,const datetime new_pivot_time)
   {
    if(!swing.active) return;
+   ObjectDelete(0,swing.active_box);
+   if(!swing.qualified)
+      ObjectDelete(0,swing.level);
+   else if(!swing.crossed)
+      ObjectMove(0,swing.level,1,new_pivot_time,high?swing.top:swing.bottom);
+   swing.active=false;
+  }
 
-   bool overlaps=counted_bar.low<swing.top && counted_bar.high>swing.bottom;
+// Advances a swing by closed candle `now`.  Counts use the candle
+// Pivot_Lookback bars earlier, matching Pine's low[length]/high[length].
+void UpdateSwing(MODEL_SWING &swing,const bool high,const MqlRates &rates[],const int total,
+                 const int now,const MqlRates &intrabar[],const int &intrabar_first[],
+                 const int &intrabar_count[],const color line_colour,const color area_colour)
+  {
+   if(!swing.active) return;
+   int counted=now-Pivot_Lookback;
+   bool overlaps=rates[counted].low<swing.top && rates[counted].high>swing.bottom;
    double previous=Target(swing);
    if(overlaps) swing.count++;
-   swing.volume+=OverlapVolume(counted_bar,swing.top,swing.bottom);
+   swing.volume+=OverlapVolume(rates,counted,swing.top,swing.bottom,intrabar,
+                               intrabar_first,intrabar_count);
    double target=Target(swing);
 
    if(!swing.qualified && previous<=Filter_Value && target>Filter_Value)
      {
       swing.qualified=true;
-      datetime right=ProjectTime(swing.start,swing.count);
-      CreateRectangle(swing.zone,swing.start,swing.top,right,swing.bottom,
-                      area_colour,128);
+      CreateRectangle(swing.zone,swing.start,swing.top,
+                      BarTime(rates,total,swing.pivot+swing.count),swing.bottom,area_colour,128);
       CreateVolumeLabel(swing,high,line_colour);
       ObjectSetInteger(0,swing.level,OBJPROP_COLOR,line_colour);
      }
 
    if(swing.qualified)
      {
-      ObjectMove(0,swing.zone,1,ProjectTime(swing.start,swing.count),swing.bottom);
+      ObjectMove(0,swing.zone,1,BarTime(rates,total,swing.pivot+swing.count),swing.bottom);
       ObjectSetString(0,swing.label,OBJPROP_TEXT,VolumeText(swing.volume));
      }
 
-   if(!swing.crossed && ((high && current.close>swing.top) ||
-                         (!high && current.close<swing.bottom)))
+   double level=high?swing.top:swing.bottom;
+   if(!swing.crossed && ((high && rates[now].close>swing.top) ||
+                         (!high && rates[now].close<swing.bottom)))
      {
       swing.crossed=true;
-      ObjectMove(0,swing.level,1,current.time,high?swing.top:swing.bottom);
+      ObjectMove(0,swing.level,1,rates[now].time,level);
       ObjectSetInteger(0,swing.level,OBJPROP_STYLE,STYLE_DASH);
      }
 
-   datetime active_right=swing.crossed?swing.start:ProjectTime(current.time,3);
+   datetime active_right=swing.crossed?swing.start:ProjectTime(rates[now].time,3);
    ObjectMove(0,swing.active_box,1,active_right,swing.bottom);
    if(!swing.crossed)
-      ObjectMove(0,swing.level,1,ProjectTime(current.time,3),high?swing.top:swing.bottom);
+      ObjectMove(0,swing.level,1,ProjectTime(rates[now].time,3),level);
   }
 
 void DeleteModelObjects()
@@ -358,58 +411,90 @@ int OnInit()
       return INIT_PARAMETERS_INCORRECT;
      }
    g_prefix="ModelBase_"+IntegerToString(ChartID())+"_";
+   // MT5 keeps an EA's global variables across a chart timeframe change, so
+   // forget the previous chart's build explicitly.
+   g_last_bar=0;
+   g_retry_timer=false;
    DrawStatus("Model Base: attached");
-   // CopyRates requests only the fixed liquidity window, rather than the
-   // symbol's complete history.
-   RebuildModel();
+   RefreshModel();
    return INIT_SUCCEEDED;
   }
 
 void OnDeinit(const int reason)
   {
+   EventKillTimer();
+   g_retry_timer=false;
    DeleteModelObjects();
    ChartRedraw();
   }
 
 void OnTick()
   {
-   RebuildModel();
+   RefreshModel();
+  }
+
+void OnTimer()
+  {
+   RefreshModel();
   }
 
 void OnChartEvent(const int id,const long &lparam,const double &dparam,
                   const string &sparam)
   {
-   if(id!=CHARTEVENT_CHART_CHANGE) return;
-   // A chart change can expose more locally available bars without a new tick.
-   g_last_bar=0;
-   RebuildModel();
+   // Scrolling, zooming and resizing raise CHART_CHANGE continuously, but the
+   // fixed history window means they cannot change the result.  Only retry a
+   // build that is still waiting for chart history.
+   if(id==CHARTEVENT_CHART_CHANGE && g_last_bar==0) RefreshModel();
   }
 
-void RebuildModel()
+// A two-second retry timer runs only while the build is waiting for history,
+// so attaching stays instant and a quiet market (no ticks) still completes.
+void RefreshModel()
+  {
+   bool complete=RebuildModel();
+   if(complete && g_retry_timer)
+     {
+      EventKillTimer();
+      g_retry_timer=false;
+     }
+   else if(!complete && !g_retry_timer)
+      g_retry_timer=EventSetTimer(2);
+  }
+
+// Rebuilds once per new chart candle from the latest closed candles only, so
+// a partly formed candle can neither confirm a pivot nor cross a level.
+// Returns false while history is still loading.
+bool RebuildModel()
   {
    datetime current_bar=iTime(_Symbol,(ENUM_TIMEFRAMES)_Period,0);
    if(current_bar<=0)
      {
       DrawStatus("Model Base: waiting for chart history...");
-      return;
+      return false;
      }
-   if(current_bar==g_last_bar) return;
+   if(current_bar==g_last_bar) return true;
 
    int minimum=2*Pivot_Lookback+2;
-   int wanted=LIQUIDITY_HISTORY_BARS;
    MqlRates rates[];
    ArraySetAsSeries(rates,false);
-   int copied=CopyRates(_Symbol,(ENUM_TIMEFRAMES)_Period,0,wanted,rates);
+   int copied=CopyRates(_Symbol,(ENUM_TIMEFRAMES)_Period,1,LIQUIDITY_HISTORY_BARS,rates);
    if(copied<minimum)
      {
       DrawStatus("Model Base: attached | insufficient chart bars ("+
                  IntegerToString(MathMax(copied,0))+"/"+
                  IntegerToString(minimum)+")",clrOrange);
-      return;
+      return false;
+     }
+   MqlRates intrabar[];
+   int intrabar_first[],intrabar_count[];
+   if(Intrabar_Precision && !LoadIntrabar(rates,copied,intrabar,intrabar_first,intrabar_count))
+     {
+      DrawStatus("Model Base: waiting for intrabar history...",clrOrange);
+      return false;
      }
 
-   // Mark the bar handled only after CopyRates succeeds. A transient local
-   // data failure remains eligible for the next tick or chart-change event.
+   // Mark the bar handled only after every copy succeeds.  A transient data
+   // failure remains eligible for the retry timer.
    g_last_bar=current_bar;
 
    DeleteModelObjects();
@@ -429,20 +514,27 @@ void RebuildModel()
                    StrongDeparture(rates,copied,pivot,now,false);
 
       if(new_high && Show_Swing_High)
-         StartSwing(ph,true,rates[pivot],++high_serial,Swing_High_Area_Color);
+        {
+         FinishSwing(ph,true,rates[pivot].time);
+         StartSwing(ph,true,rates[pivot],pivot,++high_serial,Swing_High_Area_Color);
+        }
       else if(Show_Swing_High && ph.active)
-         UpdateSwing(ph,true,rates[now],rates[pivot],Swing_High_Color,
-                     Swing_High_Area_Color);
+         UpdateSwing(ph,true,rates,copied,now,intrabar,intrabar_first,intrabar_count,
+                     Swing_High_Color,Swing_High_Area_Color);
 
       if(new_low && Show_Swing_Low)
-         StartSwing(pl,false,rates[pivot],++low_serial,Swing_Low_Area_Color);
+        {
+         FinishSwing(pl,false,rates[pivot].time);
+         StartSwing(pl,false,rates[pivot],pivot,++low_serial,Swing_Low_Area_Color);
+        }
       else if(Show_Swing_Low && pl.active)
-         UpdateSwing(pl,false,rates[now],rates[pivot],Swing_Low_Color,
-                     Swing_Low_Area_Color);
+         UpdateSwing(pl,false,rates,copied,now,intrabar,intrabar_first,intrabar_count,
+                     Swing_Low_Color,Swing_Low_Area_Color);
      }
 
    string filter=Require_Strong_Departure?"strong departure on":"all pivots";
    DrawStatus("Model Base | swings found: "+IntegerToString(high_serial)+" high, "+
               IntegerToString(low_serial)+" low | "+filter,
               (high_serial+low_serial)>0?clrSilver:clrOrange);
+   return true;
   }
