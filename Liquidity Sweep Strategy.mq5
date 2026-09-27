@@ -192,8 +192,9 @@ struct BASE_STRUCTURE_STATE
   };
 
 // A close through the most recent corrective swing creates the new opposing
-// structure extreme immediately: an LH break creates an HH (bearish to
-// bullish), while an HL break creates an LL (bullish to bearish).
+// extreme: an LH break creates an HH and an HL must follow to confirm bullish
+// CHoCH; an HL break creates an LL and an LH must follow to confirm bearish
+// CHoCH.  The break is therefore a candidate until its correction is typed.
 bool IsBullishCHoCH(const int broken_high_kind)
   {
    return broken_high_kind<0; // LH
@@ -229,6 +230,7 @@ bool AnalyseStructure(const ENUM_TIMEFRAMES timeframe,const int wanted,
    state.have_high=false; state.have_low=false;
    state.last_high=0.0; state.last_low=0.0;
    bool high_broken=false,low_broken=false;
+   int pending_choch=0;
    int last_pivot_side=0;
    bool have_high_reference=false,have_low_reference=false;
    double high_reference=0.0,low_reference=0.0;
@@ -244,6 +246,15 @@ bool AnalyseStructure(const ENUM_TIMEFRAMES timeframe,const int wanted,
            {
             state.last_high_kind=kind;
             high_broken=false;
+            if(pending_choch<0)
+              {
+               if(kind<0)
+                 {
+                  state.direction=-1;
+                  state.last_break_was_bos=false;
+                 }
+               pending_choch=0;
+              }
            }
         }
       if(PivotLow(rates,total,pivot,length))
@@ -255,19 +266,40 @@ bool AnalyseStructure(const ENUM_TIMEFRAMES timeframe,const int wanted,
            {
             state.last_low_kind=kind;
             low_broken=false;
+            if(pending_choch>0)
+              {
+               if(kind<0)
+                 {
+                  state.direction=1;
+                  state.last_break_was_bos=false;
+                 }
+               pending_choch=0;
+              }
            }
         }
       if(state.have_high && state.last_high_kind!=0 && !high_broken &&
          rates[i].close>state.last_high)
         {
-         high_broken=true; state.direction=1;
-         state.last_break_was_bos=!IsBullishCHoCH(state.last_high_kind);
+         high_broken=true;
+         if(IsBullishCHoCH(state.last_high_kind))
+            pending_choch=1;
+         else
+           {
+            pending_choch=0; state.direction=1;
+            state.last_break_was_bos=true;
+           }
         }
       if(state.have_low && state.last_low_kind!=0 && !low_broken &&
          rates[i].close<state.last_low)
         {
-         low_broken=true; state.direction=-1;
-         state.last_break_was_bos=!IsBearishCHoCH(state.last_low_kind);
+         low_broken=true;
+         if(IsBearishCHoCH(state.last_low_kind))
+            pending_choch=-1;
+         else
+           {
+            pending_choch=0; state.direction=-1;
+            state.last_break_was_bos=true;
+           }
         }
      }
    return true;
@@ -838,6 +870,9 @@ void DrawChartTimeframeStructure()
    double high_reference=0.0,low_reference=0.0;
    double last_high=0.0,last_low=0.0;
    datetime last_high_time=0,last_low_time=0;
+   int pending_choch=0;
+   datetime pending_swing_time=0;
+   double pending_level=0.0;
    for(int i=length;i<total;i++)
      {
       int pivot=i-length;
@@ -856,6 +891,11 @@ void DrawChartTimeframeStructure()
             last_high_time=rates[pivot].time;
             last_high_kind=kind; high_broken=false;
             if(kind!=0) DrawStructurePoint(kind>0?"HH":"LH",last_high_time,last_high);
+            if(pending_choch<0)
+              {
+               if(kind<0) DrawSignal("CHoCH",-1,pending_swing_time,pending_level,rates[i]);
+               pending_choch=0;
+              }
            }
         }
       if(PivotLow(rates,total,pivot,length))
@@ -873,17 +913,38 @@ void DrawChartTimeframeStructure()
             last_low_time=rates[pivot].time;
             last_low_kind=kind; low_broken=false;
             if(kind!=0) DrawStructurePoint(kind>0?"LL":"HL",last_low_time,last_low);
+            if(pending_choch>0)
+              {
+               if(kind<0) DrawSignal("CHoCH",1,pending_swing_time,pending_level,rates[i]);
+               pending_choch=0;
+              }
            }
         }
       if(have_high && last_high_kind!=0 && !high_broken && rates[i].close>last_high)
         {
          high_broken=true;
-         DrawSignal(IsBullishCHoCH(last_high_kind)?"CHoCH":"BOS",1,last_high_time,last_high,rates[i]);
+         if(IsBullishCHoCH(last_high_kind))
+           {
+            pending_choch=1; pending_swing_time=last_high_time; pending_level=last_high;
+           }
+         else
+           {
+            pending_choch=0;
+            DrawSignal("BOS",1,last_high_time,last_high,rates[i]);
+           }
         }
       if(have_low && last_low_kind!=0 && !low_broken && rates[i].close<last_low)
         {
          low_broken=true;
-         DrawSignal(IsBearishCHoCH(last_low_kind)?"CHoCH":"BOS",-1,last_low_time,last_low,rates[i]);
+         if(IsBearishCHoCH(last_low_kind))
+           {
+            pending_choch=-1; pending_swing_time=last_low_time; pending_level=last_low;
+           }
+         else
+           {
+            pending_choch=0;
+            DrawSignal("BOS",-1,last_low_time,last_low,rates[i]);
+           }
         }
      }
    if(Show_Swing_Points && have_high)
@@ -1006,6 +1067,9 @@ bool Rebuild(const bool permit_alert)
    int structure=0;
    int last_break_direction=0;
    bool last_break_was_bos=false;
+   int pending_choch=0;
+   datetime pending_swing_time=0;
+   double pending_level=0.0;
    string newest_signal="";
    bool dashboard_bull_bos=false,dashboard_bear_bos=false;
    bool dashboard_bull_choch=false,dashboard_bear_choch=false;
@@ -1033,6 +1097,16 @@ bool Rebuild(const bool permit_alert)
             last_high_kind=high_kind;
             if(draw_anchored_structure && high_kind!=0)
                DrawStructurePoint(high_kind>0?"HH":"LH",last_high_time,last_high);
+            if(pending_choch<0)
+              {
+               if(high_kind<0)
+                 {
+                  if(draw_anchored_structure) DrawSignal("CHoCH",-1,pending_swing_time,pending_level,rates[i]);
+                  structure=-1; last_break_direction=-1; last_break_was_bos=false;
+                  newest_signal="CHoCH bearish"; newest_signal_time=rates[i].time;
+                 }
+               pending_choch=0;
+              }
            }
         }
       if(PivotLow(rates,total,pivot,length))
@@ -1052,6 +1126,16 @@ bool Rebuild(const bool permit_alert)
             last_low_kind=low_kind;
             if(draw_anchored_structure && low_kind!=0)
                DrawStructurePoint(low_kind>0?"LL":"HL",last_low_time,last_low);
+            if(pending_choch>0)
+              {
+               if(low_kind<0)
+                 {
+                  if(draw_anchored_structure) DrawSignal("CHoCH",1,pending_swing_time,pending_level,rates[i]);
+                  structure=1; last_break_direction=1; last_break_was_bos=false;
+                  newest_signal="CHoCH bullish"; newest_signal_time=rates[i].time;
+                 }
+               pending_choch=0;
+              }
            }
         }
 
@@ -1102,16 +1186,12 @@ bool Rebuild(const bool permit_alert)
          // bullish. Breaking an HH is bullish continuation (BOS).
          if(IsBullishCHoCH(last_high_kind))
            {
-            // Structure events are facts of price action. MA/session/ADX/ATR
-            // qualify a setup; they cannot erase a confirmed CHoCH from the
-            // analytical history or the separate chart-timeframe drawing.
-            if(draw_anchored_structure) DrawSignal("CHoCH",1,last_high_time,last_high,rates[i]);
-            structure=1;
-            last_break_direction=1; last_break_was_bos=false;
-            newest_signal="CHoCH bullish"; newest_signal_time=rates[i].time;
+            pending_choch=1;
+            pending_swing_time=last_high_time; pending_level=last_high;
            }
          else
            {
+            pending_choch=0;
             if(draw_anchored_structure) DrawSignal("BOS",1,last_high_time,last_high,rates[i]);
             structure=1;
             last_break_direction=1; last_break_was_bos=true;
@@ -1125,13 +1205,12 @@ bool Rebuild(const bool permit_alert)
          // bearish. Breaking an LL is bearish continuation (BOS).
          if(IsBearishCHoCH(last_low_kind))
            {
-            if(draw_anchored_structure) DrawSignal("CHoCH",-1,last_low_time,last_low,rates[i]);
-            structure=-1;
-            last_break_direction=-1; last_break_was_bos=false;
-            newest_signal="CHoCH bearish"; newest_signal_time=rates[i].time;
+            pending_choch=-1;
+            pending_swing_time=last_low_time; pending_level=last_low;
            }
          else
            {
+            pending_choch=0;
             if(draw_anchored_structure) DrawSignal("BOS",-1,last_low_time,last_low,rates[i]);
             structure=-1;
             last_break_direction=-1; last_break_was_bos=true;

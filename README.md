@@ -128,9 +128,12 @@ chart-specific prefix.
 - New pivot labels formed during an ordinary pullback do not change an
   established bias to transitional. The bias transitions only after price
   closes through the opposing corrective swing and confirms a CHoCH.
-- A bearish-to-bullish CHoCH occurs when price closes above an LH, creating an
-  HH. A bullish-to-bearish CHoCH occurs when price closes below an HL, creating
-  an LL. Wicks beyond those levels remain liquidity sweeps rather than CHoCH.
+- A bearish-to-bullish CHoCH requires price to close above an LH, creating an
+  HH, and then form an HL as the immediately following opposite-side structure
+  point. A bullish-to-bearish CHoCH requires price to close below an HL,
+  creating an LL, and then form an LH next. Until that corrective pivot is
+  confirmed, the break is only a CHoCH candidate. Wicks beyond the broken
+  levels remain liquidity sweeps rather than CHoCH.
 - **Tradable** always requires an established Bullish or Bearish HTF bias: its
   latest break must be a continuation BOS that creates a new HH or LL, rather
   than a transitional CHoCH. The enabled tradeability timeframe directions
