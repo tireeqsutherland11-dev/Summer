@@ -4,9 +4,11 @@
 
 `Liquidity Sweep Strategy.mq5` combines the Base market-structure EA and Model
 Base liquidity-zone rendering in one Expert Advisor. Base owns the shared
-pivot detection, HH/HL/LH/LL classification and BOS/CHoCH/bias rules (see
-[Reading the structure](#reading-the-structure)); Model Base retains its
-overlap-count, volume, zone, and level rendering.
+pivot detection, HH/HL/LH/LL classification and BOS/bias rules (see
+[Reading the structure](#reading-the-structure)). One difference is the
+Strategy's CHoCH: after the LH (HL) is broken and the HH (LL) forms, it also
+waits for the HL (LH) that follows. Model Base retains its overlap-count,
+volume, zone, and level rendering.
 
 The active chart period decides which engine may draw. The liquidity engine
 draws only when the chart period equals `Setup_Entry_Timeframe` (MTF). Base
@@ -223,30 +225,33 @@ label of the swing that is broken decides the event.
 - **BOS (bullish):** the most recent HH is broken, creating a new HH.
   **BOS (bearish):** the most recent LL is broken, creating a new LL.
 - **CHoCH (becoming bullish):** while the bias is not already bullish, the
-  most recent LH is broken and the swings after it form an HH and then an HL.
+  most recent LH is broken, subsequently forming an HH.
   **CHoCH (becoming bearish):** while the bias is not already bearish, the
-  most recent HL is broken and the swings after it form an LL and then an LH.
+  most recent HL is broken, subsequently forming an LL. No HL (LH) is needed.
   - The CHoCH is drawn on the candle that closed through the LH/HL. The bias
-    and the alert change when it is confirmed, normally when the HL (LH) is
-    confirmed.
-  - If price closes beyond the new HH (LL) before the HL (LH) is confirmed,
-    and the pullback held above the previous low (below the previous high),
-    that close confirms the CHoCH and is also the first BOS. Both are printed
-    on that candle.
+    and the alert change when it is confirmed, which happens when the HH (LL)
+    swing is confirmed.
   - A wick may make the HH (LL) before a candle closes through the LH (HL).
-    If the HL (LH) has also formed by then, the CHoCH is confirmed by that
-    close.
-  - If the swings after the break form an LH (bullish) or an HL (bearish), or
-    an LL before the HL (an HH before the LH), no CHoCH is printed. A swing
-    printed before the breaking close never cancels it.
+    If no LL (HH) has formed since, the CHoCH is confirmed by that close; a
+    close that is also beyond the HH (LL) prints the BOS on the same candle.
+  - No CHoCH is printed in these cases:
+    - the swing high made by the break is an LH (bullish), or the swing low
+      is an HL (bearish);
+    - an LL forms before the HH (an HH before the LL);
+    - a BOS in the old direction happens before the HH (LL) is confirmed.
+
+    A swing printed before the breaking close never cancels it.
 - **Pullbacks inside a trend.** A broken LH while the bias is already bullish
   (or a broken HL while it is bearish) prints nothing.
 - **Trend / bias.** Bullish after a bullish BOS: the market is breaking HH
   structure to create new HHs. Bullish (Transition) after a bullish CHoCH,
   until the next bullish BOS. Bearish and Bearish (Transition) mirror this.
   Because the label decides the event, an HH broken while the bias is bearish
-  is a BOS and turns the bias straight to Bullish. This happens when no LH
-  formed after the last event, or when the last CHoCH attempt failed.
+  (or an LL broken while it is bullish) is a BOS and turns the bias straight
+  round. This happens when no LH (HL) formed after the last event. For
+  example: an LH broken, then an HH (CHoCH,
+  Bullish Transition), then a close below the LL before that HH is "LL
+  broken, creating a new LL". That is a BOS, and the bias returns to Bearish.
 
 ## Reading the dashboard
 
