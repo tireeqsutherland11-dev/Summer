@@ -371,3 +371,55 @@ Strategy Tester visual run with enough history for every selected timeframe,
 and verify the Experts/Journal tabs contain no runtime errors. Test popup and
 push delivery separately because terminal notification configuration is
 outside the EA.
+
+## Base for TradingView (`Base.pine`)
+
+`Base.pine` is a Pine Script v5 indicator with the same functionality as
+`Base.mq5`. It uses the same structure engine: the two swing filter sets and
+Swing Sensitivity blend, HH/HL/LH/LL labels, close-only BOS/CHoCH, bias,
+Consolidation / Undefined, the four-row breakdown, Market Tradeability with
+the entry-filter tooltip, and Optimal Conditions. It has the same inputs,
+groups and defaults, except for the session and alert inputs described below.
+Like the EA, it only analyses the chart and never places orders.
+
+To install it, open the **Pine Editor** in TradingView, paste the contents of
+`Base.pine`, save the script, and click **Add to chart**.
+
+The engine was checked bar by bar against the EA's engine on generated data.
+The check covered Swing Sensitivity 0, 25, 50, 75 and 100, and both forex and
+gold price scales. The labels, BOS/CHoCH events, bias, Consolidation / Undefined
+flags and break levels were identical.
+
+Differences from the EA:
+
+- **History.** Structure is replayed over all loaded history, not over three
+  times `Bars To Process`. `Bars To Process` only limits how far back labels
+  are drawn.
+- **Timeframes.** Each timeframe is read with `request.security` from its
+  latest closed candle, so nothing repaints. Use a chart timeframe at or below
+  the lowest of the three structure timeframes. If the chart is higher, the
+  dashboard shows a note.
+- **Sessions.** The session presets use named time zones, so daylight saving
+  time is handled:
+  - New York `America/New_York`
+  - London `Europe/London`
+  - Tokyo `Asia/Tokyo`
+  - Sydney `Australia/Sydney`
+
+  A custom session uses `Custom Session Timezone` (for example `UTC`, `GMT+2`
+  or `America/New_York`), which replaces the EA's offset inputs.
+- **Dashboard.** The dashboard is a table. `Dashboard Position` chooses its
+  corner.
+- **Alerts.**
+  - One input replaces the EA's popup and push inputs. Enable
+    `Alert On Structure-Timeframe BOS / CHoCH`, then create an alert with
+    **Any alert() function call**. The message matches the EA, for example
+    `EURUSD H4 CHoCH bullish + BOS bullish`.
+  - There are also four alert conditions: bullish and bearish BOS, and bullish
+    and bearish CHoCH.
+- **Indicators.**
+  - ADX is TradingView's Wilder ADX (`ta.dmi`), so its values can differ
+    slightly from MT5's `iADX`.
+  - Market Volume uses the symbol's volume, which is tick volume on most forex
+    feeds.
+  - The HTF MA filter reads the latest closed candle of its timeframe.

@@ -11,6 +11,10 @@ dashboard, and optionally alerts on structure events that became known on the
 most recently closed bar. Both OnTick and a two-second timer check for new
 bars, so a quiet market can still trigger a refresh.
 
+Base.pine is the TradingView (Pine Script v5) indicator version. It runs the
+same structure engine bar by bar and has the same inputs and dashboard; see
+the README section "Base for TradingView" for how it differs.
+
 The processing pipeline is:
 
   1. Resolve PERIOD_CURRENT inputs and load every required series: closed
