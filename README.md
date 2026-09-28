@@ -271,8 +271,8 @@ label of the swing that is broken decides the event.
 - **Pullbacks inside a trend.** A broken LH while the bias is already bullish
   (or a broken HL while it is bearish) prints nothing.
 - **Trend / bias.** Bullish after a bullish BOS: the market is breaking HH
-  structure to create new HHs. Bullish (Transition) after a bullish CHoCH,
-  until the next bullish BOS. Bearish and Bearish (Transition) mirror this.
+  structure to create new HHs. Bullish Transition after a bullish CHoCH,
+  until the next bullish BOS. Bearish and Bearish Transition mirror this.
   Because the label decides the event, an HH broken while the bias is bearish
   (or an LL broken while it is bullish) is a BOS and turns the bias straight
   round. This happens when no LH (HL) formed after the last event. For
@@ -280,16 +280,44 @@ label of the swing that is broken decides the event.
   Bullish Transition), then a close below the LL before that HH is "LL
   broken, creating a new LL". That is a BOS, and the bias returns to Bearish.
 
+- **Consolidation / Undefined.** The bias is Consolidation / Undefined, with
+  no direction, when either condition holds:
+  1. **Sporadic 5-label sequence.** Look at the BOS/CHoCH breaks since the
+     oldest of the last 5 HH/HL/LH/LL labels. It applies when they flip
+     direction at least twice, for example bullish, bearish, bullish. A
+     single flip is an ordinary change of character and is shown as a
+     Transition.
+  2. **Multiple CHoCHs without BoS (the CHoCH trap).** Two or more CHoCHs
+     have printed since the last BoS that confirmed its direction, and the
+     latest is within 4 ATR of an earlier one (the same price area). A BoS
+     that confirms the latest CHoCH ends the trap.
+
+  It also applies before the first structure break of the replay.
+
 ## Reading the dashboard
 
-- **Market Bias** shows the independently replayed HTF (Structure), MTF
-  (Setup) and LTF state using the trend/bias rule above: Bullish or Bearish
-  once the latest event is a BOS, Bullish/Bearish (Transition) after a CHoCH
-  until the next BOS in that direction, and Consolidating until a first event.
-  New swings that break nothing never change it.
+- **HTF breakdown.** The first four rows describe the HTF (Structure)
+  bias:
+  - **Current Bias Classification:** Bullish, Bearish, Bullish Transition,
+    Bearish Transition, or Consolidation / Undefined.
+  - **Trigger Condition Met:** Sporadic 5-label sequence, Multiple CHoCHs
+    without BoS, or clear trending structure.
+  - **Structural Evidence:** the last 5 labels, plus the alternating breaks or
+    the CHoCHs of the trap. For a clear structure, the latest break.
+  - **Trading Recommendation:**
+    - Consolidation / Undefined: stay on the sidelines, or trade only the
+      range boundaries (the extremes of the last 5 labels), until a valid
+      BoS. The rows give the HH/LL closes that would be one.
+    - Transition: wait for the BoS that confirms it.
+    - Trend: trade with it, and watch the level whose break would start a
+      CHoCH.
+- **Market Bias (MTF / LTF)** shows each enabled timeframe's classification;
+  hover it for the same four-part breakdown. Each bias is replayed
+  independently, and new swings that break nothing never change it.
 - **Tradable** always requires an established Bullish or Bearish HTF bias
-  (latest break a BOS). Every timeframe selected in **Tradeability
-  Timeframes** must have a direction and they must agree; the MTF may be
+  (latest break a BOS, not Consolidation / Undefined). Every timeframe
+  selected in **Tradeability Timeframes** must have a direction (a
+  Consolidation / Undefined bias has none) and they must agree; the MTF may be
   transitional, but a selected LTF must itself be established. The reason row
   names the first failed rule. It is an analytical state, not an instruction
   to place a trade.

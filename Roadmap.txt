@@ -174,9 +174,10 @@ CHoCH confirmation
 
 Trend / bias
   * Bullish: the latest event is a bullish BOS (breaking HH structure to
-    create new HHs). Bullish (Transition): the latest event is a bullish
-    CHoCH. Bearish and Bearish (Transition) mirror this. Consolidating: no
-    event yet.
+    create new HHs). Bullish Transition: the latest event is a bullish
+    CHoCH. Bearish and Bearish Transition mirror this. Consolidation /
+    Undefined overrides them all when the structure is sporadic or trapped
+    (section 9), and before the first event.
   * Because the label decides the event, an HH broken while the bias is
     bearish is a BOS, and the bias turns straight to Bullish. This happens
     only when no LH formed after the last event (the mirror for LLs). A
@@ -399,33 +400,69 @@ Base independently replays confirmed structure on Structure_Timeframe (HTF),
 Setup_Entry_Timeframe (MTF), and LTF_Timeframe, each over the same elapsed
 time plus the 3x warm-up. Every bias follows section 2:
 
-  Bullish:              the latest event is a bullish BOS.
-  Bullish (Transition): the latest event is a bullish CHoCH; the next bullish
-                        BOS makes it Bullish.
-  Bearish:              the latest event is a bearish BOS.
-  Bearish (Transition): the latest event is a bearish CHoCH.
-  Consolidating:        no event in the replay yet.
+  Bullish:                   the latest event is a bullish BOS.
+  Bullish Transition:        the latest event is a bullish CHoCH; the next
+                             bullish BOS makes it Bullish.
+  Bearish:                   the latest event is a bearish BOS.
+  Bearish Transition:        the latest event is a bearish CHoCH.
+  Consolidation / Undefined: either condition below holds, or there is no
+                             event in the replay yet. It has no direction.
+
+Consolidation / Undefined conditions (ClassifyConsolidation, evaluated on the
+replay's current state):
+  1. Sporadic 5-label sequence: the BOS/CHoCH breaks since the oldest of the
+     last SPORADIC_LABELS (5) HH/HL/LH/LL labels change direction at least
+     SPORADIC_FLIPS (2) times, e.g. bullish, bearish, bullish. A single flip
+     is an ordinary change of character and stays a Transition; counting it
+     would hide almost every Transition behind the previous trend's breaks.
+  2. Multiple CHoCHs without BoS (the CHoCH trap): at least two CHoCHs since
+     the last BOS that confirmed its direction (a BOS following an event in
+     the same direction), the latest within CHOCH_TRAP_AREA_ATR (4.0) ATR of
+     an earlier one, i.e. in the same horizontal price area. A BOS that
+     confirms the latest CHoCH ends the trap. A BOS against the latest CHoCH
+     does not end it, and a later CHoCH in the same area keeps it.
 
 A broken LH/HL changes nothing until its CHoCH is confirmed. New swings that
 break nothing never change a bias, so an ordinary pullback cannot turn an
 established trend transitional.
 
 Market Tradeability prints Tradable when:
-  * the HTF bias is established (Bullish or Bearish, latest break a BOS). This
-    applies even when HTF is not selected for correlation;
+  * the HTF bias is established (Bullish or Bearish, latest break a BOS, not
+    Consolidation / Undefined). This applies even when HTF is not selected for
+    correlation;
   * every selected tradeability timeframe has a direction and they all agree;
   * a selected LTF is itself established. A selected MTF may be transitional.
 Otherwise it prints Not Tradable, and the reason row names the first failed
-rule: HTF consolidating, HTF transitional, MTF or LTF consolidating, biases in
-conflict, or LTF transitional. Optimal Conditions remains a separate quality
-meter and does not override tradeability.
+rule: HTF Consolidation / Undefined (with its trigger), HTF transitional, MTF
+or LTF Consolidation / Undefined, biases in conflict, or LTF transitional.
+Healthy Extension also needs an HTF direction. Optimal Conditions remains a
+separate quality meter and does not override tradeability.
 
 
 10. DASHBOARD SYSTEM
 --------------------
 
-Bold chart labels display only the enabled HTF, MTF, and LTF market biases,
-Market Tradeability and its reason, plus the Optimal Conditions result, its
+The first four rows are the HTF bias breakdown, always shown:
+  Current Bias Classification  Bullish / Bearish / Bullish Transition /
+                               Bearish Transition / Consolidation / Undefined
+  Trigger Condition Met        Sporadic 5-label sequence, Multiple CHoCHs
+                               without BoS, clear trending structure, or clear
+                               structure (CHoCH awaiting BoS)
+  Structural Evidence          the last five labels plus the breaks since the
+                               oldest of them (sporadic), the trapped CHoCHs
+                               and their levels, or the latest break
+  Trading Recommendation       Consolidation / Undefined:
+                                 * stay on the sidelines, or trade only the
+                                   range boundaries (the extremes of the last
+                                   five labels);
+                                 * until a valid BoS (the HH/LL closes that
+                                   would be one are named).
+                               Transition: wait for the confirming BoS.
+                               Trend: trade with it; the row names the LH/HL
+                               whose break would start a CHoCH.
+Bold chart labels then display the enabled MTF and LTF market biases (hover
+for the same breakdown), Market Tradeability and its reason, plus the Optimal
+Conditions result, its
 enabled requirement rows, and the optimal-condition reason. Disabled
 timeframes and optimal-condition filters are omitted rather than displayed as
 inactive rows. Labels use the chart foreground color so they remain readable
