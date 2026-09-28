@@ -124,11 +124,9 @@ Event rules (the label of the broken swing decides the event)
   * BOS (bullish): the most recent HH is broken, creating a new HH.
   * BOS (bearish): the most recent LL is broken, creating a new LL.
   * CHoCH (becoming bullish / Bullish Transitional): while the bias is not
-    already bullish, the most recent LH is broken, then the swings after it
-    form an HH and an HL.
+    already bullish, the most recent LH is broken, subsequently forming an HH.
   * CHoCH (becoming bearish / Bearish Transitional): while the bias is not
-    already bearish, the most recent HL is broken, then the swings after it
-    form an LL and an LH.
+    already bearish, the most recent HL is broken, subsequently forming an LL.
   * A broken LH while the bias is already bullish (or a broken HL while it is
     bearish) is a pullback inside the trend and prints nothing.
   * An LH broken together with an HH is treated as the CHoCH (the LH is the
@@ -137,18 +135,18 @@ Event rules (the label of the broken swing decides the event)
 CHoCH confirmation
   * The CHoCH is drawn on the candle that closed through the LH/HL. The bias
     and the alert change when it is confirmed:
-      - normally when the HL (bullish) or LH (bearish) after the HH/LL is
-        confirmed;
-      - or when price closes beyond that new HH/LL before the HL/LH is
-        confirmed and the pullback held above the previous low (below the
-        previous high). That close is also the first BOS, and both are
-        printed on it;
+      - normally when the HH (bullish) or LL (bearish) swing formed by the
+        break is confirmed. An HH swing is always confirmed before any close
+        above it, so the CHoCH always comes before the BOS that breaks it;
       - or by the breaking close itself, when a wick through the LH/HL had
-        already made the HH/LL and the HL/LH had already formed.
-  * An LH (bullish) or HL (bearish) formed after the break, or an LL before
-    the HL (an HH before the LH), means no CHoCH. If this happens before the
-    HH/LL forms, the broken level stays the most recent LH/HL, so a later
-    close through it is a fresh break.
+        already made the HH/LL and no LL/HH has formed since. If that close
+        also clears the HH/LL, the BOS is printed on the same candle.
+  * No CHoCH in these cases:
+      - the swing made by the break is an LH (bullish) or HL (bearish);
+      - an LL forms before the HH (an HH before the LL);
+      - a BOS in the old direction happens before the HH/LL is confirmed.
+    If the attempt fails before the HH/LL forms, the broken level stays the
+    most recent LH/HL, so a later close through it is a fresh break.
   * A swing printed before the breaking close but confirmed after it (for
     example the low of a sharp V-reversal) never cancels a CHoCH.
   * If a lower HL in the same leg replaces the broken HL on the chart (or a
@@ -161,16 +159,18 @@ Trend / bias
     event yet.
   * Because the label decides the event, an HH broken while the bias is
     bearish is a BOS, and the bias turns straight to Bullish. This happens
-    only when no LH formed after the last event, or when the last CHoCH
-    attempt failed (the mirror for LLs).
+    only when no LH formed after the last event (the mirror for LLs). A
+    typical case: an HL broken and an LL formed (CHoCH, Bearish Transition),
+    then a close above the HH before that LL. That is "HH broken, creating a
+    new HH".
 
-  Checked on 40 synthetic markets x 4,500 H1 candles (6,505 events):
+  Checked on 40 synthetic markets x 4,500 H1 candles (7,206 events):
   - Correct level: every CHoCH breaks an LH/HL, every BOS breaks an HH/LL,
     and every BOS creates a new HH/LL.
-  - Correct sequence and direction: every CHoCH is followed by HH->HL
-    (LL->LH), and no CHoCH points in the bias's existing direction.
-  - Nothing missed: none of the 1,625 LH->HH->HL / HL->LL->LH sequences with
-    a qualifying break is without its CHoCH.
+  - Correct sequence and direction: every CHoCH is followed by an HH (LL),
+    and no CHoCH points in the bias's existing direction.
+  - Nothing missed: none of the 2,315 LH->HH / HL->LL sequences with a
+    qualifying break is without its CHoCH.
   - No repainting: every event is a close beyond its level, and no drawn
     label or event changes when newer candles arrive.
 
