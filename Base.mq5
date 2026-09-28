@@ -1,5 +1,5 @@
 #property copyright "Market Trend Analyser conversion"
-#property version   "2.10"
+#property version   "2.20"
 #property strict
 #property description "BASE: MT5 port of the Market Trend Analyser Pine Script."
 #property description "Signal/visualisation EA only; the source indicator contains no trading rules."
@@ -25,7 +25,7 @@ input group "Structure Processing"
 input int Bars_To_Process=100;
 
 input group "Swing Detection"
-input int Swing_Detection_Length=5;
+input int Swing_Sensitivity=50; // Swing Sensitivity (0 = Smoothest, 50 = Balanced, 100 = Most Sensitive)
 input bool Show_Swing_Points=true;
 
 input group "BOS Display"
@@ -102,6 +102,21 @@ const int Momentum_Average_Length=20;
 const double Momentum_Minimum_Ratio=0.50;
 const double Momentum_Maximum_Ratio=2.00;
 
+// HH/HL/LH/LL identification uses two sets of the same two filters:
+//  * swing strength: the candles on each side that a swing high (low) must
+//    beat, which is also how many candles it takes to confirm;
+//  * swing size: how far a new swing must travel from the previous opposite
+//    swing, in ATR of the swing candle.  It removes small pullbacks (minor
+//    LH/HL swings); a swing beyond the previous high/low always counts.
+// The Sensitive set finds quick, detailed swings; the Smooth set keeps only
+// major ones.  Swing_Sensitivity blends the two: 0 uses the Smooth set, 100
+// the Sensitive set and 50 the exact average of both.
+const int SENSITIVE_SWING_STRENGTH=2;
+const double SENSITIVE_SWING_SIZE_ATR=1.0;
+const int SMOOTH_SWING_STRENGTH=4;
+const double SMOOTH_SWING_SIZE_ATR=3.0;
+const int SWING_ATR_LENGTH=14;
+
 string g_prefix="";
 datetime g_last_ltf_bar=0;
 datetime g_last_structure_bar=0;
@@ -177,9 +192,22 @@ string TimeframeName(const ENUM_TIMEFRAMES timeframe)
    return StringSubstr(EnumToString(timeframe),7);
   }
 
-int SwingLength()
+struct BASE_SWING_FILTER
   {
-   return MathMax(1,MathMin(50,Swing_Detection_Length));
+   int strength;            // candles on each side a swing must beat
+   double size_atr;         // minimum move from the previous opposite swing, in ATR
+  };
+
+// The working filters: the Smooth and Sensitive sets blended by
+// Swing_Sensitivity (50 = the average of the two sets).
+BASE_SWING_FILTER SwingFilter()
+  {
+   double weight=MathMax(0,MathMin(100,Swing_Sensitivity))/100.0;
+   BASE_SWING_FILTER filter;
+   filter.strength=(int)MathRound(SMOOTH_SWING_STRENGTH+
+                                  (SENSITIVE_SWING_STRENGTH-SMOOTH_SWING_STRENGTH)*weight);
+   filter.size_atr=SMOOTH_SWING_SIZE_ATR+(SENSITIVE_SWING_SIZE_ATR-SMOOTH_SWING_SIZE_ATR)*weight;
+   return filter;
   }
 
 int StructureBars()
@@ -196,7 +224,7 @@ int ChartStructureBars(const ENUM_TIMEFRAMES timeframe)
    int wanted=StructureBars();
    if(structure_seconds>0 && chart_seconds>0)
       wanted=(int)MathCeil((double)StructureBars()*structure_seconds/chart_seconds);
-   return MathMax(2*SwingLength()+2,MathMin(wanted,100000));
+   return MathMax(2*SwingFilter().strength+2,MathMin(wanted,100000));
   }
 
 int ReplayBars(const int displayed)
@@ -240,10 +268,14 @@ bool PivotLow(const MqlRates &rates[],const int total,const int index,const int 
 // swing rather than several contrasting structure points: retain only the
 // highest high or lowest low.  The reference is the extreme from the previous
 // same-side leg, so replacing a candidate does not change what it is compared
-// against when deciding HH/LH or LL/HL.
+// against when deciding HH/LH or LL/HL.  A new leg must also travel at least
+// min_size from the previous opposite swing, unless it takes out the previous
+// swing on its side: a small LH/HL is a pullback inside the current leg, not
+// a swing, while every HH/LL counts because it breaks a structure level.
 bool AcceptStructureHigh(const double value,bool &have_high,double &last_high,
                          int &last_side,bool &have_reference,double &reference,
-                         int &kind)
+                         int &kind,const bool have_low,const double last_low,
+                         const double min_size)
   {
    if(last_side==1)
      {
@@ -252,6 +284,7 @@ bool AcceptStructureHigh(const double value,bool &have_high,double &last_high,
       kind=have_reference?(value>reference?1:-1):0;
       return true;
      }
+   if(have_low && value-last_low<min_size && !(have_high && value>last_high)) return false;
    have_reference=have_high;
    reference=last_high;
    kind=have_high?(value>last_high?1:-1):0;
@@ -263,7 +296,8 @@ bool AcceptStructureHigh(const double value,bool &have_high,double &last_high,
 
 bool AcceptStructureLow(const double value,bool &have_low,double &last_low,
                         int &last_side,bool &have_reference,double &reference,
-                        int &kind)
+                        int &kind,const bool have_high,const double last_high,
+                        const double min_size)
   {
    if(last_side==-1)
      {
@@ -272,6 +306,7 @@ bool AcceptStructureLow(const double value,bool &have_low,double &last_low,
       kind=have_reference?(value<reference?1:-1):0;
       return true;
      }
+   if(have_high && last_high-value<min_size && !(have_low && value<last_low)) return false;
    have_reference=have_low;
    reference=last_low;
    kind=have_low?(value<last_low?1:-1):0;
@@ -393,12 +428,36 @@ void ConfirmCHoCH(BASE_STRUCTURE_EVENT &events[],BASE_STRUCTURE_STATE &state,
    choch.direction=0;
   }
 
+// Average true range over SWING_ATR_LENGTH candles (fewer at the start) at
+// every candle.  It sizes the minimum swing from the swing candle and the
+// candles before it only, so it never looks ahead.
+void SwingATR(const MqlRates &rates[],const int total,double &atr[])
+  {
+   ArrayResize(atr,total);
+   double ranges[];
+   ArrayResize(ranges,total);
+   double sum=0.0;
+   for(int i=0;i<total;i++)
+     {
+      double range=rates[i].high-rates[i].low;
+      if(i>0)
+         range=MathMax(range,MathMax(MathAbs(rates[i].high-rates[i-1].close),
+                                     MathAbs(rates[i].low-rates[i-1].close)));
+      ranges[i]=range;
+      sum+=range;
+      if(i>=SWING_ATR_LENGTH) sum-=ranges[i-SWING_ATR_LENGTH];
+      atr[i]=sum/MathMin(i+1,SWING_ATR_LENGTH);
+     }
+  }
+
 // Replays confirmed swings and close-confirmed breaks over closed candles.
 // Market bias, chart labels and BOS/CHoCH drawings all come from this single
 // routine, so they can never disagree about structure.
 //
-// Swings: a pivot (see PivotHigh) accepted by the alternating-leg rules and
-// labelled HH/LH or LL/HL against the previous leg's extreme.
+// Swings: a pivot of filter.strength candles (see PivotHigh) that has moved
+// at least filter.size_atr ATR from the previous opposite swing, accepted by
+// the alternating-leg rules and labelled HH/LH or LL/HL against the previous
+// leg's extreme.
 //
 // Only a candle close through a swing is a break; a wick is a liquidity
 // sweep.  The label of the broken swing decides the event:
@@ -416,14 +475,17 @@ void ConfirmCHoCH(BASE_STRUCTURE_EVENT &events[],BASE_STRUCTURE_STATE &state,
 //    inside that trend and prints nothing.
 // Trend/bias: bullish after a bullish BOS, bullish transitional after a
 // bullish CHoCH until the next bullish BOS; bearish mirrors this.
-bool ReplayStructure(const MqlRates &rates[],const int total,const int length,
+bool ReplayStructure(const MqlRates &rates[],const int total,const BASE_SWING_FILTER &filter,
                      BASE_STRUCTURE_STATE &state,BASE_STRUCTURE_POINT &points[],
                      BASE_STRUCTURE_EVENT &events[])
   {
    ZeroMemory(state);
    ArrayResize(points,0);
    ArrayResize(events,0);
+   int length=filter.strength;
    if(total<2*length+2) return false;
+   double atr[];
+   SwingATR(rates,total,atr);
    int last_side=0;
    bool have_high_reference=false,have_low_reference=false;
    double high_reference=0.0,low_reference=0.0;
@@ -448,7 +510,8 @@ bool ReplayStructure(const MqlRates &rates[],const int total,const int length,
          int kind=0;
          bool same_leg=last_side==1;
          if(AcceptStructureHigh(rates[pivot].high,state.have_high,state.last_high,last_side,
-                                have_high_reference,high_reference,kind))
+                                have_high_reference,high_reference,kind,state.have_low,
+                                state.last_low,filter.size_atr*atr[pivot]))
            {
             int replaced=same_leg?high_point:-1;
             bool unbroken_lh_replaced=replaced>=0 && lh.active && lh.point==replaced;
@@ -486,7 +549,8 @@ bool ReplayStructure(const MqlRates &rates[],const int total,const int length,
          int kind=0;
          bool same_leg=last_side==-1;
          if(AcceptStructureLow(rates[pivot].low,state.have_low,state.last_low,last_side,
-                               have_low_reference,low_reference,kind))
+                               have_low_reference,low_reference,kind,state.have_high,
+                               state.last_high,filter.size_atr*atr[pivot]))
            {
             int replaced=same_leg?low_point:-1;
             bool unbroken_hl_replaced=replaced>=0 && hl.active && hl.point==replaced;
@@ -573,7 +637,7 @@ bool AnalyseStructure(const ENUM_TIMEFRAMES timeframe,const int wanted,
    int total=CopyRates(_Symbol,timeframe,1,wanted,rates);
    BASE_STRUCTURE_POINT points[];
    BASE_STRUCTURE_EVENT events[];
-   return total>0 && ReplayStructure(rates,total,SwingLength(),state,points,events);
+   return total>0 && ReplayStructure(rates,total,SwingFilter(),state,points,events);
   }
 
 bool DefiniteBias(const BASE_STRUCTURE_STATE &state)
@@ -999,7 +1063,8 @@ bool Rebuild(const bool permit_alert)
   {
    ENUM_TIMEFRAMES timeframe=BASETimeframe();
    ENUM_TIMEFRAMES chart_timeframe=(ENUM_TIMEFRAMES)_Period;
-   int length=SwingLength();
+   BASE_SWING_FILTER filter=SwingFilter();
+   int length=filter.strength;
    int displayed=StructureBars();
    MqlRates rates[];
    ArraySetAsSeries(rates,false);
@@ -1041,7 +1106,7 @@ bool Rebuild(const bool permit_alert)
    BASE_STRUCTURE_STATE structure_state;
    BASE_STRUCTURE_POINT points[];
    BASE_STRUCTURE_EVENT events[];
-   ReplayStructure(rates,total,length,structure_state,points,events);
+   ReplayStructure(rates,total,filter,structure_state,points,events);
 
    ObjectsDeleteAll(0,g_prefix);
    if(anchored)
@@ -1051,7 +1116,7 @@ bool Rebuild(const bool permit_alert)
       BASE_STRUCTURE_STATE chart_state;
       BASE_STRUCTURE_POINT chart_points[];
       BASE_STRUCTURE_EVENT chart_events[];
-      if(ReplayStructure(chart_rates,chart_total,length,chart_state,chart_points,chart_events))
+      if(ReplayStructure(chart_rates,chart_total,filter,chart_state,chart_points,chart_events))
          DrawStructure(chart_rates,chart_total,
                        MathMax(0,chart_total-ChartStructureBars(chart_timeframe)),
                        chart_state,chart_points,chart_events);
@@ -1104,8 +1169,8 @@ bool Rebuild(const bool permit_alert)
 bool ValidInputs()
   {
    string problem="";
-   if(Swing_Detection_Length<1 || Swing_Detection_Length>50)
-      problem="Swing_Detection_Length must be between 1 and 50";
+   if(Swing_Sensitivity<0 || Swing_Sensitivity>100)
+      problem="Swing Sensitivity must be between 0 and 100";
    else if(Bars_To_Process<100)
       problem="Bars_To_Process must be at least 100";
    else if(MA_Length<1 || HTF_MA_Length<1 || ADX_Length<1 || ATR_Length<1)
