@@ -1,5 +1,5 @@
 #property copyright "Market Trend Analyser conversion"
-#property version   "2.20"
+#property version   "2.30"
 #property strict
 #property description "BASE: MT5 port of the Market Trend Analyser Pine Script."
 #property description "Signal/visualisation EA only; the source indicator contains no trading rules."
@@ -117,6 +117,16 @@ const int SMOOTH_SWING_STRENGTH=4;
 const double SMOOTH_SWING_SIZE_ATR=3.0;
 const int SWING_ATR_LENGTH=14;
 
+// The bias is Consolidation / Undefined when either condition holds:
+//  * sporadic structure: the BOS/CHoCH breaks since the oldest of the last
+//    SPORADIC_LABELS HH/HL/LH/LL labels change direction at least
+//    SPORADIC_FLIPS times (for example bullish, bearish, bullish);
+//  * CHoCH trap: at least two CHoCHs since the last BOS that confirmed its
+//    direction, the latest within CHOCH_TRAP_AREA_ATR ATR of an earlier one.
+const int SPORADIC_LABELS=5;
+const int SPORADIC_FLIPS=2;
+const double CHOCH_TRAP_AREA_ATR=4.0;
+
 string g_prefix="";
 datetime g_last_ltf_bar=0;
 datetime g_last_structure_bar=0;
@@ -145,6 +155,20 @@ struct BASE_STRUCTURE_STATE
    double last_low;
    datetime last_high_time;
    datetime last_low_time;
+   // The unbroken levels whose next close-through is a BOS (hh/ll) or starts
+   // a CHoCH (lh/hl).
+   bool have_hh;
+   bool have_lh;
+   bool have_ll;
+   bool have_hl;
+   double hh;
+   double lh;
+   double ll;
+   double hl;
+   // Consolidation / Undefined (see ClassifyConsolidation).
+   int consolidation;       // bit 1: sporadic 5-label sequence, bit 2: CHoCHs without a BoS
+   int labels_from;         // points index of the oldest of the last five labels, -1 if fewer
+   int trap_from;           // events index of the first CHoCH of the trap, -1 if none
   };
 
 // One accepted structure point.  A point is superseded when a more extreme
@@ -428,6 +452,60 @@ void ConfirmCHoCH(BASE_STRUCTURE_EVENT &events[],BASE_STRUCTURE_STATE &state,
    choch.direction=0;
   }
 
+// Consolidation / Undefined: flags the replay's current state when either
+//  1. sporadic structure: the breaks since the oldest of the last five
+//     HH/HL/LH/LL labels change direction at least twice, or
+//  2. CHoCH trap: two or more CHoCHs since the last BOS that confirmed its
+//     direction (a BOS following an event in the same direction), the latest
+//     within CHOCH_TRAP_AREA_ATR ATR of an earlier one.
+// Events are in time order and a CHoCH's break candle is never before an
+// earlier event, so break candles can be compared with label candles.
+void ClassifyConsolidation(const BASE_STRUCTURE_POINT &points[],const BASE_STRUCTURE_EVENT &events[],
+                           const double atr,BASE_STRUCTURE_STATE &state)
+  {
+   state.consolidation=0;
+   state.labels_from=-1;
+   state.trap_from=-1;
+   int labels=0;
+   for(int k=ArraySize(points)-1;k>=0 && labels<SPORADIC_LABELS;k--)
+      if(!points[k].superseded && points[k].kind!=0)
+        {
+         labels++;
+         state.labels_from=k;
+        }
+   if(labels<SPORADIC_LABELS) state.labels_from=-1;
+   int event_count=ArraySize(events);
+   if(state.labels_from>=0)
+     {
+      int flips=0,previous=0;
+      for(int i=0;i<event_count;i++)
+        {
+         if(events[i].break_bar<points[state.labels_from].pivot) continue;
+         if(previous!=0 && events[i].direction!=previous) flips++;
+         previous=events[i].direction;
+        }
+      if(flips>=SPORADIC_FLIPS) state.consolidation|=1;
+     }
+   int start=0;
+   for(int i=event_count-1;i>0;i--)
+      if(events[i].bos && events[i-1].direction==events[i].direction)
+        {
+         start=i+1;
+         break;
+        }
+   int latest=-1;
+   for(int i=event_count-1;i>=start && latest<0;i--)
+      if(!events[i].bos) latest=i;
+   if(latest<0) return;
+   for(int i=start;i<latest;i++)
+      if(!events[i].bos && MathAbs(events[i].level-events[latest].level)<=CHOCH_TRAP_AREA_ATR*atr)
+        {
+         state.consolidation|=2;
+         state.trap_from=i;
+         return;
+        }
+  }
+
 // Average true range over SWING_ATR_LENGTH candles (fewer at the start) at
 // every candle.  It sizes the minimum swing from the swing candle and the
 // candles before it only, so it never looks ahead.
@@ -480,6 +558,8 @@ bool ReplayStructure(const MqlRates &rates[],const int total,const BASE_SWING_FI
                      BASE_STRUCTURE_EVENT &events[])
   {
    ZeroMemory(state);
+   state.labels_from=-1;
+   state.trap_from=-1;
    ArrayResize(points,0);
    ArrayResize(events,0);
    int length=filter.strength;
@@ -625,19 +705,33 @@ bool ReplayStructure(const MqlRates &rates[],const int total,const BASE_SWING_FI
            }
         }
      }
+   state.have_hh=hh.active;
+   state.hh=hh.price;
+   state.have_lh=lh.active;
+   state.lh=lh.price;
+   state.have_ll=ll.active;
+   state.ll=ll.price;
+   state.have_hl=hl.active;
+   state.hl=hl.price;
+   ClassifyConsolidation(points,events,atr[total-1],state);
    return true;
   }
 
 // Replays structure on any timeframe without drawing it.  This keeps the
 // structure, setup and LTF biases independent of each other.
 bool AnalyseStructure(const ENUM_TIMEFRAMES timeframe,const int wanted,
-                      BASE_STRUCTURE_STATE &state,MqlRates &rates[])
+                      BASE_STRUCTURE_STATE &state,MqlRates &rates[],
+                      BASE_STRUCTURE_POINT &points[],BASE_STRUCTURE_EVENT &events[])
   {
    ArraySetAsSeries(rates,false);
    int total=CopyRates(_Symbol,timeframe,1,wanted,rates);
-   BASE_STRUCTURE_POINT points[];
-   BASE_STRUCTURE_EVENT events[];
    return total>0 && ReplayStructure(rates,total,SwingFilter(),state,points,events);
+  }
+
+// The bias direction used for trading: none while Consolidation / Undefined.
+int BiasDirection(const BASE_STRUCTURE_STATE &state)
+  {
+   return state.consolidation!=0?0:state.direction;
   }
 
 bool DefiniteBias(const BASE_STRUCTURE_STATE &state)
@@ -645,15 +739,124 @@ bool DefiniteBias(const BASE_STRUCTURE_STATE &state)
    // A trend is established once its latest break is a BOS.  A CHoCH starts
    // a transition that the next BOS completes; pullback swings that break
    // nothing cannot put an established trend back into transition.
-   return state.direction!=0 && state.last_break_was_bos;
+   return BiasDirection(state)!=0 && state.last_break_was_bos;
   }
 
 string BiasText(const BASE_STRUCTURE_STATE &state)
   {
-   if(state.direction==0) return "Consolidating";
+   if(BiasDirection(state)==0) return "Consolidation / Undefined";
    bool definite=DefiniteBias(state);
-   if(state.direction>0) return definite?"Bullish":"Bullish (Transition)";
-   return definite?"Bearish":"Bearish (Transition)";
+   if(state.direction>0) return definite?"Bullish":"Bullish Transition";
+   return definite?"Bearish":"Bearish Transition";
+  }
+
+string TriggerText(const BASE_STRUCTURE_STATE &state)
+  {
+   if(state.direction==0) return "No structure break yet";
+   string text="";
+   if((state.consolidation&1)!=0) text="Sporadic 5-label sequence";
+   if((state.consolidation&2)!=0) text+=(text==""?"":" + ")+"Multiple CHoCHs without BoS";
+   if(text!="") return text;
+   return state.last_break_was_bos?"Clear trending structure":"Clear structure (CHoCH awaiting BoS)";
+  }
+
+string PriceText(const double price)
+  {
+   return DoubleToString(price,_Digits);
+  }
+
+string BreakText(const BASE_STRUCTURE_EVENT &event)
+  {
+   return (event.direction>0?"bull ":"bear ")+(event.bos?"BoS":"CHoCH");
+  }
+
+string LabelText(const BASE_STRUCTURE_POINT &point)
+  {
+   if(point.side>0) return point.kind>0?"HH":"LH";
+   return point.kind>0?"LL":"HL";
+  }
+
+// The last five labels and every break since the oldest of them, the CHoCHs
+// of a trap, or the latest break of a clear structure.
+string EvidenceText(const BASE_STRUCTURE_STATE &state,const BASE_STRUCTURE_POINT &points[],
+                    const BASE_STRUCTURE_EVENT &events[])
+  {
+   int event_count=ArraySize(events);
+   string labels="";
+   if(state.labels_from>=0)
+      for(int k=state.labels_from;k<ArraySize(points);k++)
+         if(!points[k].superseded && points[k].kind!=0)
+            labels+=(labels==""?"":" ")+LabelText(points[k]);
+   string text=labels==""?"":"Labels "+labels;
+   if((state.consolidation&1)!=0)
+     {
+      string breaks="";
+      for(int i=0;i<event_count;i++)
+         if(events[i].break_bar>=points[state.labels_from].pivot)
+            breaks+=(breaks==""?"":", ")+BreakText(events[i]);
+      text+="; breaks "+breaks;
+     }
+   if((state.consolidation&2)!=0)
+     {
+      string chochs="";
+      for(int i=state.trap_from;i<event_count;i++)
+         if(!events[i].bos) chochs+=(chochs==""?"":", ")+BreakText(events[i])+" "+PriceText(events[i].level);
+      text+=(text==""?"":" | ")+chochs+"; no confirming BoS since";
+     }
+   if(state.consolidation==0 && event_count>0)
+      text+=(text==""?"":"; ")+"latest "+BreakText(events[event_count-1])+" "+
+            PriceText(events[event_count-1].level);
+   return text==""?"No labels yet":text;
+  }
+
+string RecommendationText(const BASE_STRUCTURE_STATE &state,const BASE_STRUCTURE_POINT &points[])
+  {
+   int direction=BiasDirection(state);
+   if(state.direction==0)
+      return "Stay on the sidelines until a BoS establishes a trend";
+   if(direction==0)
+     {
+      // Range boundaries: the extremes of the last five labels.
+      double top=0.0,bottom=0.0;
+      bool have=false;
+      if(state.labels_from>=0)
+         for(int k=state.labels_from;k<ArraySize(points);k++)
+            if(!points[k].superseded && points[k].kind!=0)
+              {
+               if(!have || points[k].price>top) top=points[k].price;
+               if(!have || points[k].price<bottom) bottom=points[k].price;
+               have=true;
+              }
+      string text="Stay on the sidelines";
+      if(have) text+=", or trade only the range boundaries "+PriceText(bottom)+" - "+PriceText(top)+",";
+      text+=" until a valid BoS";
+      if(state.have_hh && state.have_ll)
+         text+=" (close above HH "+PriceText(state.hh)+" or below LL "+PriceText(state.ll)+")";
+      return text;
+     }
+   if(direction>0)
+     {
+      if(!state.last_break_was_bos)
+         return state.have_hh?"Wait for a bullish BoS (close above HH "+PriceText(state.hh)+") before buying":
+                "Wait for a bullish BoS before buying";
+      return state.have_hl?"Favour buys with the trend; a close below HL "+PriceText(state.hl)+" starts a bearish CHoCH":
+             "Favour buys with the trend";
+     }
+   if(!state.last_break_was_bos)
+      return state.have_ll?"Wait for a bearish BoS (close below LL "+PriceText(state.ll)+") before selling":
+             "Wait for a bearish BoS before selling";
+   return state.have_lh?"Favour sells with the trend; a close above LH "+PriceText(state.lh)+" starts a bullish CHoCH":
+          "Favour sells with the trend";
+  }
+
+// The four-line breakdown, joined for a tooltip.
+string BreakdownText(const BASE_STRUCTURE_STATE &state,const BASE_STRUCTURE_POINT &points[],
+                     const BASE_STRUCTURE_EVENT &events[])
+  {
+   return "Current Bias Classification: "+BiasText(state)+
+          "\nTrigger Condition Met: "+TriggerText(state)+
+          "\nStructural Evidence: "+EvidenceText(state,points,events)+
+          "\nTrading Recommendation: "+RecommendationText(state,points);
   }
 
 string TradeabilityTimeframesText()
@@ -668,21 +871,25 @@ string TradeabilityTimeframesText()
 // Market Tradeability: the HTF bias must be established (latest break a
 // BOS); every enabled tradeability timeframe must have a direction and they
 // must all agree; an enabled LTF must itself be established.  The MTF may be
-// transitional.  Returns the result and the reason shown on the dashboard.
+// transitional.  A Consolidation / Undefined bias has no direction.  Returns
+// the result and the reason shown on the dashboard.
 bool EvaluateTradeability(const BASE_STRUCTURE_STATE &htf,const BASE_STRUCTURE_STATE &mtf,
                           const BASE_STRUCTURE_STATE &ltf,string &reason)
   {
    bool htf_definite=DefiniteBias(htf);
    bool ltf_definite=DefiniteBias(ltf);
-   bool available=(!Use_HTF_For_Tradeability || htf.direction!=0) &&
-                  (!Use_MTF_For_Tradeability || mtf.direction!=0) &&
-                  (!Use_LTF_For_Tradeability || ltf.direction!=0);
+   int htf_direction=BiasDirection(htf);
+   int mtf_direction=BiasDirection(mtf);
+   int ltf_direction=BiasDirection(ltf);
+   bool available=(!Use_HTF_For_Tradeability || htf_direction!=0) &&
+                  (!Use_MTF_For_Tradeability || mtf_direction!=0) &&
+                  (!Use_LTF_For_Tradeability || ltf_direction!=0);
    bool match=(!Use_HTF_For_Tradeability || !Use_MTF_For_Tradeability ||
-               htf.direction==mtf.direction) &&
+               htf_direction==mtf_direction) &&
               (!Use_HTF_For_Tradeability || !Use_LTF_For_Tradeability ||
-               htf.direction==ltf.direction) &&
+               htf_direction==ltf_direction) &&
               (!Use_MTF_For_Tradeability || !Use_LTF_For_Tradeability ||
-               mtf.direction==ltf.direction);
+               mtf_direction==ltf_direction);
    bool tradeable=htf_definite && available && match && (!Use_LTF_For_Tradeability || ltf_definite);
    if(tradeable)
      {
@@ -692,10 +899,12 @@ bool EvaluateTradeability(const BASE_STRUCTURE_STATE &htf,const BASE_STRUCTURE_S
              "; HTF is confirmed by HH/LL BOS";
       if(Use_LTF_For_Tradeability) reason+="; LTF is confirmed by BOS";
      }
-   else if(htf.direction==0) reason="HTF is consolidating";
+   else if(htf_direction==0) reason="HTF is Consolidation / Undefined ("+TriggerText(htf)+")";
    else if(!htf_definite) reason="HTF bias is transitional (CHoCH has no subsequent BOS)";
-   else if(Use_MTF_For_Tradeability && mtf.direction==0) reason="MTF is consolidating";
-   else if(Use_LTF_For_Tradeability && ltf.direction==0) reason="LTF is consolidating";
+   else if(Use_MTF_For_Tradeability && mtf_direction==0)
+      reason="MTF is Consolidation / Undefined ("+TriggerText(mtf)+")";
+   else if(Use_LTF_For_Tradeability && ltf_direction==0)
+      reason="LTF is Consolidation / Undefined ("+TriggerText(ltf)+")";
    else if(!match) reason=TradeabilityTimeframesText()+" biases conflict";
    else reason="LTF bias is transitional (CHoCH has no subsequent BOS)";
    return tradeable;
@@ -709,9 +918,10 @@ bool HealthyExtension(const BASE_STRUCTURE_STATE &htf,const BASE_STRUCTURE_STATE
   {
    if(atr==EMPTY_VALUE || atr<=0.0) return false;
    double extension=-1.0;
-   if(htf.direction>0 && ltf.have_low && ltf.last_low_kind<0)
+   int direction=BiasDirection(htf);
+   if(direction>0 && ltf.have_low && ltf.last_low_kind<0)
       extension=(close-ltf.last_low)/atr;
-   else if(htf.direction<0 && ltf.have_high && ltf.last_high_kind<0)
+   else if(direction<0 && ltf.have_high && ltf.last_high_kind<0)
       extension=(ltf.last_high-close)/atr;
    return extension>=0.0 && extension<=Maximum_Extension_ATR;
   }
@@ -1021,7 +1231,11 @@ void DrawDashboardLine(const int row,const string value,const string tooltip="")
    ObjectSetString(0,name,OBJPROP_TOOLTIP,tooltip==""?"\n":tooltip);
   }
 
-void DrawDashboard(const string structure_bias,const string setup_bias,const string ltf_bias,
+// The HTF bias is shown as the full breakdown; the MTF and LTF biases show
+// their classification with the same breakdown as the row's tooltip.
+void DrawDashboard(const BASE_STRUCTURE_STATE &structure_state,const BASE_STRUCTURE_POINT &points[],
+                   const BASE_STRUCTURE_EVENT &events[],const string setup_bias,
+                   const string setup_breakdown,const string ltf_bias,const string ltf_breakdown,
                    const bool bias_ready,const bool tradeable,const string tradeability_reason,
                    const string filter_tooltip,const bool optimal,const bool healthy_extension,
                    const bool good_volume,const double volume_ratio,
@@ -1030,12 +1244,17 @@ void DrawDashboard(const string structure_bias,const string setup_bias,const str
   {
    Comment("");
    int row=0;
-   if(Use_HTF_For_Tradeability)
-      DrawDashboardLine(row++,"Market Bias (HTF/Structure): "+structure_bias);
+   string timeframe=TimeframeName(BASETimeframe());
+   DrawDashboardLine(row++,"Current Bias Classification (HTF "+timeframe+"): "+BiasText(structure_state));
+   DrawDashboardLine(row++,"Trigger Condition Met: "+TriggerText(structure_state));
+   DrawDashboardLine(row++,"Structural Evidence: "+EvidenceText(structure_state,points,events));
+   DrawDashboardLine(row++,"Trading Recommendation: "+RecommendationText(structure_state,points));
    if(Use_MTF_For_Tradeability)
-      DrawDashboardLine(row++,"Market Bias (MTF/Setup): "+setup_bias);
+      DrawDashboardLine(row++,"Market Bias (MTF "+TimeframeName(SetupTimeframe())+"): "+setup_bias,
+                        setup_breakdown);
    if(Use_LTF_For_Tradeability)
-      DrawDashboardLine(row++,"Market Bias (LTF): "+ltf_bias);
+      DrawDashboardLine(row++,"Market Bias (LTF "+TimeframeName(LTFTimeframe())+"): "+ltf_bias,
+                        ltf_breakdown);
    DrawDashboardLine(row++,"Market Tradeability: "+(tradeable?"Tradable":"Not Tradable"),
                      filter_tooltip);
    DrawDashboardLine(row++,"Tradeability Reason: "+tradeability_reason);
@@ -1082,10 +1301,12 @@ bool Rebuild(const bool permit_alert)
    // context instead of a few hours of lower-timeframe candles.
    BASE_STRUCTURE_STATE setup_state,ltf_state;
    MqlRates setup_rates[],ltf_rates[];
+   BASE_STRUCTURE_POINT setup_points[],ltf_points[];
+   BASE_STRUCTURE_EVENT setup_events[],ltf_events[];
    if(!AnalyseStructure(SetupTimeframe(),ReplayBars(ChartStructureBars(SetupTimeframe())),
-                        setup_state,setup_rates)) return false;
+                        setup_state,setup_rates,setup_points,setup_events)) return false;
    if(!AnalyseStructure(LTFTimeframe(),ReplayBars(ChartStructureBars(LTFTimeframe())),
-                        ltf_state,ltf_rates)) return false;
+                        ltf_state,ltf_rates,ltf_points,ltf_events)) return false;
    int ltf_total=ArraySize(ltf_rates);
    double ltf_atr[];
    if(!CopyIndicator(g_ltf_atr_handle,0,1,ltf_atr)) return false;
@@ -1150,7 +1371,9 @@ bool Rebuild(const bool permit_alert)
    bool optimal=EvaluateOptimal(bias_ready,healthy_extension,good_volume,volume_ratio,
                                 good_momentum,momentum_ratio,optimal_reason);
 
-   DrawDashboard(BiasText(structure_state),BiasText(setup_state),BiasText(ltf_state),
+   DrawDashboard(structure_state,points,events,
+                 BiasText(setup_state),BreakdownText(setup_state,setup_points,setup_events),
+                 BiasText(ltf_state),BreakdownText(ltf_state,ltf_points,ltf_events),
                  bias_ready,tradeable,tradeability_reason,
                  EntryFilterTooltip(rates[total-1],ma,adx,atr),optimal,
                  healthy_extension,good_volume,volume_ratio,good_momentum,
