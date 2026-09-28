@@ -173,8 +173,8 @@ and then tune its thresholds for the symbol and timeframe.
 
 `Base.mq5` (formerly Road) is a **chart-analysis and alerting Expert Advisor
 (EA)**. It reconstructs
-market structure from closed candles, draws BOS/CHoCH and boundary overlays,
-and reports multi-timeframe tradeability and market conditions. It never
+market structure from closed candles, draws HH/HL/LH/LL, BOS and CHoCH, and
+reports multi-timeframe tradeability and market conditions. It never
 places, modifies, or closes trades.
 
 ## Install and start
@@ -185,8 +185,8 @@ places, modifies, or closes trades.
 3. In MetaTrader 5, refresh **Navigator > Expert Advisors**, then drag **Base**
    onto a chart. An invalid input is reported in the Experts tab with the
    input's name and valid range.
-4. Leave the default timeframes for the intended H4 boundary / H1 structure /
-   M15 setup / M5 confirmation workflow, or deliberately select alternatives.
+4. Leave the default timeframes for the intended H1 structure / M15 setup /
+   M5 confirmation workflow, or deliberately select alternatives.
 5. Keep **Algo Trading** enabled if you want the EA event loop to run. Base
    itself does not submit orders.
 6. Enable terminal push notifications and provide a MetaQuotes ID before
@@ -199,51 +199,89 @@ before existing chart objects are replaced, so a retry never blanks the chart.
 Attach one instance per chart; each instance owns only chart objects bearing its
 chart-specific prefix.
 
+## Reading the structure
+
+Base reads the swing (external) structure of the trend, the way it is traded
+by hand, and prints every structure event from closed candles only. A wick
+beyond a level is a liquidity sweep, never a break; a candle must close beyond
+it.
+
+- **Swings.** A swing high must be at least as high as the
+  `Swing_Detection_Length` candles on its left and strictly higher than the
+  same number on its right; equal highs (a double top) form one swing at the
+  latest of the equal candles instead of no swing at all. Swing lows mirror
+  this. Swings alternate high, low, high, low: several highs confirmed before
+  the next low are one leg, and only its highest high is kept (likewise the
+  lowest low), so a smaller bounce inside a leg can never be labelled as a
+  separate HL or LH.
+- **HH / LH / LL / HL.** Each swing is compared with the extreme of the
+  previous leg on its side: a higher high is HH, otherwise LH; a lower low is
+  LL, otherwise HL. Every accepted swing inside the displayed window is
+  labelled; the first high and first low of the replay have nothing to compare
+  with, which is why the replay starts well before the displayed window (see
+  `Bars_To_Process`).
+- **BOS.** In a bullish trend the trend high is the highest unbroken swing
+  high. A close above it is a bullish BOS, and the lowest low between that
+  swing high and the breaking candle becomes the **protected low**. A bearish
+  trend mirrors this with the trend low and the protected high.
+- **Internal breaks are ignored.** Closes through pullback swings (a lower
+  high inside a bullish trend, or a higher low above the protected low) are
+  neither BOS nor CHoCH, so an ordinary pullback cannot fake a change of
+  character or a continuation.
+- **CHoCH.** A close below the protected low of a bullish trend (above the
+  protected high of a bearish trend) is a CHoCH candidate. It is confirmed
+  when the first swing formed after that close is an LH (bearish) or an HL
+  (bullish), or when price closes through the swing formed after the break in
+  the new direction before that correction appears. In the second case the
+  same close prints the CHoCH and the new trend's first BOS. The CHoCH is
+  drawn on the candle that closed through the protected level; the bias and
+  alert change when it is confirmed.
+- **Sweeps.** If the first swing after the break is an HH or LL instead, the
+  break was a sweep. No CHoCH is printed, the trend stands, and its protected
+  level moves to the sweep extreme. A swing that only wicks beyond the
+  protected level moves it the same way. Swings printed before the breaking
+  close (for example the low of a sharp V-reversal that is confirmed a few
+  candles later) can neither confirm nor cancel a candidate.
+- **Before a trend exists** the first close through a typed swing decides the
+  trend: through an HH or LL it is a BOS, through an LH or HL it is a CHoCH
+  candidate handled as above.
+
 ## Reading the dashboard
 
-- **Market Bias** shows the independently replayed Structure, Setup, and LTF
-  state. A transition means the latest break is CHoCH rather than continuation.
-- New pivot labels formed during an ordinary pullback do not change an
-  established bias to transitional. The bias transitions only after price
-  closes through the opposing corrective swing and confirms a CHoCH.
-- A bearish-to-bullish CHoCH requires price to close above an LH, creating an
-  HH, and then form an HL as the immediately following opposite-side structure
-  point. A bullish-to-bearish CHoCH requires price to close below an HL,
-  creating an LL, and then form an LH next. Until that corrective pivot is
-  confirmed, the break is only a CHoCH candidate. The corrective pivot must
-  form after the breaking close: a swing printed before the close (for
-  example the low of a sharp V-reversal, confirmed a few candles later) can
-  neither confirm nor cancel the candidate. Wicks beyond the broken levels
-  remain liquidity sweeps rather than CHoCH.
-- **Tradable** always requires an established Bullish or Bearish HTF bias: its
-  latest break must be a continuation BOS that creates a new HH or LL, rather
-  than a transitional CHoCH. The enabled tradeability timeframe directions
-  must also agree, and when LTF participation is enabled its latest break must
-  be BOS. It is an analytical state, not an instruction to place a trade.
+- **Market Bias** shows the independently replayed HTF (Structure), MTF
+  (Setup) and LTF state: Bullish or Bearish once the latest break is a BOS,
+  Bullish/Bearish (Transition) after a CHoCH until the next BOS in the new
+  direction, and Consolidating until a first trend is established. New swings
+  that break nothing never change it.
+- **Tradable** always requires an established Bullish or Bearish HTF bias
+  (latest break a BOS). Every timeframe selected in **Tradeability
+  Timeframes** must have a direction and they must agree; the MTF may be
+  transitional, but a selected LTF must itself be established. The reason row
+  names the first failed rule. It is an analytical state, not an instruction
+  to place a trade.
 - Hover **Market Tradeability** to see the entry filters (MA, HTF MA,
   session, ADX, ATR) for the latest closed structure candle: whether a long or
   short BOS/CHoCH setup would pass, and each filter's reading.
 - **Optimal Conditions** applies only the requirements enabled in the
-  **Optimal Conditions** input group. By default it checks timeframe
-  correlation, boundary clearance, extension, relative tick volume, and
-  relative true-range momentum.
-- BOS/CHoCH alerts describe confirmed structure events and are intentionally
-  independent of the qualification filters.
-
-All calculations use closed candles. A wick beyond a swing is not considered a
-break; a candle must close beyond it. A swing high must be above the
-`Swing_Detection_Length` candles on its left and above the same number on its
-right; equal highs (a double top) form one swing at the latest of the equal
-candles rather than no swing at all. Swing lows mirror this rule.
+  **Optimal Conditions** input group and prints OPTIMAL when all of them pass.
+  By default it checks timeframe correlation (the Tradable rules above) and
+  relative tick volume. Healthy Extension measures from the latest LTF HL (in
+  a bullish HTF bias) or LH (in a bearish one) to the latest LTF close and
+  passes from 0 to 3 LTF ATR; Price Momentum compares the latest LTF true
+  range with its 20-candle average (0.5x to 2x).
+- BOS/CHoCH alerts describe confirmed structure events on the latest closed
+  structure candle and are intentionally independent of the qualification
+  filters. A CHoCH confirmed by a second break alerts as
+  `CHoCH bullish + BOS bullish` (or bearish).
 
 ## Configuration notes
 
-- `Bars_To_Process` controls replay depth and therefore startup/rebuild cost.
-  Start with the default 100 and raise it only when more context is needed.
-- `Boundary_Lookback_Bars` is the Market High and Market Low search window on
-  `Boundary_Timeframe`. Market High is the highest confirmed swing high in the
-  window and is drawn only while it is above the current price; Market Low is
-  the lowest confirmed swing low and is drawn only while it is below price.
+- `Bars_To_Process` is the number of Structure_Timeframe candles drawn. Each
+  replay runs over three times that many closed candles so the trend, its
+  protected levels and the first labels are settled before the first drawn
+  candle. The MTF and LTF biases, and the labels on any other chart period,
+  cover the same elapsed time (100 H1 candles become 400 M15 candles). Start
+  with the default 100 and raise it only when more context is needed.
 - The structure, setup, and LTF inputs are all monitored for new bars, so custom
   timeframe orders still refresh correctly.
 - `Use_HTF_For_Tradeability`, `Use_MTF_For_Tradeability`, and
@@ -251,7 +289,7 @@ candles rather than no swing at all. Swing lows mirror this rule.
   correlate. At least one must remain enabled. This supports HTF-only, HTF/MTF,
   all-three, and other combinations. Disabled timeframe biases are hidden from
   the dashboard, but the established HTF-bias prerequisite always applies.
-- The five `Use_*_For_Optimal` inputs independently choose which requirements
+- The four `Use_*_For_Optimal` inputs independently choose which requirements
   determine the Optimal Conditions result. At least one must remain enabled;
   disabled requirements are omitted from both the result and the dashboard.
 - Preset session UTC offsets are fixed and do not adjust for daylight-saving
@@ -260,12 +298,6 @@ candles rather than no swing at all. Swing lows mirror this rule.
 - A custom session must use exactly `HHMM-HHMM` with numeric digits. Equal start
   and end means all day; ranges such as `2200-0600` cross midnight.
 - ATR thresholds use raw symbol price units, not points or pips.
-- `Trendline_Zones_Per_Side` selects how many distinct resistance and support
-  trendlines may be drawn. The ATR-derived zone remains part of proximity
-  calculations, while the chart renders its centre as a thin line so crossings
-  stay clean. `Trendline_Minimum_Touches` is selectable from
-  3 through 8; no trendline with fewer than three confirmed pivot touches is
-  considered valid.
 
 See [`Roadmap.txt`](Roadmap.txt) for the complete processing model and input
 reference.
