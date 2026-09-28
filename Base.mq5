@@ -12,13 +12,13 @@ enum BASE_ATR_MODE { BASE_ATR_MINIMUM=0, BASE_ATR_MAXIMUM=1, BASE_ATR_RANGE=2 };
 enum BASE_LABEL_SIZE { BASE_TINY=7, BASE_SMALL=9, BASE_NORMAL=11, BASE_LARGE=14 };
 
 input group "Timeframe Inputs"
-input ENUM_TIMEFRAMES Structure_Timeframe=PERIOD_H1; // HTF
-input ENUM_TIMEFRAMES Setup_Entry_Timeframe=PERIOD_M15; // MTF
-input ENUM_TIMEFRAMES LTF_Timeframe=PERIOD_M5;
+input ENUM_TIMEFRAMES Structure_Timeframe=PERIOD_H4; // HTF
+input ENUM_TIMEFRAMES Setup_Entry_Timeframe=PERIOD_H1; // MTF
+input ENUM_TIMEFRAMES LTF_Timeframe=PERIOD_M15; //LTF
 
 input group "Tradeability Timeframes"
 input bool Use_HTF_For_Tradeability=true;
-input bool Use_MTF_For_Tradeability=false;
+input bool Use_MTF_For_Tradeability=true;
 input bool Use_LTF_For_Tradeability=false;
 
 input group "Structure Processing"
