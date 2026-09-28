@@ -18,8 +18,8 @@ The processing pipeline is:
      values and the LTF ATR. If anything is still synchronising, stop here and
      keep the existing drawing; the timer retries.
   2. Replay the structure-timeframe history (ReplayStructure): confirm and
-     classify swing highs/lows, follow the trend's continuation and protected
-     levels, and detect close-confirmed BOS/CHoCH events. Bias, labels and
+     classify swing highs/lows as HH/LH/LL/HL and detect close-confirmed
+     BOS/CHoCH events from the label of each broken swing. Bias, labels and
      signal drawings all come from this one replay.
   3. Replay the Setup (MTF) and LTF histories the same way for their biases.
   4. Delete Base's existing chart objects.
@@ -65,7 +65,7 @@ Use_MTF_For_Tradeability / Use_LTF_For_Tradeability (default false)
 Bars_To_Process (default 100; valid 100..100000)
   Number of closed Structure_Timeframe candles drawn on every rebuild. Each
   replay runs over three times as many candles (at most 100,000): the extra,
-  undrawn candles let the trend, its protected levels and the first HH/HL/LH/LL
+  undrawn candles let the trend, its break levels and the first HH/HL/LH/LL
   labels settle before the first drawn candle, so neither the left edge of the
   chart nor the bias starts cold. The MTF and LTF replays, and the labels on
   any other chart period, cover the same elapsed time (100 H1 candles become
@@ -114,47 +114,65 @@ Swing classification
     same-side leg exists. The 3x warm-up puts them well before the drawn
     window, so every drawn swing carries a label.
 
-Trend levels
-  The replay follows the swing (external) structure of the current trend:
-  * Continuation level: in a bullish trend the highest unbroken swing high
-    (the trend high); in a bearish trend the lowest unbroken swing low.
-  * Protected level: in a bullish trend the low that must hold (the protected
-    low); in a bearish trend the protected high. After a BOS it is the most
-    extreme low (high) between the broken swing and the breaking candle. A
-    swing that only wicks beyond it moves it to that swing.
+Break levels
+  Only a candle close through a swing is a break; a wick is a liquidity sweep.
+  The replay keeps the most recent unbroken HH, LH, LL and HL. If a higher
+  high in the same leg turns the newest LH into an HH, the LH before it is the
+  most recent LH again (and the same for lows). Each level can be broken once.
 
-Break classification
-  * Bullish trend: a close above the trend high is a bullish BOS. It sets the
-    new protected low and the trend high is consumed until a higher swing high
-    forms. Bearish trend: the mirror image with the trend low.
-  * Closes through internal swings (pullback highs below the trend high, lows
-    above the protected low, and their bearish mirrors) are neither BOS nor
-    CHoCH, so a pullback cannot fake a change of character.
-  * A close below the protected low of a bullish trend (above the protected
-    high of a bearish trend) starts a CHoCH candidate. It is resolved by the
-    first swing formed after that close on the corrective side:
-      - an LH (bearish candidate) or HL (bullish candidate) confirms the
-        CHoCH. That swing becomes the new trend's protected level, and a swing
-        made after the break in the new direction becomes its continuation
-        level;
-      - an HH (bearish candidate) or LL (bullish candidate) cancels it. The
-        break was a sweep, the trend stands, and the protected level moves to
-        the extreme reached since the break.
-  * If, before that corrective swing forms, price closes through the swing
-    made after the break in the new direction, that close confirms the CHoCH
-    and is the new trend's first BOS (both are printed).
-  * Only swings whose candle is after the breaking close can confirm or
-    cancel a candidate. A swing printed before the close but confirmed after
-    it (for example the low of a sharp V-reversal) is part of the structure
-    but has no effect on the candidate.
-  * Before any trend exists, the first close through a typed swing decides:
-    through an HH or LL it is a BOS that starts the trend; through an LH or HL
-    it is a CHoCH candidate resolved as above. Untyped swings are not broken.
+Event rules (the label of the broken swing decides the event)
+  * BOS (bullish): the most recent HH is broken, creating a new HH.
+  * BOS (bearish): the most recent LL is broken, creating a new LL.
+  * CHoCH (becoming bullish / Bullish Transitional): while the bias is not
+    already bullish, the most recent LH is broken, then the swings after it
+    form an HH and an HL.
+  * CHoCH (becoming bearish / Bearish Transitional): while the bias is not
+    already bearish, the most recent HL is broken, then the swings after it
+    form an LL and an LH.
+  * A broken LH while the bias is already bullish (or a broken HL while it is
+    bearish) is a pullback inside the trend and prints nothing.
+  * An LH broken together with an HH is treated as the CHoCH (the LH is the
+    level that changes character); likewise an HL broken with an LL.
 
-  Consequences, checked on 40 synthetic markets x 4,500 H1 candles (5,534
-  events): a CHoCH always reverses the trend, a BOS never does, every CHoCH is
-  confirmed as above, every event is a close beyond its level, and no drawn
-  label or event changes when newer candles arrive.
+CHoCH confirmation
+  * The CHoCH is drawn on the candle that closed through the LH/HL. The bias
+    and the alert change when it is confirmed:
+      - normally when the HL (bullish) or LH (bearish) after the HH/LL is
+        confirmed;
+      - or when price closes beyond that new HH/LL before the HL/LH is
+        confirmed and the pullback held above the previous low (below the
+        previous high). That close is also the first BOS, and both are
+        printed on it;
+      - or by the breaking close itself, when a wick through the LH/HL had
+        already made the HH/LL and the HL/LH had already formed.
+  * An LH (bullish) or HL (bearish) formed after the break, or an LL before
+    the HL (an HH before the LH), means no CHoCH. If this happens before the
+    HH/LL forms, the broken level stays the most recent LH/HL, so a later
+    close through it is a fresh break.
+  * A swing printed before the breaking close but confirmed after it (for
+    example the low of a sharp V-reversal) never cancels a CHoCH.
+  * If a lower HL in the same leg replaces the broken HL on the chart (or a
+    higher LH replaces the broken LH), the new swing is the level to break.
+
+Trend / bias
+  * Bullish: the latest event is a bullish BOS (breaking HH structure to
+    create new HHs). Bullish (Transition): the latest event is a bullish
+    CHoCH. Bearish and Bearish (Transition) mirror this. Consolidating: no
+    event yet.
+  * Because the label decides the event, an HH broken while the bias is
+    bearish is a BOS, and the bias turns straight to Bullish. This happens
+    only when no LH formed after the last event, or when the last CHoCH
+    attempt failed (the mirror for LLs).
+
+  Checked on 40 synthetic markets x 4,500 H1 candles (6,505 events):
+  - Correct level: every CHoCH breaks an LH/HL, every BOS breaks an HH/LL,
+    and every BOS creates a new HH/LL.
+  - Correct sequence and direction: every CHoCH is followed by HH->HL
+    (LL->LH), and no CHoCH points in the bias's existing direction.
+  - Nothing missed: none of the 1,625 LH->HH->HL / HL->LL->LH sequences with
+    a qualifying break is without its CHoCH.
+  - No repainting: every event is a close beyond its level, and no drawn
+    label or event changes when newer candles arrive.
 
 Outputs
   Structure_Timeframe events set dashboard market bias, participate in
@@ -186,7 +204,7 @@ Label_Size (default BASE_SMALL)
 Show_Structure_Lines (default true)
   Draws a horizontal segment from the broken swing to the candle that closed
   through it. A CHoCH confirmed several candles later is still drawn at the
-  candle that closed through the protected level. It has no analytical effect
+  candle that closed through the LH/HL. It has no analytical effect
   and only applies when that event's label display is also enabled.
 
 Line_Style (default STYLE_DASH) / Line_Width (default 1)
@@ -359,19 +377,18 @@ Result
 
 Base independently replays confirmed structure on Structure_Timeframe (HTF),
 Setup_Entry_Timeframe (MTF), and LTF_Timeframe, each over the same elapsed
-time plus the 3x warm-up. Every bias is classified the same way:
+time plus the 3x warm-up. Every bias follows section 2:
 
-  Bullish:              the trend is bullish and its latest break is a BOS.
-  Bullish (Transition): a bullish CHoCH has been confirmed and no bullish BOS
-                        has followed yet.
-  Bearish:              the trend is bearish and its latest break is a BOS.
-  Bearish (Transition): a bearish CHoCH has been confirmed and no bearish BOS
-                        has followed yet.
-  Consolidating:        no trend has been established in the replay.
+  Bullish:              the latest event is a bullish BOS.
+  Bullish (Transition): the latest event is a bullish CHoCH; the next bullish
+                        BOS makes it Bullish.
+  Bearish:              the latest event is a bearish BOS.
+  Bearish (Transition): the latest event is a bearish CHoCH.
+  Consolidating:        no event in the replay yet.
 
-A CHoCH candidate (see section 2) changes nothing until it is confirmed. New
-swings that break nothing never change a bias, so an ordinary pullback cannot
-turn an established trend transitional.
+A broken LH/HL changes nothing until its CHoCH is confirmed. New swings that
+break nothing never change a bias, so an ordinary pullback cannot turn an
+established trend transitional.
 
 Market Tradeability prints Tradable when:
   * the HTF bias is established (Bullish or Bearish, latest break a BOS). This
@@ -482,10 +499,13 @@ Structure state (BASE_STRUCTURE_STATE, rebuilt by every replay)
   last_high/last_low   Newest accepted swing levels and times.
   last_high_kind       +1 HH, -1 LH, 0 untyped.
   last_low_kind        +1 LL, -1 HL, 0 untyped.
-  continuation         Trend high (bullish) or trend low (bearish) whose
-                       close-through is a BOS.
-  protected_level      Protected low (bullish) or high (bearish) whose
-                       close-through starts a CHoCH candidate.
+
+Replay-local levels (ReplayStructure)
+  hh / ll              Most recent unbroken HH / LL: a close through it is a
+                       BOS.
+  lh / hl              Most recent unbroken LH / HL: a close through it starts
+                       a CHoCH unless the bias already points that way.
+  choch                The CHoCH waiting for its HH->HL (LL->LH) swings.
 
 Changing globals directly is not a supported user control; they are derived
 state. On initialization, Base validates bounded inputs (printing the invalid

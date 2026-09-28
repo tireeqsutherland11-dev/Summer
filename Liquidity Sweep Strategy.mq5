@@ -1,5 +1,5 @@
 #property copyright "Base + Model Base conversions"
-#property version   "2.40"
+#property version   "2.50"
 #property strict
 #property description "Liquidity Sweep Strategy: merged Base and Model Base EA."
 #property description "Trades MTF liquidity-zone sweeps at 1:2 with breakeven at 1:1; by default only in the Strategy Tester."
@@ -470,17 +470,139 @@ void AddStructureEvent(BASE_STRUCTURE_EVENT &events[],BASE_STRUCTURE_STATE &stat
    state.last_break_was_bos=bos;
   }
 
-// Replays confirmed pivots and close-confirmed breaks over closed candles.
+int LowestBar(const MqlRates &rates[],const int from,const int to)
+  {
+   int best=MathMax(0,from);
+   for(int i=best+1;i<=to;i++)
+      if(rates[i].low<rates[best].low) best=i;
+   return best;
+  }
+
+int HighestBar(const MqlRates &rates[],const int from,const int to)
+  {
+   int best=MathMax(0,from);
+   for(int i=best+1;i<=to;i++)
+      if(rates[i].high>rates[best].high) best=i;
+   return best;
+  }
+
+// One swing level that a candle close can break.  `point` is the swing's
+// index in the structure points, so the level is dropped when that swing is
+// superseded by a more extreme pivot of the same leg.
+struct BASE_LEVEL
+  {
+   bool active;
+   double price;
+   datetime time;
+   int point;
+  };
+
+// A CHoCH whose LH (bullish) or HL (bearish) has been broken and which waits
+// for the swings that confirm it: an HH then an HL (bullish), or an LL then
+// an LH (bearish), after the broken swing.
+struct BASE_CHOCH_CANDIDATE
+  {
+   int direction;           // 1 bullish, -1 bearish, 0 none
+   int break_bar;           // candle that closed through the LH/HL
+   double level;            // the broken LH/HL
+   datetime level_time;
+   int level_point;
+  };
+
+void SetLevel(BASE_LEVEL &level,const BASE_STRUCTURE_POINT &points[],const int index)
+  {
+   level.active=true;
+   level.price=points[index].price;
+   level.time=points[index].time;
+   level.point=index;
+  }
+
+void DropLevel(BASE_LEVEL &level,const int point)
+  {
+   if(level.active && level.point==point) level.active=false;
+  }
+
+void StartCHoCH(BASE_CHOCH_CANDIDATE &choch,const int direction,const int bar,
+                const BASE_LEVEL &level)
+  {
+   choch.direction=direction;
+   choch.break_bar=bar;
+   choch.level=level.price;
+   choch.level_time=level.time;
+   choch.level_point=level.point;
+  }
+
+// Drops a candidate.  While the broken LH/HL is still the latest swing on its
+// side, it stays the most recent LH/HL and a later close through it is a
+// fresh break.
+void CancelCHoCH(BASE_CHOCH_CANDIDATE &choch,BASE_LEVEL &lh,BASE_LEVEL &hl,
+                 const int high_point,const int low_point)
+  {
+   BASE_LEVEL restored;
+   restored.active=true;
+   restored.price=choch.level;
+   restored.time=choch.level_time;
+   restored.point=choch.level_point;
+   if(choch.direction>0 && high_point==choch.level_point) lh=restored;
+   if(choch.direction<0 && low_point==choch.level_point) hl=restored;
+   choch.direction=0;
+  }
+
+// The swings after the broken LH (HL) have reached an HH (LL) and nothing
+// has formed after it yet: the CHoCH waits for its HL (LH).
+bool CHoCHExtreme(const BASE_CHOCH_CANDIDATE &choch,const BASE_STRUCTURE_POINT &points[],
+                  const int high_point,const int low_point)
+  {
+   int extreme=choch.direction>0?high_point:low_point;
+   int opposite=choch.direction>0?low_point:high_point;
+   return extreme>choch.level_point && points[extreme].kind>0 && opposite<extreme;
+  }
+
+// The swings after the broken LH read HH then HL (bullish), or after the
+// broken HL read LL then LH (bearish).
+bool CHoCHComplete(const BASE_CHOCH_CANDIDATE &choch,const BASE_STRUCTURE_POINT &points[],
+                   const int high_point,const int low_point)
+  {
+   int extreme=choch.direction>0?high_point:low_point;
+   int opposite=choch.direction>0?low_point:high_point;
+   return extreme>choch.level_point && points[extreme].kind>0 && opposite>extreme &&
+          points[opposite].kind<0;
+  }
+
+void ConfirmCHoCH(BASE_STRUCTURE_EVENT &events[],BASE_STRUCTURE_STATE &state,
+                  const int bar,BASE_CHOCH_CANDIDATE &choch)
+  {
+   AddStructureEvent(events,state,bar,choch.break_bar,choch.direction,false,
+                     choch.level_time,choch.level);
+   choch.direction=0;
+  }
+
+// Replays confirmed swings and close-confirmed breaks over closed candles.
 // Market bias, chart labels and BOS/CHoCH drawings all come from this single
 // routine, so they can never disagree about structure.
 //
-// Only a candle close beyond a typed level is a break; a wick is a liquidity
-// sweep.  Breaking an HH/LL is a BOS.  Breaking an LH/HL is a CHoCH
-// candidate: bullish CHoCH is confirmed when the next swing low formed after
-// the breaking close is an HL (an LL cancels it), and bearish CHoCH when the
-// next swing high after the close is an LH.  A swing printed before the
-// breaking close, even if confirmed after it, can neither confirm nor cancel
-// the candidate.
+// Swings: a pivot (see PivotHigh) accepted by the alternating-leg rules and
+// labelled HH/LH or LL/HL against the previous leg's extreme.
+//
+// Only a candle close through a swing is a break; a wick is a liquidity
+// sweep.  The label of the broken swing decides the event:
+//  * BOS (bullish): the most recent HH is broken, creating a new HH.
+//  * BOS (bearish): the most recent LL is broken, creating a new LL.
+//  * CHoCH (becoming bullish): while the trend is not already bullish, the
+//    most recent LH is broken and the swings after it read HH then HL.  The
+//    CHoCH is confirmed when both have happened: normally by that HL, or by
+//    the breaking close itself when a wick through the LH already made the
+//    HH and the HL followed.  If price
+//    instead closes above the new HH first, and the pullback since the
+//    break held above the previous low, that close confirms the CHoCH and is
+//    also the first BOS.  An LH or LL formed after the break cancels it;
+//    swings printed before the breaking close never do.
+//  * CHoCH (becoming bearish): the mirror image; the most recent HL is
+//    broken, then an LL and an LH form.
+//  * A broken LH in a bullish trend (or HL in a bearish trend) is a pullback
+//    inside that trend and prints nothing.
+// Trend/bias: bullish after a bullish BOS, bullish transitional after a
+// bullish CHoCH until the next bullish BOS; bearish mirrors this.
 bool ReplayStructure(const MqlRates &rates[],const int total,const int length,
                      BASE_STRUCTURE_STATE &state,BASE_STRUCTURE_POINT &points[],
                      BASE_STRUCTURE_EVENT &events[])
@@ -489,14 +611,22 @@ bool ReplayStructure(const MqlRates &rates[],const int total,const int length,
    ArrayResize(points,0);
    ArrayResize(events,0);
    if(total<2*length+2) return false;
-   bool high_broken=false,low_broken=false;
    int last_side=0;
    bool have_high_reference=false,have_low_reference=false;
    double high_reference=0.0,low_reference=0.0;
    int high_point=-1,low_point=-1;
-   int pending_choch=0,pending_bar=-1;
-   datetime pending_swing_time=0;
-   double pending_level=0.0;
+   // The most recent unbroken HH, LH, LL and HL, plus the LH and HL they
+   // replaced: if a higher high in the same leg turns the newest LH into an
+   // HH, the LH before it is the most recent LH again (lows mirror this).
+   BASE_LEVEL hh,lh,ll,hl,previous_lh,previous_hl;
+   ZeroMemory(hh);
+   ZeroMemory(lh);
+   ZeroMemory(ll);
+   ZeroMemory(hl);
+   ZeroMemory(previous_lh);
+   ZeroMemory(previous_hl);
+   BASE_CHOCH_CANDIDATE choch;
+   ZeroMemory(choch);
    for(int i=length;i<total;i++)
      {
       int pivot=i-length;
@@ -507,17 +637,36 @@ bool ReplayStructure(const MqlRates &rates[],const int total,const int length,
          if(AcceptStructureHigh(rates[pivot].high,state.have_high,state.last_high,last_side,
                                 have_high_reference,high_reference,kind))
            {
-            if(same_leg && high_point>=0) points[high_point].superseded=true;
+            int replaced=same_leg?high_point:-1;
+            bool unbroken_lh_replaced=replaced>=0 && lh.active && lh.point==replaced;
+            if(replaced>=0)
+              {
+               points[high_point].superseded=true;
+               DropLevel(hh,high_point);
+               DropLevel(lh,high_point);
+              }
             high_point=AddStructurePoint(points,pivot,i,rates[pivot],1,kind);
             state.last_high_kind=kind;
             state.last_high_time=rates[pivot].time;
-            high_broken=false;
-            if(pending_choch<0 && pivot>pending_bar)
+            if(kind>0) SetLevel(hh,points,high_point);
+            if(kind<0)
               {
-               if(kind<0)
-                  AddStructureEvent(events,state,i,pending_bar,-1,false,pending_swing_time,pending_level);
-               pending_choch=0;
+               if(replaced<0) previous_lh=lh;
+               SetLevel(lh,points,high_point);
               }
+            else if(unbroken_lh_replaced) lh=previous_lh;
+            // A higher LH in the same leg replaces the broken one on the
+            // chart; it is the LH to break now.
+            if(choch.direction>0 && kind<0 && replaced>=0 && replaced==choch.level_point)
+               choch.direction=0;
+            // Only swings formed after the breaking close can cancel a
+            // CHoCH; the LH that completes HL -> LL -> LH confirms it.
+            else if(choch.direction>0 && kind<0 && pivot>choch.break_bar)
+               CancelCHoCH(choch,lh,hl,high_point,low_point);   // the break made only an LH
+            else if(choch.direction<0 && kind>0 && pivot>choch.break_bar)
+               CancelCHoCH(choch,lh,hl,high_point,low_point);   // an HH, not an LH
+            else if(choch.direction<0 && CHoCHComplete(choch,points,high_point,low_point))
+               ConfirmCHoCH(events,state,i,choch);             // HL broken, LL, then LH
            }
         }
       if(PivotLow(rates,total,pivot,length))
@@ -527,51 +676,98 @@ bool ReplayStructure(const MqlRates &rates[],const int total,const int length,
          if(AcceptStructureLow(rates[pivot].low,state.have_low,state.last_low,last_side,
                                have_low_reference,low_reference,kind))
            {
-            if(same_leg && low_point>=0) points[low_point].superseded=true;
+            int replaced=same_leg?low_point:-1;
+            bool unbroken_hl_replaced=replaced>=0 && hl.active && hl.point==replaced;
+            if(replaced>=0)
+              {
+               points[low_point].superseded=true;
+               DropLevel(ll,low_point);
+               DropLevel(hl,low_point);
+              }
             low_point=AddStructurePoint(points,pivot,i,rates[pivot],-1,kind);
             state.last_low_kind=kind;
             state.last_low_time=rates[pivot].time;
-            low_broken=false;
-            if(pending_choch>0 && pivot>pending_bar)
+            if(kind>0) SetLevel(ll,points,low_point);
+            if(kind<0)
               {
-               if(kind<0)
-                  AddStructureEvent(events,state,i,pending_bar,1,false,pending_swing_time,pending_level);
-               pending_choch=0;
+               if(replaced<0) previous_hl=hl;
+               SetLevel(hl,points,low_point);
               }
+            else if(unbroken_hl_replaced) hl=previous_hl;
+            if(choch.direction<0 && kind<0 && replaced>=0 && replaced==choch.level_point)
+               choch.direction=0;
+            else if(choch.direction<0 && kind<0 && pivot>choch.break_bar)
+               CancelCHoCH(choch,lh,hl,high_point,low_point);   // the break made only an HL
+            else if(choch.direction>0 && kind>0 && pivot>choch.break_bar)
+               CancelCHoCH(choch,lh,hl,high_point,low_point);   // an LL, not an HL
+            else if(choch.direction>0 && CHoCHComplete(choch,points,high_point,low_point))
+               ConfirmCHoCH(events,state,i,choch);             // LH broken, HH, then HL
            }
         }
-      if(state.have_high && state.last_high_kind!=0 && !high_broken &&
-         rates[i].close>state.last_high)
+
+      double close=rates[i].close;
+      // Price closes above the HH of a bullish CHoCH before its HL is
+      // confirmed.  If the pullback from that HH held above the previous low
+      // it was the HL, so the CHoCH is confirmed and this close is the first
+      // BOS; otherwise it is only the BOS of an HH.
+      if(choch.direction>0 && hh.active && hh.point==high_point && close>hh.price &&
+         CHoCHExtreme(choch,points,high_point,low_point))
         {
-         high_broken=true;
-         if(state.last_high_kind<0)
+         int lowest=LowestBar(rates,points[high_point].pivot+1,i);
+         if(rates[lowest].low>=state.last_low) ConfirmCHoCH(events,state,i,choch);
+         choch.direction=0;
+         AddStructureEvent(events,state,i,i,1,true,hh.time,hh.price);
+         hh.active=false;
+        }
+      if(choch.direction<0 && ll.active && ll.point==low_point && close<ll.price &&
+         CHoCHExtreme(choch,points,high_point,low_point))
+        {
+         int highest=HighestBar(rates,points[low_point].pivot+1,i);
+         if(rates[highest].high<=state.last_high) ConfirmCHoCH(events,state,i,choch);
+         choch.direction=0;
+         AddStructureEvent(events,state,i,i,-1,true,ll.time,ll.price);
+         ll.active=false;
+        }
+      // A broken LH is a bullish CHoCH candidate unless the trend is already
+      // bullish, in which case it is a pullback high.  An LH broken together
+      // with an HH is the CHoCH, not a BOS.
+      if(lh.active && close>lh.price)
+        {
+         lh.active=false;
+         if(state.direction<=0 && choch.direction<=0)
            {
-            pending_choch=1;
-            pending_bar=i;
-            pending_swing_time=state.last_high_time;
-            pending_level=state.last_high;
-           }
-         else
-           {
-            pending_choch=0;
-            AddStructureEvent(events,state,i,i,1,true,state.last_high_time,state.last_high);
+            CancelCHoCH(choch,lh,hl,high_point,low_point);
+            StartCHoCH(choch,1,i,lh);
+            // A wick may already have made the HH and HL.
+            if(CHoCHComplete(choch,points,high_point,low_point)) ConfirmCHoCH(events,state,i,choch);
            }
         }
-      if(state.have_low && state.last_low_kind!=0 && !low_broken &&
-         rates[i].close<state.last_low)
+      if(hh.active && close>hh.price)
         {
-         low_broken=true;
-         if(state.last_low_kind<0)
+         hh.active=false;
+         if(choch.direction<=0)
            {
-            pending_choch=-1;
-            pending_bar=i;
-            pending_swing_time=state.last_low_time;
-            pending_level=state.last_low;
+            CancelCHoCH(choch,lh,hl,high_point,low_point);
+            AddStructureEvent(events,state,i,i,1,true,hh.time,hh.price);
            }
-         else
+        }
+      if(hl.active && close<hl.price)
+        {
+         hl.active=false;
+         if(state.direction>=0 && choch.direction>=0)
            {
-            pending_choch=0;
-            AddStructureEvent(events,state,i,i,-1,true,state.last_low_time,state.last_low);
+            CancelCHoCH(choch,lh,hl,high_point,low_point);
+            StartCHoCH(choch,-1,i,hl);
+            if(CHoCHComplete(choch,points,high_point,low_point)) ConfirmCHoCH(events,state,i,choch);
+           }
+        }
+      if(ll.active && close<ll.price)
+        {
+         ll.active=false;
+         if(choch.direction>=0)
+           {
+            CancelCHoCH(choch,lh,hl,high_point,low_point);
+            AddStructureEvent(events,state,i,i,-1,true,ll.time,ll.price);
            }
         }
      }
@@ -1427,13 +1623,13 @@ bool Rebuild(const bool permit_alert)
                  EntryFilterTooltip(rates[total-1],ma,adx,atr),optimal,clear_space,
                  healthy_extension,good_volume,volume_ratio,good_momentum,
                  momentum_ratio,optimal_reason);
-   // Events are stored in replay order, so the last one is the newest.  On a
-   // candle with both a bullish and a bearish event the bearish one is later.
-   int event_count=ArraySize(events);
-   if(permit_alert && event_count>0 && events[event_count-1].bar==total-1)
-      SendBASEAlert((events[event_count-1].bos?"BOS ":"CHoCH ")+
-                    (events[event_count-1].direction>0?"bullish":"bearish"),
-                    rates[total-1].time);
+   // Alert every event that became known on the newest closed candle (a CHoCH
+   // confirmed together with a BOS arrives on the same candle).
+   string signal="";
+   for(int i=ArraySize(events)-1;i>=0 && events[i].bar==total-1;i--)
+      signal=(events[i].bos?"BOS ":"CHoCH ")+(events[i].direction>0?"bullish":"bearish")+
+             (signal==""?"":" + ")+signal;
+   if(permit_alert && signal!="") SendBASEAlert(signal,rates[total-1].time);
    ChartRedraw();
    return true;
   }
