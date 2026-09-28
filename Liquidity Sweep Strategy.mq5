@@ -51,13 +51,13 @@ input int Trendline_Zone_Transparency=50;
 
 input group "BOS Display"
 input bool Show_BOS_Labels=true;
-input color Bullish_BOS_Color=clrTeal;
-input color Bearish_BOS_Color=clrRed;
+input color Bullish_BOS_Color=clrBlue;
+input color Bearish_BOS_Color=clrBlue;
 
 input group "CHoCH Display"
 input bool Show_CHoCH_Labels=true;
-input color Bullish_CHoCH_Color=clrLime;
-input color Bearish_CHoCH_Color=clrMagenta;
+input color Bullish_CHoCH_Color=clrRed;
+input color Bearish_CHoCH_Color=clrRed;
 
 input group "Labels and Lines"
 input BASE_LABEL_SIZE Label_Size=BASE_SMALL;
@@ -273,6 +273,7 @@ struct BASE_STRUCTURE_POINT
 struct BASE_STRUCTURE_EVENT
   {
    int bar;                 // bar index of the confirming candle
+   int break_bar;           // candle that first closed through the level
    int direction;           // 1 bullish, -1 bearish
    bool bos;                // true BOS (continuation), false CHoCH
    datetime swing_time;     // pivot time of the broken level
@@ -454,12 +455,13 @@ int AddStructurePoint(BASE_STRUCTURE_POINT &points[],const int pivot,const int c
   }
 
 void AddStructureEvent(BASE_STRUCTURE_EVENT &events[],BASE_STRUCTURE_STATE &state,
-                       const int bar,const int direction,const bool bos,
+                       const int bar,const int break_bar,const int direction,const bool bos,
                        const datetime swing_time,const double level)
   {
    int index=ArraySize(events);
    ArrayResize(events,index+1,32);
    events[index].bar=bar;
+   events[index].break_bar=break_bar;
    events[index].direction=direction;
    events[index].bos=bos;
    events[index].swing_time=swing_time;
@@ -513,7 +515,7 @@ bool ReplayStructure(const MqlRates &rates[],const int total,const int length,
             if(pending_choch<0 && pivot>pending_bar)
               {
                if(kind<0)
-                  AddStructureEvent(events,state,i,-1,false,pending_swing_time,pending_level);
+                  AddStructureEvent(events,state,i,pending_bar,-1,false,pending_swing_time,pending_level);
                pending_choch=0;
               }
            }
@@ -533,7 +535,7 @@ bool ReplayStructure(const MqlRates &rates[],const int total,const int length,
             if(pending_choch>0 && pivot>pending_bar)
               {
                if(kind<0)
-                  AddStructureEvent(events,state,i,1,false,pending_swing_time,pending_level);
+                  AddStructureEvent(events,state,i,pending_bar,1,false,pending_swing_time,pending_level);
                pending_choch=0;
               }
            }
@@ -552,7 +554,7 @@ bool ReplayStructure(const MqlRates &rates[],const int total,const int length,
          else
            {
             pending_choch=0;
-            AddStructureEvent(events,state,i,1,true,state.last_high_time,state.last_high);
+            AddStructureEvent(events,state,i,i,1,true,state.last_high_time,state.last_high);
            }
         }
       if(state.have_low && state.last_low_kind!=0 && !low_broken &&
@@ -569,7 +571,7 @@ bool ReplayStructure(const MqlRates &rates[],const int total,const int length,
          else
            {
             pending_choch=0;
-            AddStructureEvent(events,state,i,-1,true,state.last_low_time,state.last_low);
+            AddStructureEvent(events,state,i,i,-1,true,state.last_low_time,state.last_low);
            }
         }
      }
@@ -1058,10 +1060,12 @@ void DrawSignal(const string kind,const int direction,const datetime swing_time,
    color clr=direction>0?(bos?Bullish_BOS_Color:Bullish_CHoCH_Color)
                          :(bos?Bearish_BOS_Color:Bearish_CHoCH_Color);
    string key=kind+(direction>0?"_UP_":"_DOWN_")+(string)bar.time;
-   double label_price=direction>0?bar.low:bar.high;
-   DrawText(key,bar.time,label_price,kind,clr,direction>0,(int)Label_Size);
+   // Keep the caption on the broken level.  ANCHOR_UPPER places bullish text
+   // immediately below it; ANCHOR_LOWER places bearish text immediately above.
+   DrawText(key,bar.time,level,kind,clr,direction>0,(int)Label_Size);
    if(Show_Structure_Lines)
-      DrawSegment(key+"_LINE",swing_time,level,bar.time,level,clr,Line_Style,Line_Width);
+      DrawSegment(key+"_LINE",swing_time,level,bar.time,level,
+                  bos?clrBlue:clrRed,Line_Style,Line_Width);
   }
 
 string StructureLabel(const BASE_STRUCTURE_POINT &point)
@@ -1103,8 +1107,11 @@ void DrawStructure(const MqlRates &rates[],const int total,const BASE_STRUCTURE_
          DrawStructurePoint(StructureLabel(points[i]),points[i].time,points[i].price);
    int event_count=ArraySize(events);
    for(int i=0;i<event_count;i++)
+      // A CHoCH may only be confirmed several candles later.  Its visual ends
+      // at the candle that actually broke/touched the level, not that later
+      // confirmation candle.
       DrawSignal(events[i].bos?"BOS":"CHoCH",events[i].direction,events[i].swing_time,
-                 events[i].level,rates[events[i].bar]);
+                 events[i].level,rates[events[i].break_bar]);
    if(Show_Swing_Points && state.have_high)
       DrawSegment("LAST_HIGH",state.last_high_time,state.last_high,rates[total-1].time,
                   state.last_high,clrIndianRed,STYLE_DOT,1);

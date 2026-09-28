@@ -30,13 +30,13 @@ input bool Show_Swing_Points=true;
 
 input group "BOS Display"
 input bool Show_BOS_Labels=true;
-input color Bullish_BOS_Color=clrTeal;
-input color Bearish_BOS_Color=clrRed;
+input color Bullish_BOS_Color=clrBlue;
+input color Bearish_BOS_Color=clrBlue;
 
 input group "CHoCH Display"
 input bool Show_CHoCH_Labels=true;
-input color Bullish_CHoCH_Color=clrLime;
-input color Bearish_CHoCH_Color=clrMagenta;
+input color Bullish_CHoCH_Color=clrRed;
+input color Bearish_CHoCH_Color=clrRed;
 
 input group "Labels and Lines"
 input BASE_LABEL_SIZE Label_Size=BASE_SMALL;
@@ -464,10 +464,10 @@ void DrawSignal(const string kind,const int direction,const datetime swing_time,
    color clr=direction>0?(bos?Bullish_BOS_Color:Bullish_CHoCH_Color)
                          :(bos?Bearish_BOS_Color:Bearish_CHoCH_Color);
    string key=kind+(direction>0?"_UP_":"_DOWN_")+(string)bar.time;
-   double label_price=direction>0?bar.low:bar.high;
-   DrawText(key,bar.time,label_price,kind,clr,direction>0,(int)Label_Size);
+   DrawText(key,bar.time,level,kind,clr,direction>0,(int)Label_Size);
    if(Show_Structure_Lines)
-      DrawSegment(key+"_LINE",swing_time,level,bar.time,level,clr,Line_Style,Line_Width);
+      DrawSegment(key+"_LINE",swing_time,level,bar.time,level,
+                  bos?clrBlue:clrRed,Line_Style,Line_Width);
   }
 
 void DrawStructurePoint(const string kind,const datetime time,const double price)
@@ -503,6 +503,7 @@ void DrawChartTimeframeStructure()
    double last_high=0.0,last_low=0.0;
    datetime last_high_time=0,last_low_time=0;
    int pending_choch=0;
+   int pending_break_bar=-1;
    datetime pending_swing_time=0;
    double pending_level=0.0;
    for(int i=length;i<total;i++)
@@ -525,7 +526,7 @@ void DrawChartTimeframeStructure()
             if(kind!=0) DrawStructurePoint(kind>0?"HH":"LH",last_high_time,last_high);
             if(pending_choch<0)
               {
-               if(kind<0) DrawSignal("CHoCH",-1,pending_swing_time,pending_level,rates[i]);
+               if(kind<0) DrawSignal("CHoCH",-1,pending_swing_time,pending_level,rates[pending_break_bar]);
                pending_choch=0;
               }
            }
@@ -547,7 +548,7 @@ void DrawChartTimeframeStructure()
             if(kind!=0) DrawStructurePoint(kind>0?"LL":"HL",last_low_time,last_low);
             if(pending_choch>0)
               {
-               if(kind<0) DrawSignal("CHoCH",1,pending_swing_time,pending_level,rates[i]);
+               if(kind<0) DrawSignal("CHoCH",1,pending_swing_time,pending_level,rates[pending_break_bar]);
                pending_choch=0;
               }
            }
@@ -557,7 +558,7 @@ void DrawChartTimeframeStructure()
          high_broken=true;
          if(IsBullishCHoCH(last_high_kind))
            {
-            pending_choch=1; pending_swing_time=last_high_time; pending_level=last_high;
+            pending_choch=1; pending_break_bar=i; pending_swing_time=last_high_time; pending_level=last_high;
            }
          else
            {
@@ -570,7 +571,7 @@ void DrawChartTimeframeStructure()
          low_broken=true;
          if(IsBearishCHoCH(last_low_kind))
            {
-            pending_choch=-1; pending_swing_time=last_low_time; pending_level=last_low;
+            pending_choch=-1; pending_break_bar=i; pending_swing_time=last_low_time; pending_level=last_low;
            }
          else
            {
@@ -695,6 +696,7 @@ bool Rebuild(const bool permit_alert)
    int last_break_direction=0;
    bool last_break_was_bos=false;
    int pending_choch=0;
+   int pending_break_bar=-1;
    datetime pending_swing_time=0;
    double pending_level=0.0;
    string newest_signal="";
@@ -728,7 +730,7 @@ bool Rebuild(const bool permit_alert)
               {
                if(high_kind<0)
                  {
-                  if(draw_anchored_structure) DrawSignal("CHoCH",-1,pending_swing_time,pending_level,rates[i]);
+                  if(draw_anchored_structure) DrawSignal("CHoCH",-1,pending_swing_time,pending_level,rates[pending_break_bar]);
                   structure=-1; last_break_direction=-1; last_break_was_bos=false;
                   newest_signal="CHoCH bearish"; newest_signal_time=rates[i].time;
                  }
@@ -757,7 +759,7 @@ bool Rebuild(const bool permit_alert)
               {
                if(low_kind<0)
                  {
-                  if(draw_anchored_structure) DrawSignal("CHoCH",1,pending_swing_time,pending_level,rates[i]);
+                  if(draw_anchored_structure) DrawSignal("CHoCH",1,pending_swing_time,pending_level,rates[pending_break_bar]);
                   structure=1; last_break_direction=1; last_break_was_bos=false;
                   newest_signal="CHoCH bullish"; newest_signal_time=rates[i].time;
                  }
@@ -814,6 +816,7 @@ bool Rebuild(const bool permit_alert)
          if(IsBullishCHoCH(last_high_kind))
            {
             pending_choch=1;
+            pending_break_bar=i;
             pending_swing_time=last_high_time; pending_level=last_high;
            }
          else
@@ -833,6 +836,7 @@ bool Rebuild(const bool permit_alert)
          if(IsBearishCHoCH(last_low_kind))
            {
             pending_choch=-1;
+            pending_break_bar=i;
             pending_swing_time=last_low_time; pending_level=last_low;
            }
          else
