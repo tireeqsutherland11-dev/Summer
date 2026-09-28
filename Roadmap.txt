@@ -7,32 +7,30 @@ Base.mq5 is a MetaTrader 5 Expert Advisor used for analysis, chart drawing, and
 alerts. It does not place, modify, or close orders. On each newly detected bar
 of the Structure, Setup, or LTF timeframe it rebuilds its view from closed
 candles, classifies market structure, draws enabled overlays, updates the
-dashboard, and optionally alerts on a structure event confirmed by the most
-recently closed bar. Both OnTick and a two-second timer check for new bars, so a
-quiet market can still trigger a refresh.
+dashboard, and optionally alerts on structure events that became known on the
+most recently closed bar. Both OnTick and a two-second timer check for new
+bars, so a quiet market can still trigger a refresh.
 
 The processing pipeline is:
 
   1. Resolve PERIOD_CURRENT inputs and load every required series: closed
-     structure, setup, LTF, boundary and chart candles plus the enabled MA,
-     ADX and ATR values. If anything is still synchronising, stop here and
+     structure, setup, LTF and chart candles plus the enabled MA, ADX and ATR
+     values and the LTF ATR. If anything is still synchronising, stop here and
      keep the existing drawing; the timer retries.
-  2. Replay the structure-timeframe history once (ReplayStructure): confirm
-     and classify swing highs/lows and detect close-confirmed BOS/CHoCH
-     events. Bias, labels and signal drawings all come from this replay.
-  3. Delete Base's existing chart objects.
-  4. Draw the structure: the structure replay itself on the structure chart,
+  2. Replay the structure-timeframe history (ReplayStructure): confirm and
+     classify swing highs/lows, follow the trend's continuation and protected
+     levels, and detect close-confirmed BOS/CHoCH events. Bias, labels and
+     signal drawings all come from this one replay.
+  3. Replay the Setup (MTF) and LTF histories the same way for their biases.
+  4. Delete Base's existing chart objects.
+  5. Draw the structure: the structure replay itself on the structure chart,
      or a replay of the active chart timeframe on any other chart.
-  5. Reconstruct the current HTF, MTF and LTF biases.
   6. Qualify the latest closed structure candle with the session, MA, ADX and
-     ATR filters (shown in the dashboard tooltip).
-  7. Draw optional MA lines, current swing levels, higher-timeframe market
-     boundaries, and trendline zones.
-  8. Correlate HTF, MTF, and LTF direction and require an LTF continuation BOS
-     to decide whether the market is tradeable.
-  9. Combine bias, boundary clearance, extension, relative volume, and relative
-     price momentum in the Optimal Conditions Meter.
- 10. Render the dashboard, send any eligible alert, and redraw the chart.
+     ATR filters (shown in the dashboard tooltip) and draw optional MA lines.
+  7. Correlate the HTF, MTF and LTF biases to decide Market Tradeability.
+  8. Combine tradeability, extension, relative volume and relative price
+     momentum in the Optimal Conditions Meter.
+  9. Render the dashboard, send any eligible alert, and redraw the chart.
 
 All signals are based on closed candles (CopyRates starts at shift 1). A wick
 through a level is intentionally not a break; the candle must close beyond it.
@@ -41,28 +39,21 @@ through a level is intentionally not a break; the candle must close beyond it.
 1. GENERAL / REFRESH SYSTEM
 ---------------------------
 
-Boundary_Timeframe (default PERIOD_H4)
-  The common higher timeframe for Market High/Low and trendline zones.
-  Boundary_Lookback_Bars and Trendline_Bars_To_Apply therefore always count H4
-  bars by default, regardless of the active chart timeframe.
-
 Structure_Timeframe (default PERIOD_H1)
-  The fixed timeframe used for analytical swings, BOS/CHoCH, Market Bias,
-  Market Tradeability, the Optimal Conditions Meter, structure MA, ADX, ATR,
-  dashboard close, and alerts. Changing the chart period
-  does not change these results. PERIOD_CURRENT remains available as an
-  explicit opt-in to chart-dependent analysis.
+  The fixed timeframe used for the HTF swings, BOS/CHoCH, HTF Market Bias,
+  Market Tradeability, structure MA, ADX, ATR, dashboard close, and alerts.
+  Changing the chart period does not change these results. PERIOD_CURRENT
+  remains available as an explicit opt-in to chart-dependent analysis.
 
 Setup_Entry_Timeframe (default PERIOD_M15)
   Drives the independent MTF/setup bias used in timeframe correlation.
 
 LTF_Timeframe (default PERIOD_M5)
-  Supplies the final confirmation bias for timeframe correlation. A definite
-  directional LTF BOS is required when Use_LTF_For_Tradeability is enabled.
-  MTF may be transitional, but HTF must always have an established bias.
+  Supplies the LTF bias for timeframe correlation, plus the close, ATR,
+  volume and true range used by the Optimal Conditions Meter.
 
-Use_HTF_For_Tradeability / Use_MTF_For_Tradeability /
-Use_LTF_For_Tradeability (all default true)
+Use_HTF_For_Tradeability (default true)
+Use_MTF_For_Tradeability / Use_LTF_For_Tradeability (default false)
   Independently select the timeframe biases used by Market Tradeability and
   the correlation component of Optimal Conditions. Enabled biases must be
   directional and agree. When LTF is enabled, its latest break must also be a
@@ -71,12 +62,16 @@ Use_LTF_For_Tradeability (all default true)
   dashboard when its tradeability timeframe is disabled. The established HTF
   prerequisite applies even if HTF is not selected for correlation.
 
-Bars_To_Process (default 100; valid 100 or greater)
-  Requested count of closed Structure_Timeframe candles replayed on every
-  rebuild. The runtime caps it at 100,000. More bars expose more historical pivots/signals
-  and give the state machine more context, but cost more processing and chart
-  objects. Fewer bars are faster but may change the first known pivots and thus
-  the reconstructed structure. Initialization rejects values below 100.
+Bars_To_Process (default 100; valid 100..100000)
+  Number of closed Structure_Timeframe candles drawn on every rebuild. Each
+  replay runs over three times as many candles (at most 100,000): the extra,
+  undrawn candles let the trend, its protected levels and the first HH/HL/LH/LL
+  labels settle before the first drawn candle, so neither the left edge of the
+  chart nor the bias starts cold. The MTF and LTF replays, and the labels on
+  any other chart period, cover the same elapsed time (100 H1 candles become
+  400 M15 or 1,200 M5 candles, each replayed with the same 3x warm-up). More
+  bars expose more history but cost more processing and chart objects.
+  Initialization rejects values below 100.
 
 Result
   Base refreshes when the opening time of the Structure, Setup, or LTF bar 0
@@ -95,57 +90,79 @@ Swing_Detection_Length (default 5; valid 1..50)
   mirrors this with lows. Equal highs or lows within the window (a double top
   or bottom) therefore form one swing owned by the latest equal candle, rather
   than cancelling each other and leaving the swing unidentified. Because N
-  future closed bars are required, confirmation is delayed by N bars. Increasing N finds fewer, larger and later-confirmed
-  swings; decreasing N finds more, smaller and noisier swings.
+  future closed bars are required, confirmation is delayed by N bars.
+  Increasing N finds fewer, larger and later-confirmed swings; decreasing N
+  finds more, smaller and noisier swings.
 
 Show_Swing_Points (default true)
   Shows or hides HH, LH, LL, and HL text and the dotted LAST_HIGH/LAST_LOW
   segments. It does not alter pivot detection, break detection, bias, alerts,
   or tradeability.
 
-Classification and state
+Swing classification
   * Accepted structure legs alternate high, low, high, low. If multiple pivot
     highs are confirmed before a pivot low, they belong to one leg and only
-    the highest is retained; multiple lows before a high similarly retain only
-    the lowest. This extreme-point filter prevents a nearby, less-extreme low
-    from being mislabeled HL immediately after an LL (and the mirrored HH/LH
-    case), which could otherwise manufacture a false CHoCH.
-  * The first high and first low in the replay window are deliberately
-    untyped because no prior same-side pivot exists.
+    the highest is retained (the earlier one is superseded and not drawn);
+    multiple lows before a high similarly retain only the lowest. This keeps a
+    smaller bounce inside a leg from being labelled as a separate HL or LH.
   * After an intervening low leg, a high above the previous high-leg extreme
-    is HH; otherwise it is LH. Equality is therefore treated as LH.
-  * After an intervening high leg, a low below the previous low-leg extreme is
-    LL; otherwise it is HL. Equality is therefore treated as HL.
-  * last_high/last_low and their times store the newest confirmed levels.
-  * high_broken/low_broken allow each level to generate at most one break.
-  * A newly confirmed pivot resets the corresponding broken flag.
+    is HH; otherwise it is LH (equality is LH). After an intervening high leg,
+    a low below the previous low-leg extreme is LL; otherwise it is HL
+    (equality is HL). A replacement inside the same leg is compared with the
+    same previous-leg extreme.
+  * The first high and first low of a replay are untyped because no prior
+    same-side leg exists. The 3x warm-up puts them well before the drawn
+    window, so every drawn swing carries a label.
+
+Trend levels
+  The replay follows the swing (external) structure of the current trend:
+  * Continuation level: in a bullish trend the highest unbroken swing high
+    (the trend high); in a bearish trend the lowest unbroken swing low.
+  * Protected level: in a bullish trend the low that must hold (the protected
+    low); in a bearish trend the protected high. After a BOS it is the most
+    extreme low (high) between the broken swing and the breaking candle. A
+    swing that only wicks beyond it moves it to that swing.
 
 Break classification
-  * Close above a typed HH -> bullish BOS and bullish structure.
-  * A close above a typed LH creates an HH and starts a bullish CHoCH
-    candidate. It is confirmed when the next swing low formed after that
-    close is an HL; an LL cancels it (see section 11).
-  * Close below a typed LL -> bearish BOS and bearish structure.
-  * A close below a typed HL creates an LL and starts a bearish CHoCH
-    candidate, confirmed when the next swing high formed after that close is
-    an LH; an HH cancels it.
+  * Bullish trend: a close above the trend high is a bullish BOS. It sets the
+    new protected low and the trend high is consumed until a higher swing high
+    forms. Bearish trend: the mirror image with the trend low.
+  * Closes through internal swings (pullback highs below the trend high, lows
+    above the protected low, and their bearish mirrors) are neither BOS nor
+    CHoCH, so a pullback cannot fake a change of character.
+  * A close below the protected low of a bullish trend (above the protected
+    high of a bearish trend) starts a CHoCH candidate. It is resolved by the
+    first swing formed after that close on the corrective side:
+      - an LH (bearish candidate) or HL (bullish candidate) confirms the
+        CHoCH. That swing becomes the new trend's protected level, and a swing
+        made after the break in the new direction becomes its continuation
+        level;
+      - an HH (bearish candidate) or LL (bullish candidate) cancels it. The
+        break was a sweep, the trend stands, and the protected level moves to
+        the extreme reached since the break.
+  * If, before that corrective swing forms, price closes through the swing
+    made after the break in the new direction, that close confirms the CHoCH
+    and is the new trend's first BOS (both are printed).
   * Only swings whose candle is after the breaking close can confirm or
     cancel a candidate. A swing printed before the close but confirmed after
     it (for example the low of a sharp V-reversal) is part of the structure
     but has no effect on the candidate.
-  * An untyped first pivot cannot be broken for a signal.
-  * The bullish and bearish break tests are independent; a later BOS or an
-    opposite candidate replaces a pending candidate.
+  * Before any trend exists, the first close through a typed swing decides:
+    through an HH or LL it is a BOS that starts the trend; through an LH or HL
+    it is a CHoCH candidate resolved as above. Untyped swings are not broken.
+
+  Consequences, checked on 40 synthetic markets x 4,500 H1 candles (5,534
+  events): a CHoCH always reverses the trend, a BOS never does, every CHoCH is
+  confirmed as above, every event is a close beyond its level, and no drawn
+  label or event changes when newer candles arrive.
 
 Outputs
   Structure_Timeframe events set dashboard market bias, participate in
-  tradeability, and can produce alerts. Optional text and level segments are
-  independently reconstructed from the active chart timeframe, so changing
-  chart periods still reveals that period's more or less detailed structure.
-  The displayed history spans the same elapsed time as Bars_To_Process: 100 H1
-  structure bars, for example, draw 400 M15 chart bars. Crucially,
-  MA/session/ADX/ATR filters do not suppress historical BOS or CHoCH drawing
-  and do not suppress alerts: they describe whether the setup direction passes
+  tradeability, and can produce alerts. Labels and signals are drawn from a
+  replay of the active chart period, so changing chart periods reveals that
+  period's more or less detailed structure, while the dashboard stays on
+  Structure_Timeframe. MA/session/ADX/ATR filters never suppress BOS or CHoCH
+  drawing or alerts: they describe whether a setup direction passes
   qualification, while structure events remain facts of price action.
 
 
@@ -154,8 +171,8 @@ Outputs
 
 Show_BOS_Labels / Show_CHoCH_Labels (defaults true)
   Control drawing of the corresponding signal. Turning one off suppresses both
-  its text and its structure segment because DrawSignal exits immediately. It
-  does not suppress event classification, market bias, tradeability, or alert.
+  its text and its structure segment. It does not suppress event
+  classification, market bias, tradeability, or alerts.
 
 Bullish_BOS_Color / Bearish_BOS_Color (default blue)
 Bullish_CHoCH_Color / Bearish_CHoCH_Color (default red)
@@ -164,25 +181,23 @@ Bullish_CHoCH_Color / Bearish_CHoCH_Color (default red)
 
 Label_Size (default BASE_SMALL)
   Font size enumeration: TINY=7, SMALL=9, NORMAL=11, LARGE=14. It affects
-  BOS/CHoCH and swing-point text, but not fixed-size Market High/Low labels.
+  BOS/CHoCH and swing-point text.
 
 Show_Structure_Lines (default true)
-  BOS lines are blue and CHoCH lines are red. Each segment ends on the candle
-  that actually broke its structure level; a later CHoCH confirmation does not
-  extend the segment. Signal text is anchored directly to that broken level,
-  below bullish breaks and above bearish breaks.
-  Draws a horizontal segment from the broken pivot to the breaking candle.
-  It has no analytical effect. It only applies when that event's label display
-  is also enabled.
+  Draws a horizontal segment from the broken swing to the candle that closed
+  through it. A CHoCH confirmed several candles later is still drawn at the
+  candle that closed through the protected level. It has no analytical effect
+  and only applies when that event's label display is also enabled.
 
 Line_Style (default STYLE_DASH) / Line_Width (default 1)
   Style the BOS/CHoCH segments. Width is clamped at drawing time to 1..4;
   changing either is visual only.
 
 Result
-  Bullish labels are anchored below the confirming candle at its low; bearish
-  labels are anchored above it at its high. Object IDs include event type,
-  direction, and confirming time to avoid duplicates within a rebuild.
+  Signal text sits on the broken level at the breaking candle: below bullish
+  breaks and above bearish breaks. HL/LL labels are teal below the swing low;
+  HH/LH labels are red above the swing high. Object IDs include event type,
+  direction, and candle time to avoid duplicates within a rebuild.
 
 
 4. LOWER-TIMEFRAME MOVING-AVERAGE QUALIFICATION
@@ -200,7 +215,7 @@ MA_Type (default BASE_EMA)
   BASE_EMA weights recent closes more heavily and reacts faster; BASE_SMA gives
   each close equal weight and is generally smoother/slower at the same length.
 
-MA_Filter_Mode (default BASE_PRICE_ABOVE_BELOW)
+MA_Filter_Mode (internal, BASE_PRICE_ABOVE_BELOW)
   PRICE_ABOVE_BELOW: long passes when structure close > MA; short passes when
   close < MA. Equality passes neither direction.
   FULL_BODY_CLOSE: long requires open and close above MA plus a bullish candle;
@@ -208,8 +223,8 @@ MA_Filter_Mode (default BASE_PRICE_ABOVE_BELOW)
   and normally produces fewer passing setups.
 
 Show_MA_Line (default false) / MA_Color (default blue)
-  When the filter is enabled, draws up to the latest 500 bars as solid width-2
-  segments. Show_MA_Line does nothing if Use_MA_Filter is false. Color and
+  When the filter is enabled, draws the MA over the displayed structure bars
+  (at most 500) as solid width-2 segments. Show_MA_Line does nothing if Use_MA_Filter is false. Color and
   visibility are visual only.
 
 Result
@@ -235,7 +250,7 @@ HTF_MA_Length (default 100; valid 1 or greater)
 HTF_MA_Type (default BASE_EMA)
   Control smoothing exactly like their LTF counterparts, but on HTF bars.
 
-HTF_MA_Filter_Mode (default BASE_PRICE_ABOVE_BELOW)
+HTF_MA_Filter_Mode (internal, BASE_PRICE_ABOVE_BELOW)
   PRICE_ABOVE_BELOW compares the structure candle close with the HTF MA.
   FULL_BODY_CLOSE requires the completed HTF candle's open and close on the
   correct side of its MA and the HTF candle color to match the direction.
@@ -247,7 +262,7 @@ Lookahead protection
   directions stay false and qualification is blocked for that structure bar.
 
 Show_HTF_MA_Line (default false) / HTF_MA_Color (default orange)
-  Draw up to 500 bars of the completed-value HTF MA as solid width-2 segments.
+  Draw the completed-value HTF MA over the same bars as solid width-2 segments.
   They require the filter to be enabled and affect presentation only.
 
 
@@ -300,12 +315,11 @@ ADX_Length (default 14; valid 1 or greater)
   ADX lookback. A shorter length reacts more quickly and erratically; a longer
   length is smoother and slower. ADX measures strength, not bull/bear direction.
 
-ADX_Minimum (default 25.0)
+ADX_Minimum (internal, 25.0)
   A bar passes when ADX is valid and >= this value. Raising it requires stronger
   trends and blocks more setups; lowering it admits weaker/ranging conditions.
-  No explicit range validation is performed for this threshold.
-
-Apply_ADX_Filter_To (default BASE_BOS_ONLY)
+  
+Apply_ADX_Filter_To (internal, BASE_BOS_ONLY)
   BOS_ONLY: ADX applies to BOS qualification; CHoCH ignores ADX.
   BOS_AND_CHOCH: both event types require the ADX pass.
   ATR, MA, and session requirements remain independent.
@@ -321,182 +335,56 @@ Result
 
 Use_ATR_Filter (default true)
   Enables ATR on Structure_Timeframe. Disabling it passes volatility checks and
-  reports OFF. The separate trend-zone system can still use an ATR handle when
-  trendline zones are enabled.
+  reports OFF.
 
 ATR_Length (default 14; valid 1 or greater)
   ATR lookback. Shorter reacts faster to volatility changes; longer is smoother.
-  The same length is also used for trend-zone ATR on Boundary_Timeframe.
+  The same length is used for the LTF ATR of the Optimal Conditions Meter.
 
-ATR_Filter_Mode (default BASE_ATR_MINIMUM)
+ATR_Filter_Mode (internal, BASE_ATR_MINIMUM)
   MINIMUM: passes ATR >= ATR_Minimum.
   MAXIMUM: passes ATR <= ATR_Maximum.
   RANGE:   passes ATR_Minimum <= ATR <= ATR_Maximum.
 
-ATR_Minimum (default 1.0) / ATR_Maximum (default 10.0)
-  Raw symbol-price values, not points, pips, or percentages. Increasing the
-  minimum rejects quieter bars; decreasing it admits them. Decreasing the
-  maximum rejects more volatile bars; increasing it admits them. In RANGE mode,
-  a minimum above the maximum makes all valid ATR values fail. Thresholds have
-  no explicit initialization validation.
+ATR_Minimum (internal, 1.0) / ATR_Maximum (internal, 10.0)
+  Raw symbol-price values, not points, pips, or percentages.
 
 Result
   ATR qualification applies to both BOS and CHoCH tooltip filter results,
   regardless of ADX scope. It does not suppress event drawing or alerts.
 
 
-9. HIGHER-TIMEFRAME MARKET HIGH / MARKET LOW SYSTEM
----------------------------------------------------
-
-Show_HTF_Support_Resistance (default true)
-  Enables horizontal market-boundary discovery and drawing. Disabling it has no
-  effect on structure-timeframe structure.
-
-Boundary_Timeframe (default PERIOD_H4)
-  Timeframe used to find boundary pivots. Higher values create broader, slower
-  boundaries; lower values create more local boundaries.
-
-Boundary_Lookback_Bars (default 50; valid 1..100000)
-  Number of recent closed SR bars searched. Older padding is loaded only so a
-  pivot near the start can be confirmed. The highest confirmed pivot high in
-  the window becomes Market High and the lowest confirmed pivot low becomes
-  Market Low. The boundary series is shared with the trendline system, so one
-  copy serves both.
-
-SR_Pivot_Length (default 3; valid 1..20)
-  Number of closed SR bars required on both sides of a strict pivot. Increasing
-  it selects fewer/more prominent boundaries and increases confirmation delay;
-  decreasing it accepts more local levels.
-
-SR_Line_Style (default STYLE_DOT) / SR_Line_Width (default 2)
-  Visual style. Width is clamped to 1..4 by the common segment drawer.
-
-Show_SR_Labels (default true)
-  Toggles fixed-size (8) "Market High" and "Market Low" labels only. Boundary
-  lines remain when false.
-
-Result
-  Market High is drawn only if above the current bid (or latest closed structure
-  close if no usable bid); Market Low only if below it. Each black horizontal
-  level starts at its pivot and rays right. A boundary on the wrong side of
-  current price is omitted rather than relabeled. These levels do not affect
-  signal, filter, bias, tradeability, or alert calculations. The levels are
-  still measured by the Optimal Conditions Meter when its display overlay is
-  disabled.
-
-
-10. TRENDLINE-ZONE SYSTEM
--------------------------
-
-Show_Trendline_Zones (default true)
-  Enables the nearest valid resistance and support zones.
-  It also controls creation of the trend-timeframe ATR handle.
-
-Boundary_Timeframe (default PERIOD_H4)
-  Source timeframe; PERIOD_CURRENT resolves to the chart timeframe. Higher
-  values create broader and slower zones; lower values create more local zones.
-
-Trendline_Bars_To_Apply (default 300; valid 50..100000)
-  Historical region searched for trend pivots. Larger values provide more line
-  candidates and processing cost; smaller values focus on recent structure.
-
-Trendline_Zones_Per_Side (default 3; valid 1..10)
-  Maximum number of distinct zones drawn for each side. Candidates are ordered
-  by proximity to the latest trend-timeframe close, so 3 can draw as many as
-  three resistance and three support zones when enough valid candidates exist.
-
-Trendline_Pivot_Source (default BASE_TREND_HIGH_LOW)
-  HIGH_LOW uses highs for resistance pivots and lows for support pivots.
-  CLOSE uses closes for both, generally reducing wick influence and moving zone
-  anchors toward candle bodies.
-
-Trendline_Pivot_Strength (default 10; valid 5..15)
-  Strict bars-on-each-side pivot window. Higher strength yields fewer, more
-  prominent and later-confirmed anchors; lower strength yields more candidates.
-
-Trendline_Minimum_Touches (default 3; valid 3..8)
-  Minimum candidate pivots that must touch a proposed line within the threshold.
-  Raising it makes zones rarer and more strongly corroborated; lowering it makes
-  them easier to form. Every displayed trendline always has at least three
-  touches; runtime also clamps this value to 3..8.
-
-Trendline_Resistance_Color (default red)
-Trendline_Support_Color (default green)
-Trendline_Zone_Transparency (default 50; valid 0..100)
-  Visual settings. Transparency 0 is opaque and 100 is invisible. Each
-  ATR-derived zone is rendered as a single one-pixel centre line, avoiding the
-  heavy bands and unpainted seams that filled, overlapping channels can create.
-
-Algorithm and result
-  * Base loads closed trend-timeframe rates plus pivot padding.
-  * A fixed, non-input tolerance of 0.5 times the latest trend-timeframe ATR is
-    used for both touch matching and break rejection.
-  * Every pair of pivots defines a candidate slope. Later pivots within the ATR
-    tolerance count as touches and set the zone's observed upper/lower spread.
-  * A resistance candidate is rejected if an eligible older pivot exceeds it by
-    more than tolerance; support is rejected for the opposite violation. The
-    newest five bars form a stability buffer and do not invalidate a candidate.
-  * Equivalent candidates within the ATR tolerance are consolidated, retaining
-    the version with the most touches (then the closest projection on a tie).
-  * Among distinct candidates meeting the touch minimum, up to the selected
-    number nearest the latest trend close are drawn for resistance and support.
-  * The output is a thin, right-rayed line through the centre of each sloped
-    zone. Zones do not create structure signals, but their latest projected
-    top and bottom bounds are still used by the Optimal Conditions Meter. Zone
-    discovery therefore continues when the overlay is hidden and the meter is
-    enabled.
-
-ATR_Length indirectly changes the zone tolerance. Larger/smoother ATR windows
-usually make its width/tolerance less reactive; higher current ATR expands the
-allowed touch/break distance, while lower ATR tightens it.
-
-
-11. MARKET BIAS AND TRADEABILITY SYSTEM
-------------------------------------------
+9. MARKET BIAS AND TRADEABILITY SYSTEM
+--------------------------------------
 
 Base independently replays confirmed structure on Structure_Timeframe (HTF),
-Setup_Entry_Timeframe (MTF), and LTF_Timeframe. The HTF bias is classified as
-follows:
+Setup_Entry_Timeframe (MTF), and LTF_Timeframe, each over the same elapsed
+time plus the 3x warm-up. Every bias is classified the same way:
 
-  Bullish:              latest break is bullish BOS.
-  Bullish (Transition): bullish direction exists, but the latest break is CHoCH
-                        rather than continuation.
-  Bearish:              latest break is bearish BOS.
-  Bearish (Transition): bearish direction exists, but the latest break is CHoCH
-                        rather than continuation.
-  Consolidating:        no confirmed directional break exists in replay history.
+  Bullish:              the trend is bullish and its latest break is a BOS.
+  Bullish (Transition): a bullish CHoCH has been confirmed and no bullish BOS
+                        has followed yet.
+  Bearish:              the trend is bearish and its latest break is a BOS.
+  Bearish (Transition): a bearish CHoCH has been confirmed and no bearish BOS
+                        has followed yet.
+  Consolidating:        no trend has been established in the replay.
 
-A CHoCH is confirmed as a two-step structure sequence. Bullish CHoCH first
-closes above an LH to create an HH, then requires the immediately following
-opposite-side structure point, formed after that close, to be an HL. Bearish
-CHoCH first closes below an HL to create an LL, then requires the immediately
-following opposite-side structure point, formed after that close, to be an LH. A candidate break does not change bias, draw a
-CHoCH signal, or alert until that corrective pivot is confirmed; a different
-next pivot classification invalidates the candidate.
+A CHoCH candidate (see section 2) changes nothing until it is confirmed. New
+swings that break nothing never change a bias, so an ordinary pullback cannot
+turn an established trend transitional.
 
-The MTF and LTF use the event sequence directly: each is transitional
-only when its latest break is a CHoCH. The first subsequent BOS completes the
-transition, and later pivot classifications cannot make it transitional again
-unless another CHoCH occurs.
-
-Tradeability always requires an established HTF Bullish or Bearish bias. Its
-latest break must be a continuation BOS that creates a new HH or LL; a
-transitional HTF bias cannot be traded. New pivots formed without a structure
-break do not alter that event-derived state. This prerequisite applies even
-when HTF is disabled as a correlation participant. The enabled tradeability
-timeframe biases must also point in the same direction. MTF may be transitional.
-If LTF is enabled, it must be definite,
-meaning its most recent break is a BOS. A CHoCH makes an enabled LTF transitional
-until a subsequent BOS, regardless of later pivot classifications.
-
-Market Tradeability prints Tradable when the selected biases meet those rules.
-Optimal Conditions remains a separate quality meter and does not override
-timeframe tradeability. Otherwise Tradeability prints Not Tradable and
-identifies unavailable, consolidating, conflicting, or transitional selected
-data.
+Market Tradeability prints Tradable when:
+  * the HTF bias is established (Bullish or Bearish, latest break a BOS). This
+    applies even when HTF is not selected for correlation;
+  * every selected tradeability timeframe has a direction and they all agree;
+  * a selected LTF is itself established. A selected MTF may be transitional.
+Otherwise it prints Not Tradable, and the reason row names the first failed
+rule: HTF consolidating, HTF transitional, MTF or LTF consolidating, biases in
+conflict, or LTF transitional. Optimal Conditions remains a separate quality
+meter and does not override tradeability.
 
 
-12. DASHBOARD SYSTEM
+10. DASHBOARD SYSTEM
 --------------------
 
 Bold chart labels display only the enabled HTF, MTF, and LTF market biases,
@@ -512,70 +400,53 @@ Only the latest candle is qualified; the filters never change structure, bias,
 tradeability or alerts.
 
 
-12A. OPTIMAL CONDITIONS METER
------------------------------
+11. OPTIMAL CONDITIONS METER
+----------------------------
 
-The meter is always enabled as an internal calculation. The **Optimal
-Conditions** input group exposes one `Use_*_For_Optimal` switch for each of the
-five requirements below. OPTIMAL is printed only when every selected
-requirement passes, and at least one switch must remain enabled. Unselected
-requirements neither affect the result nor appear on the dashboard. Detailed
-tuning values retain their documented defaults but are intentionally hidden
-from the normal Inputs dialog.
+The **Optimal Conditions** input group exposes one Use_*_For_Optimal switch
+for each of the four requirements below. OPTIMAL is printed only when every
+selected requirement passes, and at least one switch must remain enabled.
+Unselected requirements neither affect the result nor appear on the
+dashboard. Tuning values are internal and hidden from the Inputs dialog.
 
-Definite Market Bias
-  Requires an established HTF bias with a continuation BOS creating a new HH
-  or LL, plus directional correlation between the enabled tradeability
-  timeframes. MTF may be transitional. When LTF is enabled, its latest break
-  must be a BOS; a CHoCH remains transitional until a later BOS confirms
-  continuation.
+Timeframe Correlation (Use_Timeframe_Correlation_For_Optimal, default true)
+  Passes exactly when Market Tradeability is Tradable (section 9).
 
-Clear Technical Space
-  The latest price must be farther than Boundary_Clearance_ATR (default 1.0)
-  LTF ATR from every available higher-timeframe Market High,
-  Market Low, resistance trendline zone, and support trendline zone. Being
-  inside a trendline zone also blocks it. The dashboard identifies the first
-  nearby boundary. A missing/invalid ATR blocks the requirement.
+Healthy Extension (Use_Healthy_Extension_For_Optimal, default false)
+  Measured in the HTF bias direction, which is the trading direction. With a
+  bullish HTF bias the anchor is the latest LTF swing low and it must be an
+  HL; the extension is (LTF close - HL) / LTF ATR. With a bearish HTF bias the
+  anchor is the latest LTF swing high, which must be an LH, and the extension
+  is (LH - LTF close) / LTF ATR. It passes from 0 through
+  Maximum_Extension_ATR (3.0). No HTF direction, an LL/HH anchor, price beyond
+  the anchor, or a missing ATR fails it.
 
-Healthy Extension
-  In a bullish trend, extension is measured from the newest corrective low to
-  the latest close; in a bearish trend it is measured from the newest
-  corrective high. The distance must be non-negative and no greater than
-  Maximum_Extension_ATR (default 3.0) ATR. Strict tradeability independently
-  ensures that the anchor is an HL or LH, so both a correction and a controlled
-  post-correction run are required.
-
-Good Market Volume
+Good Market Volume (Use_Market_Volume_For_Optimal, default true)
   The newest closed LTF candle's tick volume is divided by the average of the
-  preceding Volume_Average_Length candles (default 20). It passes from
-  Volume_Minimum_Ratio (default 0.50) through Volume_Maximum_Ratio (default
-  2.00), inclusive. This rejects both inactive conditions and volume spikes.
-  MT5 tick volume is used because centralized real volume is not consistently
-  available across instruments.
+  preceding Volume_Average_Length candles (20). It passes from
+  Volume_Minimum_Ratio (0.50) through Volume_Maximum_Ratio (2.00), inclusive.
+  This rejects both inactive conditions and volume spikes. MT5 tick volume is
+  used because centralized real volume is not consistently available.
 
-Good Price Momentum
-  Momentum is the newest closed LTF candle's true range divided by the average true
-  range of the preceding Momentum_Average_Length candles (default 20). True
-  range includes gaps from the preceding close, so the measure captures actual
-  price travel without imposing a bullish or bearish direction. It passes from
-  Momentum_Minimum_Ratio (default 0.50) through Momentum_Maximum_Ratio (default
-  2.00), inclusive. Below the band, price is considered sluggish; above the
-  band, price is considered too fast to enter without chasing. Volume and
-  momentum must both pass, which describes active but controlled conditions
-  rather than treating a volume spike alone as a suitable entry environment.
+Good Price Momentum (Use_Price_Momentum_For_Optimal, default false)
+  The newest closed LTF candle's true range divided by the average true range
+  of the preceding Momentum_Average_Length candles (20). True range includes
+  gaps from the preceding close. It passes from Momentum_Minimum_Ratio (0.50)
+  through Momentum_Maximum_Ratio (2.00), inclusive. Below the band price is
+  sluggish; above it price would have to be chased.
 
 Failure reasons
-  NOT OPTIMAL is accompanied by every failed category: absent continuation
-  bias, the nearby boundary name, excessive/invalid extension, volume that is
-  too low or too high, and momentum that is sluggish or too fast. This makes
-  the final result diagnostic rather than a bare pass/fail flag.
+  NOT OPTIMAL is accompanied by every failed selected requirement: biases
+  that do not correlate, overextension or a missing corrective anchor, volume
+  that is too low or too high, and momentum that is too low or too high.
 
 
-13. ALERT SYSTEM
+12. ALERT SYSTEM
 ----------------
 
-Enable_Popup_Alerts (default true)
-  Calls MT5 Alert with "<symbol> <structure timeframe> <signal>".
+Enable_Popup_Alerts (default false)
+  Calls MT5 Alert with "<symbol> <structure timeframe> <signal>", for example
+  "EURUSD H1 BOS bullish".
 
 Enable_Push_Notifications (default false)
   Sends the same text through SendNotification; terminal notification settings
@@ -583,15 +454,15 @@ Enable_Push_Notifications (default false)
 
 Eligibility and deduplication
   Alerts occur only after initialization, only during a new-bar rebuild, and
-  only when the newest replayed event belongs to the most recently closed bar.
-  A static last-alert time prevents another alert for the same/older timestamp.
-  Display toggles and all qualification filters do not gate alerts. If both
-  directions occurred on one bar, the later stored bearish event is the one
-  alerted. Disabling both channels performs no delivery, though the event is
-  still internally considered by the alert routine.
+  only for events that became known on the most recently closed structure
+  candle. A CHoCH is alerted when it is confirmed. When a second break
+  confirms a CHoCH, both events arrive on the same candle and are sent as one
+  message ("CHoCH bullish + BOS bullish"). A static last-alert time prevents a
+  second alert for the same or an older candle. Display toggles and the
+  qualification filters do not gate alerts.
 
 
-14. INTERNAL VARIABLES AND RESOURCE LIFECYCLE
+13. INTERNAL VARIABLES AND RESOURCE LIFECYCLE
 ---------------------------------------------
 
 Persistent globals
@@ -603,21 +474,18 @@ Persistent globals
   g_htf_ma_handle      HTF MA indicator handle, or INVALID_HANDLE.
   g_adx_handle         Structure-timeframe ADX handle, or INVALID_HANDLE.
   g_atr_handle         Structure-timeframe ATR handle, or INVALID_HANDLE.
-  g_trend_atr_handle   Trend-timeframe ATR handle, or INVALID_HANDLE.
   g_ltf_atr_handle     LTF ATR handle used by the conditions meter.
 
-Key rebuild-local variables
-  rates/ma/adx/atr     Closed-bar price and enabled indicator histories.
-  have_high/have_low   Whether a confirmed pivot of each side exists.
+Structure state (BASE_STRUCTURE_STATE, rebuilt by every replay)
+  direction            +1 bullish, -1 bearish, 0 not yet established.
+  last_break_was_bos   False after a CHoCH until the next BOS.
+  last_high/last_low   Newest accepted swing levels and times.
   last_high_kind       +1 HH, -1 LH, 0 untyped.
   last_low_kind        +1 LL, -1 HL, 0 untyped.
-  high_broken/low_broken
-                       One-signal-per-current-pivot guards.
-  structure            +1 bullish, -1 bearish, 0 undefined.
-  last_break_direction +1 up, -1 down, 0 none.
-  last_break_was_bos   Distinguishes continuation from transition.
-  newest_signal/time   Candidate alert text and confirming timestamp.
-  dashboard_*          Latest-bar qualification snapshots.
+  continuation         Trend high (bullish) or trend low (bearish) whose
+                       close-through is a BOS.
+  protected_level      Protected low (bullish) or high (bearish) whose
+                       close-through starts a CHoCH candidate.
 
 Changing globals directly is not a supported user control; they are derived
 state. On initialization, Base validates bounded inputs (printing the invalid
@@ -627,12 +495,12 @@ required indicator handles, starts a two-second timer, and attempts a
 non-alerting build. If history or indicator data are still synchronizing (as
 commonly happens just after a chart timeframe change), the incomplete build
 retains the prior display and does not consume the current bar; the timer
-retries it every two seconds until all required data are ready. On deinitialization Base kills the timer,
-releases every created handle, deletes only prefixed objects, and clears the
-chart comment.
+retries it every two seconds until all required data are ready. On
+deinitialization Base kills the timer, releases every created handle, deletes
+only prefixed objects, and clears the chart comment.
 
 
-15. PRACTICAL INTERACTION MAP
+14. PRACTICAL INTERACTION MAP
 -----------------------------
 
   Change structure frequency:
@@ -641,23 +509,16 @@ chart comment.
   Change whether the latest directional setup qualifies:
     MA and HTF-MA settings, session settings, ADX settings, ATR settings.
 
+  Change the structural Tradable result:
+    Only the confirmed swing/break sequence (indirectly affected by the three
+    timeframes, the swing length, available history) and the three
+    Use_*_For_Tradeability switches.
+
   Change the Optimal Conditions result:
-    Incoming clean structure, Boundary_Clearance_ATR,
-    Maximum_Extension_ATR, Volume_Average_Length, the volume ratio bounds,
-    Momentum_Average_Length, and the momentum ratio bounds.
-
-  Change the structural TRADEABLE result:
-    Only incoming confirmed pivot/break sequence (indirectly affected by the
-    structure timeframe, swing length, and available replay history).
-
-  Change boundary overlays:
-    Boundary_Timeframe and SR settings for horizontal Market High/Low; trendline
-    settings and ATR_Length
-    for sloped support/resistance zones.
-
+    The Tradable result and the four Use_*_For_Optimal switches.
 
   Change visuals only:
-    Show toggles, colors, label size, line styles/widths, transparency.
+    Show toggles, colors, label size, line styles/widths.
 
   Change notifications only:
     Enable_Popup_Alerts and Enable_Push_Notifications.
