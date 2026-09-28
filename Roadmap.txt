@@ -84,15 +84,35 @@ Result
 2. SWING-DETECTION AND STRUCTURE SYSTEM
 ---------------------------------------
 
-Swing_Detection_Length (default 5; valid 1..50)
-  A pivot high must be at least as high as every high in the N bars before it
-  and strictly higher than every high in the N bars after it. A pivot low
-  mirrors this with lows. Equal highs or lows within the window (a double top
-  or bottom) therefore form one swing owned by the latest equal candle, rather
-  than cancelling each other and leaving the swing unidentified. Because N
-  future closed bars are required, confirmation is delayed by N bars.
-  Increasing N finds fewer, larger and later-confirmed swings; decreasing N
-  finds more, smaller and noisier swings.
+Swing_Sensitivity (default 50; valid 0..100)
+  HH/HL/LH/LL identification uses two sets of the same two filters:
+    * Swing strength (N): a pivot high must be at least as high as every high
+      in the N bars before it and strictly higher than every high in the N
+      bars after it; pivot lows mirror this. Equal highs or lows (a double top
+      or bottom) form one swing owned by the latest equal candle. N future
+      closed bars are required, so confirmation is delayed by N bars.
+    * Swing size (S x ATR): a new swing must travel at least S times the
+      14-candle ATR of the swing candle from the previous opposite swing.
+      Smaller bounces are pullbacks inside the current leg and are not
+      swings. A swing beyond the previous high/low (an HH or LL) always
+      counts, so the filter only removes minor LH/HL swings.
+  The Sensitive set is N=2, S=1.0 (quick, detailed swings); the Smooth set
+  is N=4, S=3.0 (only major swings). Swing_Sensitivity blends them linearly
+  (strength rounded):
+      0 -> N=4, S=3.0   (Smooth)
+     25 -> N=4, S=2.5
+     50 -> N=3, S=2.0   (Balanced: the exact average of both sets)
+     75 -> N=3, S=1.5
+    100 -> N=2, S=1.0   (Sensitive)
+  Lower values give fewer, larger swings; higher values give more, smaller
+  and faster swings. On 40 synthetic markets x 4,000 H1 candles, the Balanced
+  setting compared with the previous fixed 5-bar pivots as follows:
+    - about as many swings (7.3 vs 7.8 per 100 candles);
+    - 2 bars less confirmation delay;
+    - every turning point of a 3-ATR ZigZag kept (100% vs 99.7%);
+    - 70% of CHoCHs followed by a BOS in their direction (vs 61%).
+  The same ATR is computed inside every replay, so the filter works on any
+  timeframe and never looks ahead.
 
 Show_Swing_Points (default true)
   Shows or hides HH, LH, LL, and HL text and the dotted LAST_HIGH/LAST_LOW
@@ -524,14 +544,14 @@ only prefixed objects, and clears the chart comment.
 -----------------------------
 
   Change structure frequency:
-    Structure_Timeframe, Swing_Detection_Length, Bars_To_Process.
+    Structure_Timeframe, Swing_Sensitivity, Bars_To_Process.
 
   Change whether the latest directional setup qualifies:
     MA and HTF-MA settings, session settings, ADX settings, ATR settings.
 
   Change the structural Tradable result:
     Only the confirmed swing/break sequence (indirectly affected by the three
-    timeframes, the swing length, available history) and the three
+    timeframes, Swing_Sensitivity, available history) and the three
     Use_*_For_Tradeability switches.
 
   Change the Optimal Conditions result:

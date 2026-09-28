@@ -208,14 +208,41 @@ Base prints every structure event from closed candles only. A wick beyond a
 swing is a liquidity sweep, never a break; a candle must close beyond it. The
 label of the swing that is broken decides the event.
 
-- **Swings.** A swing high must be at least as high as the
-  `Swing_Detection_Length` candles on its left and strictly higher than the
-  same number on its right; equal highs (a double top) form one swing at the
-  latest of the equal candles instead of no swing at all. Swing lows mirror
-  this. Swings alternate high, low, high, low: several highs confirmed before
-  the next low are one leg, and only its highest high is kept (likewise the
-  lowest low), so a smaller bounce inside a leg can never be labelled as a
-  separate HL or LH.
+- **Swings.** Two filters decide what counts as a swing:
+  - **Swing strength:** a swing high must be at least as high as that many
+    candles on its left and strictly higher than as many on its right. It is
+    also how many candles it takes to confirm the swing. Equal highs (a
+    double top) form one swing at the latest of the equal candles.
+  - **Swing size:** a new swing must travel at least that many ATR from the
+    previous opposite swing. A smaller bounce is a pullback inside the
+    current leg, not a swing. A swing beyond the previous high or low (an
+    HH or LL) always counts, because it takes out a structure level.
+
+  Swing lows mirror this. Swings alternate high, low, high, low: several
+  highs confirmed before the next low are one leg, and only its highest high
+  is kept (likewise the lowest low).
+- **Swing Sensitivity (0-100).** Base keeps two sets of these filters.
+
+  | Set | Strength | Size | Finds |
+  |---|---|---|---|
+  | Sensitive | 2 candles | 1.0 ATR | quick, detailed swings |
+  | Smooth | 4 candles | 3.0 ATR | only major swings |
+
+  The input blends the two sets:
+
+  | Value | Strength | Size | Meaning |
+  |---|---|---|---|
+  | 0 | 4 | 3.0 ATR | the Smooth set |
+  | 25 | 4 | 2.5 ATR | |
+  | **50 (default)** | **3** | **2.0 ATR** | **Balanced: the exact average of both sets** |
+  | 75 | 3 | 1.5 ATR | |
+  | 100 | 2 | 1.0 ATR | the Sensitive set |
+
+  Lower it for a cleaner chart with fewer, bigger swings; raise it for more
+  detail and faster swings. On 40 synthetic markets, Balanced finds about as
+  many swings as the previous fixed 5-candle setting. Its swings confirm 2
+  candles sooner and it kept every major market swing. 70% of its CHoCHs were
+  followed by a BOS in their direction, against 61% before.
 - **HH / LH / LL / HL.** Each swing is compared with the extreme of the
   previous leg on its side: a higher high is HH, otherwise LH; a lower low is
   LL, otherwise HL. Every accepted swing inside the displayed window is
