@@ -11,23 +11,23 @@ enum BASE_ADX_SCOPE { BASE_BOS_ONLY=0, BASE_BOS_AND_CHOCH=1 };
 enum BASE_ATR_MODE { BASE_ATR_MINIMUM=0, BASE_ATR_MAXIMUM=1, BASE_ATR_RANGE=2 };
 enum BASE_LABEL_SIZE { BASE_TINY=7, BASE_SMALL=9, BASE_NORMAL=11, BASE_LARGE=14 };
 
-input group "Timeframe Inputs"
+input group "Timeframes"
 input ENUM_TIMEFRAMES Structure_Timeframe=PERIOD_H4; // HTF
 input ENUM_TIMEFRAMES Setup_Entry_Timeframe=PERIOD_H1; // MTF
-input ENUM_TIMEFRAMES LTF_Timeframe=PERIOD_M15; //LTF
+input ENUM_TIMEFRAMES LTF_Timeframe=PERIOD_M15; // LTF
 
 input group "Trend Analysis Timeframes"
 input bool Use_HTF=true; // Use HTF
 input bool Use_MTF=true; // Use MTF
 input bool Use_LTF=false; // Use LTF
 
-input group "Structure Processing"
+input group "Structure Bar Processing"
 input int Bars_To_Process=100;
 
-input group "Swing Detection"
-input int HTF_Swing_Sensitivity=50; // HTF Swing Sensitivity (0 = Smoothest, 50 = Balanced, 100 = Most Sensitive)
-input int MTF_Swing_Sensitivity=50; // MTF Swing Sensitivity (0 = Smoothest, 50 = Balanced, 100 = Most Sensitive)
-input int LTF_Swing_Sensitivity=50; // LTF Swing Sensitivity (0 = Smoothest, 50 = Balanced, 100 = Most Sensitive)
+input group "Swing Detection Sensitivity"
+input int HTF_Swing_Sensitivity=50; // HTF Swing Sensitivity 
+input int MTF_Swing_Sensitivity=50; // MTF Swing Sensitivity 
+input int LTF_Swing_Sensitivity=50; // LTF Swing Sensitivity 
 input bool Show_Swing_Points=true;
 
 input group "BOS Display"
