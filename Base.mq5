@@ -1,5 +1,5 @@
 #property copyright "Market Trend Analyser conversion"
-#property version   "2.30"
+#property version   "2.31"
 #property strict
 #property description "BASE: MT5 port of the Market Trend Analyser Pine Script."
 #property description "Signal/visualisation EA only; the source indicator contains no trading rules."
@@ -371,9 +371,8 @@ void AddStructureEvent(BASE_STRUCTURE_EVENT &events[],BASE_STRUCTURE_STATE &stat
    state.last_break_was_bos=bos;
   }
 
-// One swing level that a candle close can break.  `point` is the swing's
-// index in the structure points, so the level is dropped when that swing is
-// superseded by a more extreme pivot of the same leg.
+// One identified swing that a candle close can break.  `point` is the swing's
+// index in the structure points.
 struct BASE_LEVEL
   {
    bool active;
@@ -402,9 +401,15 @@ void SetLevel(BASE_LEVEL &level,const BASE_STRUCTURE_POINT &points[],const int i
    level.point=index;
   }
 
-void DropLevel(BASE_LEVEL &level,const int point)
+// A swing is identified once the opposite leg after it has begun: no later
+// pivot can replace it, so it stays marked on the chart.  Only then does it
+// become the HH/LH (or LL/HL) whose close-through is a break.
+void IdentifySwing(BASE_LEVEL &extreme,BASE_LEVEL &correction,
+                   const BASE_STRUCTURE_POINT &points[],const int index)
   {
-   if(level.active && level.point==point) level.active=false;
+   if(index<0) return;
+   if(points[index].kind>0) SetLevel(extreme,points,index);
+   if(points[index].kind<0) SetLevel(correction,points,index);
   }
 
 void StartCHoCH(BASE_CHOCH_CANDIDATE &choch,const int direction,const int bar,
@@ -537,18 +542,26 @@ void SwingATR(const MqlRates &rates[],const int total,double &atr[])
 // the alternating-leg rules and labelled HH/LH or LL/HL against the previous
 // leg's extreme.
 //
+// Only an identified swing can be broken: one whose leg has ended because
+// the opposite leg after it has begun.  Until then a more extreme pivot can
+// still replace it, so a close through it breaks nothing; the last
+// identified swing stays the level.  This way every BOS and CHoCH starts
+// from a swing that stays marked on the chart.
+//
 // Only a candle close through a swing is a break; a wick is a liquidity
 // sweep.  The label of the broken swing decides the event:
-//  * BOS (bullish): the most recent HH is broken, creating a new HH.
-//  * BOS (bearish): the most recent LL is broken, creating a new LL.
+//  * BOS (bullish): the most recent identified HH is broken, creating a new
+//    HH.
+//  * BOS (bearish): the most recent identified LL is broken, creating a new
+//    LL.
 //  * CHoCH (becoming bullish): while the trend is not already bullish, the
-//    most recent LH is broken and the next swing high is an HH.  The CHoCH
-//    is confirmed when that HH is confirmed, or by the breaking close itself
-//    when a wick through the LH already made the HH.  An LH made by the
-//    break, or an LL before the HH, cancels it; swings printed before the
-//    breaking close never do.
-//  * CHoCH (becoming bearish): the mirror image; the most recent HL is
-//    broken and the next swing low is an LL.
+//    most recent identified LH is broken and the next swing high is an HH.
+//    The CHoCH is confirmed when that HH is confirmed, or by the breaking
+//    close itself when a wick through the LH already made the HH.  An LH
+//    made by the break, or an LL before the HH, cancels it; swings printed
+//    before the breaking close never do.
+//  * CHoCH (becoming bearish): the mirror image; the most recent identified
+//    HL is broken and the next swing low is an LL.
 //  * A broken LH in a bullish trend (or HL in a bearish trend) is a pullback
 //    inside that trend and prints nothing.
 // Trend/bias: bullish after a bullish BOS, bullish transitional after a
@@ -570,16 +583,12 @@ bool ReplayStructure(const MqlRates &rates[],const int total,const BASE_SWING_FI
    bool have_high_reference=false,have_low_reference=false;
    double high_reference=0.0,low_reference=0.0;
    int high_point=-1,low_point=-1;
-   // The most recent unbroken HH, LH, LL and HL, plus the LH and HL they
-   // replaced: if a higher high in the same leg turns the newest LH into an
-   // HH, the LH before it is the most recent LH again (lows mirror this).
-   BASE_LEVEL hh,lh,ll,hl,previous_lh,previous_hl;
+   // The most recent identified and unbroken HH, LH, LL and HL.
+   BASE_LEVEL hh,lh,ll,hl;
    ZeroMemory(hh);
    ZeroMemory(lh);
    ZeroMemory(ll);
    ZeroMemory(hl);
-   ZeroMemory(previous_lh);
-   ZeroMemory(previous_hl);
    BASE_CHOCH_CANDIDATE choch;
    ZeroMemory(choch);
    for(int i=length;i<total;i++)
@@ -593,30 +602,15 @@ bool ReplayStructure(const MqlRates &rates[],const int total,const BASE_SWING_FI
                                 have_high_reference,high_reference,kind,state.have_low,
                                 state.last_low,filter.size_atr*atr[pivot]))
            {
-            int replaced=same_leg?high_point:-1;
-            bool unbroken_lh_replaced=replaced>=0 && lh.active && lh.point==replaced;
-            if(replaced>=0)
-              {
-               points[high_point].superseded=true;
-               DropLevel(hh,high_point);
-               DropLevel(lh,high_point);
-              }
+            // A higher pivot in the same leg replaces the leg's high; the
+            // first high of a new leg ends the low leg, identifying its low.
+            if(same_leg) points[high_point].superseded=true;
+            else IdentifySwing(ll,hl,points,low_point);
             high_point=AddStructurePoint(points,pivot,i,rates[pivot],1,kind);
             state.last_high_kind=kind;
             state.last_high_time=rates[pivot].time;
-            if(kind>0) SetLevel(hh,points,high_point);
-            if(kind<0)
-              {
-               if(replaced<0) previous_lh=lh;
-               SetLevel(lh,points,high_point);
-              }
-            else if(unbroken_lh_replaced) lh=previous_lh;
-            // A higher LH in the same leg replaces the broken one on the
-            // chart; it is the LH to break now.
-            if(choch.direction>0 && kind<0 && replaced>=0 && replaced==choch.level_point)
-               choch.direction=0;
             // Only swings formed after the breaking close can cancel a CHoCH.
-            else if(choch.direction>0 && kind<0 && pivot>choch.break_bar)
+            if(choch.direction>0 && kind<0 && pivot>choch.break_bar)
                CancelCHoCH(choch,lh,hl,high_point,low_point);   // the break made only an LH
             else if(choch.direction<0 && kind>0 && pivot>choch.break_bar)
                CancelCHoCH(choch,lh,hl,high_point,low_point);   // an HH before the LL
@@ -632,27 +626,12 @@ bool ReplayStructure(const MqlRates &rates[],const int total,const BASE_SWING_FI
                                have_low_reference,low_reference,kind,state.have_high,
                                state.last_high,filter.size_atr*atr[pivot]))
            {
-            int replaced=same_leg?low_point:-1;
-            bool unbroken_hl_replaced=replaced>=0 && hl.active && hl.point==replaced;
-            if(replaced>=0)
-              {
-               points[low_point].superseded=true;
-               DropLevel(ll,low_point);
-               DropLevel(hl,low_point);
-              }
+            if(same_leg) points[low_point].superseded=true;
+            else IdentifySwing(hh,lh,points,high_point);
             low_point=AddStructurePoint(points,pivot,i,rates[pivot],-1,kind);
             state.last_low_kind=kind;
             state.last_low_time=rates[pivot].time;
-            if(kind>0) SetLevel(ll,points,low_point);
-            if(kind<0)
-              {
-               if(replaced<0) previous_hl=hl;
-               SetLevel(hl,points,low_point);
-              }
-            else if(unbroken_hl_replaced) hl=previous_hl;
-            if(choch.direction<0 && kind<0 && replaced>=0 && replaced==choch.level_point)
-               choch.direction=0;
-            else if(choch.direction<0 && kind<0 && pivot>choch.break_bar)
+            if(choch.direction<0 && kind<0 && pivot>choch.break_bar)
                CancelCHoCH(choch,lh,hl,high_point,low_point);   // the break made only an HL
             else if(choch.direction>0 && kind>0 && pivot>choch.break_bar)
                CancelCHoCH(choch,lh,hl,high_point,low_point);   // an LL before the HH
@@ -1164,9 +1143,11 @@ void DrawStructure(const MqlRates &rates[],const int total,const int first,
    for(int i=0;i<point_count;i++)
       if(!points[i].superseded && points[i].kind!=0 && points[i].pivot>=first)
          DrawStructurePoint(StructureLabel(points[i]),points[i].time,points[i].price);
+   // A break is drawn only with its broken swing, so every BOS and CHoCH
+   // starts from a marked swing.
    int event_count=ArraySize(events);
    for(int i=0;i<event_count;i++)
-      if(events[i].break_bar>=first)
+      if(events[i].break_bar>=first && events[i].swing_time>=rates[first].time)
          DrawSignal(events[i].bos?"BOS":"CHoCH",events[i].direction,events[i].swing_time,
                     events[i].level,rates[events[i].break_bar]);
    if(Show_Swing_Points && state.have_high)

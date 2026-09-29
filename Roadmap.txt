@@ -140,17 +140,30 @@ Swing classification
 
 Break levels
   Only a candle close through a swing is a break; a wick is a liquidity sweep.
-  The replay keeps the most recent unbroken HH, LH, LL and HL. If a higher
-  high in the same leg turns the newest LH into an HH, the LH before it is the
-  most recent LH again (and the same for lows). Each level can be broken once.
+  Only an identified swing can be broken. A swing is identified once the
+  opposite leg after it has begun (an LL once the next swing high is
+  confirmed, an LH once the next swing low is confirmed).
+  * Until then, a more extreme pivot of the same leg can still replace it and
+    remove its label, so a close through it breaks nothing.
+  * The replay keeps the most recent identified and unbroken HH, LH, LL and
+    HL. Each level can be broken once.
+  * Every BOS and CHoCH therefore starts from a swing that stays marked:
+    HH for a bullish BOS, LL for a bearish BOS, LH for a bullish CHoCH and
+    HL for a bearish CHoCH.
+  * A break is drawn only when its swing is inside the drawn window, so its
+    swing label is always on the chart too.
 
 Event rules (the label of the broken swing decides the event)
-  * BOS (bullish): the most recent HH is broken, creating a new HH.
-  * BOS (bearish): the most recent LL is broken, creating a new LL.
+  * BOS (bullish): the most recent identified HH is broken, creating a new
+    HH.
+  * BOS (bearish): the most recent identified LL is broken, creating a new
+    LL.
   * CHoCH (becoming bullish / Bullish Transitional): while the bias is not
-    already bullish, the most recent LH is broken, subsequently forming an HH.
+    already bullish, the most recent identified LH is broken, subsequently
+    forming an HH.
   * CHoCH (becoming bearish / Bearish Transitional): while the bias is not
-    already bearish, the most recent HL is broken, subsequently forming an LL.
+    already bearish, the most recent identified HL is broken, subsequently
+    forming an LL.
   * A broken LH while the bias is already bullish (or a broken HL while it is
     bearish) is a pullback inside the trend and prints nothing.
   * An LH broken together with an HH is treated as the CHoCH (the LH is the
@@ -173,8 +186,6 @@ CHoCH confirmation
     most recent LH/HL, so a later close through it is a fresh break.
   * A swing printed before the breaking close but confirmed after it (for
     example the low of a sharp V-reversal) never cancels a CHoCH.
-  * If a lower HL in the same leg replaces the broken HL on the chart (or a
-    higher LH replaces the broken LH), the new swing is the level to break.
 
 Trend / bias
   * Bullish: the latest event is a bullish BOS (breaking HH structure to

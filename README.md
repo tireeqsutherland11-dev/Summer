@@ -249,12 +249,26 @@ label of the swing that is broken decides the event.
   labelled; the first high and first low of the replay have nothing to compare
   with, which is why the replay starts well before the displayed window (see
   `Bars_To_Process`).
-- **BOS (bullish):** the most recent HH is broken, creating a new HH.
-  **BOS (bearish):** the most recent LL is broken, creating a new LL.
+- **Identified swings.** Only an identified and marked swing can be broken.
+  A swing is identified once the opposite leg after it has begun, for
+  example an LL once the next swing high is confirmed.
+  - Until then, a more extreme pivot in the same leg can still replace the
+    swing and remove its label.
+  - A close through a swing that is not yet identified breaks nothing. The
+    last identified swing stays the level to break.
+  - Every BOS and CHoCH line therefore starts at a labelled swing of the
+    right kind: HH for a bullish BOS, LL for a bearish BOS, LH for a bullish
+    CHoCH and HL for a bearish CHoCH.
+  - A break is drawn only when its swing is inside the drawn window, so
+    that swing's label is on the chart too.
+- **BOS (bullish):** the most recent identified HH is broken, creating a new
+  HH. **BOS (bearish):** the most recent identified LL is broken, creating a
+  new LL.
 - **CHoCH (becoming bullish):** while the bias is not already bullish, the
-  most recent LH is broken, subsequently forming an HH.
+  most recent identified LH is broken, subsequently forming an HH.
   **CHoCH (becoming bearish):** while the bias is not already bearish, the
-  most recent HL is broken, subsequently forming an LL. No HL (LH) is needed.
+  most recent identified HL is broken, subsequently forming an LL. No HL
+  (LH) is needed.
   - The CHoCH is drawn on the candle that closed through the LH/HL. The bias
     and the alert change when it is confirmed, which happens when the HH (LL)
     swing is confirmed.
