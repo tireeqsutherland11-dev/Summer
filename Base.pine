@@ -22,23 +22,23 @@
 indicator("Base - Market Structure", shorttitle = "Base", overlay = true, max_labels_count = 500, max_lines_count = 500)
 
 // ---------------------------------------------------------------- inputs
-grpTf = "Timeframe Inputs"
-htfTf = input.timeframe("240", "Structure Timeframe (HTF)", group = grpTf)
-mtfTf = input.timeframe("60", "Setup / Entry Timeframe (MTF)", group = grpTf)
-ltfTf = input.timeframe("15", "LTF Timeframe", group = grpTf)
+grpTf = "Timeframes"
+htfTf = input.timeframe("240", "HTF", group = grpTf)
+mtfTf = input.timeframe("60", "MTF", group = grpTf)
+ltfTf = input.timeframe("15", "LTF", group = grpTf)
 
 grpTrend = "Trend Analysis Timeframes"
 useHtf = input.bool(true, "Use HTF", group = grpTrend)
 useMtf = input.bool(true, "Use MTF", group = grpTrend)
 useLtf = input.bool(false, "Use LTF", group = grpTrend)
 
-grpProc = "Structure Processing"
-barsToProcess = input.int(100, "Bars To Process (structure candles drawn)", minval = 100, maxval = 100000, group = grpProc)
+grpProc = "Structure Bar Processing"
+barsToProcess = input.int(100, "Bars To Process", minval = 100, maxval = 100000, group = grpProc)
 
-grpSwing = "Swing Detection"
-htfSensitivity = input.int(50, "HTF Swing Sensitivity (0 = Smoothest, 50 = Balanced, 100 = Most Sensitive)", minval = 0, maxval = 100, group = grpSwing)
-mtfSensitivity = input.int(50, "MTF Swing Sensitivity (0 = Smoothest, 50 = Balanced, 100 = Most Sensitive)", minval = 0, maxval = 100, group = grpSwing)
-ltfSensitivity = input.int(50, "LTF Swing Sensitivity (0 = Smoothest, 50 = Balanced, 100 = Most Sensitive)", minval = 0, maxval = 100, group = grpSwing)
+grpSwing = "Swing Detection Sensitivity"
+htfSensitivity = input.int(50, "HTF Swing Sensitivity", minval = 0, maxval = 100, group = grpSwing)
+mtfSensitivity = input.int(50, "MTF Swing Sensitivity", minval = 0, maxval = 100, group = grpSwing)
+ltfSensitivity = input.int(50, "LTF Swing Sensitivity", minval = 0, maxval = 100, group = grpSwing)
 showSwingPoints = input.bool(true, "Show Swing Points", group = grpSwing)
 
 grpBos = "BOS Display"
