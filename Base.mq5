@@ -1,5 +1,5 @@
 #property copyright "Market Trend Analyser conversion"
-#property version   "2.34"
+#property version   "2.35"
 #property strict
 #property description "BASE: MT5 port of the Market Trend Analyser Pine Script."
 #property description "Signal/visualisation EA only; the source indicator contains no trading rules."
@@ -134,22 +134,6 @@ const int SPORADIC_FLIPS=2;
 const double CHOCH_TRAP_AREA_ATR=4.0;
 
 string g_prefix="";
-bool g_built=false;
-long g_foreground=-1;       // the chart's own "chart on foreground" setting
-
-// Label layout (see PlaceBreakLabel): the chart area each drawing covers, in
-// candles and prices, and the chart's current scale.
-struct BASE_BOX
-  {
-   int from;
-   int to;
-   double low;
-   double high;
-  };
-BASE_BOX g_boxes[];
-double g_bar_px=8.0;        // pixels per candle
-double g_price_px=0.0;      // price per pixel
-long g_layout_scale=-1;
 datetime g_last_ltf_bar=0;
 datetime g_last_structure_bar=0;
 datetime g_last_setup_bar=0;
@@ -1289,15 +1273,14 @@ string EntryFilterTooltip(const MqlRates &bar,const double &ma[],const double &a
   }
 
 void DrawText(const string id,const datetime time,const double price,const string text,
-              const color clr,const ENUM_ANCHOR_POINT anchor,const int font_size)
+              const color clr,const bool below,const int font_size)
   {
    string name=g_prefix+id;
    if(ObjectFind(0,name)>=0 || !ObjectCreate(0,name,OBJ_TEXT,0,time,price)) return;
    ObjectSetString(0,name,OBJPROP_TEXT,text);
    ObjectSetInteger(0,name,OBJPROP_COLOR,clr);
    ObjectSetInteger(0,name,OBJPROP_FONTSIZE,font_size);
-   ObjectSetInteger(0,name,OBJPROP_ANCHOR,anchor);
-   ObjectSetInteger(0,name,OBJPROP_BACK,false);
+   ObjectSetInteger(0,name,OBJPROP_ANCHOR,below?ANCHOR_UPPER:ANCHOR_LOWER);
    ObjectSetInteger(0,name,OBJPROP_SELECTABLE,false);
   }
 
@@ -1314,32 +1297,24 @@ void DrawSegment(const string id,const datetime from,const double from_price,
    ObjectSetInteger(0,name,OBJPROP_SELECTABLE,false);
   }
 
-bool SignalShown(const string kind)
-  {
-   if(kind=="BOS") return Show_BOS_Labels;
-   if(kind=="LS") return Show_LS_Labels;
-   return Show_CHoCH_Labels;
-  }
-
-// BOS, CHoCH and LS share one drawing: a line from the broken swing to the
-// candle that closed through it, and the caption placed by PlaceBreakLabel.
-// An LS keeps the place of the CHoCH it replaced, in its own colour.
+// BOS, CHoCH and LS share one drawing: the caption on the broken level at
+// the breaking candle and a line from the broken swing.  An LS keeps the
+// place of the CHoCH it replaced, in its own colour.
 void DrawSignal(const string kind,const int direction,const datetime swing_time,
-                const double level,const datetime break_time,const datetime label_time,
-                const double label_price)
+                const double level,const MqlRates &bar)
   {
-   if(!SignalShown(kind)) return;
    bool bos=kind=="BOS",ls=kind=="LS";
+   if((bos && !Show_BOS_Labels) || (ls && !Show_LS_Labels) || (!bos && !ls && !Show_CHoCH_Labels))
+      return;
    color clr=ls?(direction>0?Bullish_LS_Color:Bearish_LS_Color):
              direction>0?(bos?Bullish_BOS_Color:Bullish_CHoCH_Color)
                         :(bos?Bearish_BOS_Color:Bearish_CHoCH_Color);
-   string key=kind+(direction>0?"_UP_":"_DOWN_")+(string)break_time;
-   // A bullish caption stands on its anchor, above the line; a bearish one
-   // hangs below it.
-   DrawText(key,label_time,label_price,kind,clr,direction>0?ANCHOR_LOWER:ANCHOR_UPPER,
-            (int)Label_Size);
+   string key=kind+(direction>0?"_UP_":"_DOWN_")+(string)bar.time;
+   // Keep the caption on the broken level.  ANCHOR_UPPER places bullish text
+   // immediately below it; ANCHOR_LOWER places bearish text immediately above.
+   DrawText(key,bar.time,level,kind,clr,direction>0,(int)Label_Size);
    if(Show_Structure_Lines)
-      DrawSegment(key+"_LINE",swing_time,level,break_time,level,
+      DrawSegment(key+"_LINE",swing_time,level,bar.time,level,
                   ls?clr:(bos?clrBlue:clrRed),Line_Style,Line_Width);
   }
 
@@ -1354,231 +1329,35 @@ void DrawStructurePoint(const string kind,const datetime time,const double price
    if(!Show_Swing_Points) return;
    bool low=kind=="HL" || kind=="LL";
    color clr=low?clrTeal:clrIndianRed;
-   DrawText("STRUCTURE_"+kind+"_"+(string)time,time,price,kind,clr,low?ANCHOR_UPPER:ANCHOR_LOWER,
-            (int)Label_Size);
-  }
-
-// The index of the candle opening at `time` (or the last one before it).
-int BarOfTime(const MqlRates &rates[],const int total,const datetime time)
-  {
-   int low=0,high=total-1;
-   while(low<high)
-     {
-      int middle=(low+high+1)/2;
-      if(rates[middle].time<=time) low=middle;
-      else high=middle-1;
-     }
-   return low;
-  }
-
-// Label layout.  A BOS, CHoCH or LS label sits near the middle of its line,
-// on the side the price did not come from: above a line broken upwards,
-// below one broken downwards.  It then moves away from the line only as far
-// as it must to clear every candle, swing label, dotted level line, MA line,
-// structure line and earlier break label it covers, so it never overlaps a
-// candle or another drawing.  Sizes follow the chart's zoom and height, and
-// a zoom lays the chart out again (see OnChartEvent).
-void StartLayout(const MqlRates &rates[],const int total,const int first)
-  {
-   ArrayResize(g_boxes,0);
-   g_layout_scale=ChartGetInteger(0,CHART_SCALE);
-   g_bar_px=MathPow(2.0,(double)MathMax(0,MathMin(5,(int)g_layout_scale)));
-   long height=ChartGetInteger(0,CHART_HEIGHT_IN_PIXELS);
-   if(height<=0) height=600;
-   // The larger of the drawn and the visible price range, so a label is never
-   // sized smaller than it can appear.
-   double high=rates[first].high,low=rates[first].low;
-   for(int i=first;i<total;i++)
-     {
-      high=MathMax(high,rates[i].high);
-      low=MathMin(low,rates[i].low);
-     }
-   double visible=ChartGetDouble(0,CHART_PRICE_MAX)-ChartGetDouble(0,CHART_PRICE_MIN);
-   g_price_px=MathMax(high-low,visible)/(double)height;
-  }
-
-void TextSize(const string text,int &width,int &height)
-  {
-   uint w=0,h=0;
-   if(TextSetFont("Arial",-(int)Label_Size*10) && TextGetSize(text,w,h) && w>0)
-     {
-      width=(int)w;
-      height=(int)h;
-      return;
-     }
-   width=StringLen(text)*(int)Label_Size;
-   height=2*(int)Label_Size;
-  }
-
-// Candles a centred label of this width reaches on each side, plus one.
-int HalfBars(const int width_px)
-  {
-   return (int)MathCeil(width_px/g_bar_px/2.0)+1;
-  }
-
-void AddBox(const int from,const int to,const double low,const double high)
-  {
-   int n=ArraySize(g_boxes);
-   ArrayResize(g_boxes,n+1,64);
-   g_boxes[n].from=from;
-   g_boxes[n].to=to;
-   g_boxes[n].low=low;
-   g_boxes[n].high=high;
-  }
-
-double Beyond(const double edge,const double obstacle,const bool above,const double gap)
-  {
-   return above?MathMax(edge,obstacle+gap):MathMin(edge,obstacle-gap);
-  }
-
-// The label edge nearest the level (its bottom above the line, its top below
-// it) at which a label centred on candle x covers nothing.
-double ClearEdge(const MqlRates &rates[],const int total,const double &line_a[],
-                 const double &line_b[],const int x,const int half,const double level,
-                 const bool above,const double height)
-  {
-   int from=MathMax(0,x-half),to=MathMin(total-1,x+half);
-   double gap=3.0*g_price_px;
-   double edge=above?level+gap:level-gap;
-   bool have_a=ArraySize(line_a)==total,have_b=ArraySize(line_b)==total;
-   for(int pass=0;pass<100;pass++)
-     {
-      double low=above?edge:edge-height,high=above?edge+height:edge;
-      double moved=edge;
-      for(int i=from;i<=to;i++)
-        {
-         if(rates[i].high>=low && rates[i].low<=high)
-            moved=Beyond(moved,above?rates[i].high:rates[i].low,above,gap);
-         if(have_a && line_a[i]!=EMPTY_VALUE && line_a[i]>=low && line_a[i]<=high)
-            moved=Beyond(moved,line_a[i],above,gap);
-         if(have_b && line_b[i]!=EMPTY_VALUE && line_b[i]>=low && line_b[i]<=high)
-            moved=Beyond(moved,line_b[i],above,gap);
-        }
-      for(int b=ArraySize(g_boxes)-1;b>=0;b--)
-         if(g_boxes[b].to>=from && g_boxes[b].from<=to && g_boxes[b].high>=low && g_boxes[b].low<=high)
-            moved=Beyond(moved,above?g_boxes[b].high:g_boxes[b].low,above,gap);
-      if(moved==edge) break;
-      edge=moved;
-     }
-   return edge;
-  }
-
-// Where a break label goes: the candle it is centred on and the price of its
-// bottom (above the line) or top (below it).  Of the candles near the middle
-// of the line, the one that lets the label sit closest to the line wins.
-void PlaceBreakLabel(const MqlRates &rates[],const int total,const double &line_a[],
-                     const double &line_b[],const int swing_bar,const int break_bar,
-                     const double level,const bool above,const int width_px,const int height_px,
-                     int &x,double &edge)
-  {
-   int half=HalfBars(width_px);
-   double height=height_px*g_price_px;
-   int middle=(swing_bar+break_bar)/2;
-   x=middle;
-   edge=ClearEdge(rates,total,line_a,line_b,middle,half,level,above,height);
-   for(int k=1;k<=6;k++)
-      for(int sign=1;sign>=-1;sign-=2)
-        {
-         int candidate=middle+sign*k*half;
-         if(candidate<=swing_bar || candidate>=break_bar) continue;
-         double candidate_edge=ClearEdge(rates,total,line_a,line_b,candidate,half,level,above,height);
-         if(MathAbs(candidate_edge-level)<MathAbs(edge-level))
-           {
-            x=candidate;
-            edge=candidate_edge;
-           }
-        }
-   AddBox(x-half,x+half,above?edge:edge-height,above?edge+height:edge);
-  }
-
-string EventKind(const BASE_STRUCTURE_EVENT &event)
-  {
-   return event.ls?"LS":(event.bos?"BOS":"CHoCH");
-  }
-
-bool EventDrawn(const BASE_STRUCTURE_EVENT &event,const MqlRates &rates[],const int first)
-  {
-   return event.break_bar>=first && event.swing_time>=rates[first].time && SignalShown(EventKind(event));
+   DrawText("STRUCTURE_"+kind+"_"+(string)time,time,price,kind,clr,low,(int)Label_Size);
   }
 
 // Draws one replay from candle `first` onwards (earlier candles are warm-up):
-// HH/HL/LH/LL labels (superseded and untyped points are skipped), the dotted
-// current swing levels and the BOS/CHoCH/LS signals, whose labels are laid
-// out last so they keep clear of everything else.  A CHoCH may be confirmed
-// several candles after its break; its line ends on the candle that
-// actually closed through the level.  line_a/line_b are the MA lines at each
-// candle (EMPTY_VALUE where not drawn).
+// HH/HL/LH/LL labels (superseded and untyped points are skipped), BOS/CHoCH
+// signals and the dotted current swing levels.  A CHoCH may be confirmed
+// several candles after its break; it is drawn on the candle that actually
+// closed through the level.
 void DrawStructure(const MqlRates &rates[],const int total,const int first,
                    const BASE_STRUCTURE_STATE &state,const BASE_STRUCTURE_POINT &points[],
-                   const BASE_STRUCTURE_EVENT &events[],const double &line_a[],
-                   const double &line_b[])
+                   const BASE_STRUCTURE_EVENT &events[])
   {
-   StartLayout(rates,total,first);
-   int width=0,height=0;
    int point_count=ArraySize(points);
    for(int i=0;i<point_count;i++)
       if(!points[i].superseded && points[i].kind!=0 && points[i].pivot>=first)
-        {
-         string kind=StructureLabel(points[i]);
-         DrawStructurePoint(kind,points[i].time,points[i].price);
-         if(!Show_Swing_Points) continue;
-         TextSize(kind,width,height);
-         int half=HalfBars(width);
-         double h=height*g_price_px,price=points[i].price;
-         if(points[i].side>0) AddBox(points[i].pivot-half,points[i].pivot+half,price,price+h);
-         else AddBox(points[i].pivot-half,points[i].pivot+half,price-h,price);
-        }
-   if(Show_Swing_Points && state.have_high)
-     {
-      DrawSegment("LAST_HIGH",state.last_high_time,state.last_high,rates[total-1].time,
-                  state.last_high,clrIndianRed,STYLE_DOT,1);
-      AddBox(BarOfTime(rates,total,state.last_high_time),total-1,state.last_high,state.last_high);
-     }
-   if(Show_Swing_Points && state.have_low)
-     {
-      DrawSegment("LAST_LOW",state.last_low_time,state.last_low,rates[total-1].time,
-                  state.last_low,clrTeal,STYLE_DOT,1);
-      AddBox(BarOfTime(rates,total,state.last_low_time),total-1,state.last_low,state.last_low);
-     }
-   // A break is drawn only with its broken swing, so every BOS, CHoCH and LS
-   // starts from a marked swing.  All structure lines are placed before any
-   // label, so no label crosses another break's line.
+         DrawStructurePoint(StructureLabel(points[i]),points[i].time,points[i].price);
+   // A break is drawn only with its broken swing, so every BOS and CHoCH
+   // starts from a marked swing.
    int event_count=ArraySize(events);
    for(int i=0;i<event_count;i++)
-      if(EventDrawn(events[i],rates,first) && Show_Structure_Lines)
-         AddBox(BarOfTime(rates,total,events[i].swing_time),events[i].break_bar,events[i].level,
-                events[i].level);
-   for(int i=0;i<event_count;i++)
-     {
-      if(!EventDrawn(events[i],rates,first)) continue;
-      string kind=EventKind(events[i]);
-      TextSize(kind,width,height);
-      int x=0;
-      double edge=0.0;
-      PlaceBreakLabel(rates,total,line_a,line_b,BarOfTime(rates,total,events[i].swing_time),
-                      events[i].break_bar,events[i].level,events[i].direction>0,width,height,x,edge);
-      DrawSignal(kind,events[i].direction,events[i].swing_time,events[i].level,
-                 rates[events[i].break_bar].time,rates[x].time,edge);
-     }
-  }
-
-// A polyline (the times of line_rates[from..count-1], values) at each candle
-// of rates: linear between its points, EMPTY_VALUE outside them.
-void SampleLine(const MqlRates &line_rates[],const double &values[],const int from,
-                const int count,const MqlRates &rates[],const int total,double &out[])
-  {
-   ArrayResize(out,total);
-   ArrayInitialize(out,EMPTY_VALUE);
-   if(from<0 || count-from<2) return;
-   int j=from+1;
-   for(int i=0;i<total;i++)
-     {
-      datetime t=rates[i].time;
-      if(t<line_rates[from].time || t>line_rates[count-1].time) continue;
-      while(j<count-1 && line_rates[j].time<t) j++;
-      datetime t0=line_rates[j-1].time,t1=line_rates[j].time;
-      out[i]=t1>t0?values[j-1]+(values[j]-values[j-1])*(double)(t-t0)/(double)(t1-t0):values[j];
-     }
+      if(events[i].break_bar>=first && events[i].swing_time>=rates[first].time)
+         DrawSignal(events[i].ls?"LS":(events[i].bos?"BOS":"CHoCH"),events[i].direction,events[i].swing_time,
+                    events[i].level,rates[events[i].break_bar]);
+   if(Show_Swing_Points && state.have_high)
+      DrawSegment("LAST_HIGH",state.last_high_time,state.last_high,rates[total-1].time,
+                  state.last_high,clrIndianRed,STYLE_DOT,1);
+   if(Show_Swing_Points && state.have_low)
+      DrawSegment("LAST_LOW",state.last_low_time,state.last_low,rates[total-1].time,
+                  state.last_low,clrTeal,STYLE_DOT,1);
   }
 
 int FirstMABar(const int total,const int displayed)
@@ -1831,29 +1610,20 @@ bool Rebuild(const bool permit_alert)
          !CopyIndicator(g_mtf_ma_handle,0,mtf_count,mtf_ma))
          mtf_count=0;
      }
-   bool htf_line=Show_HTF_MA_Line && Use_HTF_MA_Filter && ArraySize(ma)==total;
 
-   // The MA lines at each drawn candle, so labels keep clear of them.
-   double line_a[],line_b[];
    ObjectsDeleteAll(0,g_prefix);
    if(anchored)
-     {
-      if(htf_line) SampleLine(rates,ma,FirstMABar(total,displayed)-1,total,rates,total,line_a);
-      if(mtf_count>1) SampleLine(mtf_rates,mtf_ma,0,mtf_count,rates,total,line_b);
-      DrawStructure(rates,total,MathMax(0,total-displayed),structure_state,points,events,line_a,line_b);
-     }
+      DrawStructure(rates,total,MathMax(0,total-displayed),structure_state,points,events);
    else
      {
       BASE_STRUCTURE_STATE chart_state;
       BASE_STRUCTURE_POINT chart_points[];
       BASE_STRUCTURE_EVENT chart_events[];
-      if(htf_line) SampleLine(rates,ma,FirstMABar(total,displayed)-1,total,chart_rates,chart_total,line_a);
-      if(mtf_count>1) SampleLine(mtf_rates,mtf_ma,0,mtf_count,chart_rates,chart_total,line_b);
       if(ReplayStructure(chart_rates,chart_total,SwingFilter(ChartSensitivity(chart_timeframe)),
                          chart_state,chart_points,chart_events))
          DrawStructure(chart_rates,chart_total,
                        MathMax(0,chart_total-ChartStructureBars(chart_timeframe)),
-                       chart_state,chart_points,chart_events,line_a,line_b);
+                       chart_state,chart_points,chart_events);
      }
    DrawAverageLines(rates,total,displayed,ma,mtf_rates,mtf_ma,mtf_count);
 
@@ -1907,7 +1677,6 @@ bool Rebuild(const bool permit_alert)
         }
    if(permit_alert && signal!="") SendBASEAlert(signal,rates[total-1].time);
    ChartRedraw();
-   g_built=true;
    return true;
   }
 
@@ -1943,11 +1712,6 @@ int OnInit()
    g_last_setup_bar=0;
    ENUM_TIMEFRAMES timeframe=BASETimeframe();
    g_prefix="BASE_"+(string)ChartID()+"_";
-   g_built=false;
-   // Draw objects in front of the candles so no label is hidden behind one;
-   // the chart's own setting is restored when Base is removed.
-   if(g_foreground<0) g_foreground=ChartGetInteger(0,CHART_FOREGROUND);
-   ChartSetInteger(0,CHART_FOREGROUND,false);
    if(Use_HTF_MA_Filter && (g_htf_ma_handle=iMA(_Symbol,timeframe,HTF_MA_Length,0,BASEMAMethod(HTF_MA_Type),PRICE_CLOSE))==INVALID_HANDLE) return INIT_FAILED;
    if(Use_MTF_MA_Filter && (g_mtf_ma_handle=iMA(_Symbol,SetupTimeframe(),MTF_MA_Length,0,BASEMAMethod(MTF_MA_Type),PRICE_CLOSE))==INVALID_HANDLE) return INIT_FAILED;
    if(Use_ADX_Filter && (g_adx_handle=iADX(_Symbol,timeframe,ADX_Length))==INVALID_HANDLE) return INIT_FAILED;
@@ -1973,19 +1737,6 @@ void OnDeinit(const int reason)
    g_ltf_atr_handle=INVALID_HANDLE;
    ObjectsDeleteAll(0,g_prefix);
    Comment("");
-   if(g_foreground>=0 && reason!=REASON_CHARTCHANGE && reason!=REASON_PARAMETERS)
-     {
-      ChartSetInteger(0,CHART_FOREGROUND,g_foreground!=0);
-      g_foreground=-1;
-     }
-  }
-
-// A zoom changes how many candles each label covers: lay the chart out
-// again.  Scrolling alone changes nothing.
-void OnChartEvent(const int id,const long &lparam,const double &dparam,const string &sparam)
-  {
-   if(id==CHARTEVENT_CHART_CHANGE && g_built && ChartGetInteger(0,CHART_SCALE)!=g_layout_scale)
-      Rebuild(false);
   }
 
 void CheckForBar()
