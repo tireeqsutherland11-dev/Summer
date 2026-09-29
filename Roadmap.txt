@@ -515,12 +515,14 @@ established trend transitional.
 Real Time Swing Structure (input group "Real Time Swing Structure")
 Show_Swing_Structure (default true)
 Swing_Structure_Length (default 50; valid 10..1000)
+Show_Swing_Structure_Breaks (default true)
+Swing_Bullish_Color (default C'8,153,129') / Swing_Bearish_Color (default C'242,54,69')
+Swing_Label_Size (default BASE_NORMAL)
 Show_Strong_Weak_High_Low (default true)
   The swing structure of LuxAlgo's Smart Money Concepts, replayed on each
   trend timeframe (ReplaySwingStructure) beside its Market Trend as a second,
   larger-scale reading. It never changes the Market Trend, Tradability,
-  Optimal Conditions or alerts, and its BOS/CHoCH are not drawn, so the chart
-  keeps one set of BOS/CHoCH labels.
+  Optimal Conditions or alerts.
   * Legs: a candle higher than every one of the next Swing_Structure_Length
     candles starts a bearish leg, one lower than all of them a bullish leg
     (the first leg counts as bearish). The candle that starts a new leg is a
@@ -536,14 +538,25 @@ Show_Strong_Weak_High_Low (default true)
   * Closed candles only. Each replay covers at least SwingStructureBars()
     candles (max(1,000, 20 x Swing_Structure_Length)); a timeframe replayed
     over fewer candles is copied again with that many.
+  * Show_Swing_Structure_Breaks draws the chart timeframe's swing BOS/CHoCH,
+    the larger breaks of LuxAlgo's indicator (DrawSwingBreaks): a solid
+    width-1 line from the broken swing to the candle that closed through it,
+    in Swing_Bullish_Color or Swing_Bearish_Color, and a "BOS"/"CHoCH"
+    caption in Swing_Label_Size at the candle midway between them (rounded),
+    above a line broken upwards and below one broken downwards. A break is
+    drawn when its closing candle is inside the drawn window; its line may
+    start before it. Base's own BOS/CHoCH/LS keep their dashed lines and
+    Label_Size captions, so the two scales stay distinct.
   * Show_Swing_Structure adds a Swing Structure row under each Market Trend
     (section 10). Show_Strong_Weak_High_Low draws the chart timeframe's
     Strong/Weak High/Low as solid lines from the extreme's candle to 20
     candles right of the latest closed candle, with their names at the right
     end.
   It was checked against a literal simulation of LuxAlgo's Pine code (its
-  leg, crossover and trailing-extreme series) on 36 generated markets: the
-  swing trend, latest break and Strong/Weak High/Low were identical.
+  leg, crossover and trailing-extreme series, and drawStructure's line and
+  label positions) on 36 generated markets: the swing trend, every break
+  (level, swing, closing candle and caption candle) and Strong/Weak High/Low
+  were identical.
 
 Market Tradability prints Tradable when:
   * the HTF trend is established (Bullish or Bearish, latest break a BOS, not
@@ -773,8 +786,9 @@ only prefixed objects, and clears the chart comment.
     The Tradable result and the four Use_*_For_Optimal switches.
 
   Change visuals only:
-    Show toggles (including Show_Equal_Highs_Lows, Show_Swing_Structure and
-    Show_Strong_Weak_High_Low), colors, label size, line styles/widths.
+    Show toggles (including Show_Equal_Highs_Lows, Show_Swing_Structure,
+    Show_Swing_Structure_Breaks and Show_Strong_Weak_High_Low), colors,
+    label sizes (Label_Size, Swing_Label_Size), line styles/widths.
 
   Change notifications only:
     Enable_Popup_Alerts and Enable_Push_Notifications.

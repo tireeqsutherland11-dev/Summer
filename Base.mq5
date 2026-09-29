@@ -1,5 +1,5 @@
 #property copyright "Market Trend Analyser conversion"
-#property version   "2.36"
+#property version   "2.37"
 #property strict
 #property description "BASE: MT5 port of the Market Trend Analyser Pine Script."
 #property description "Signal/visualisation EA only; the source indicator contains no trading rules."
@@ -58,6 +58,10 @@ input double Equal_Highs_Lows_Threshold=0.1; // EQH/EQL Threshold (ATR, 0 = off)
 input group "Real Time Swing Structure"
 input bool Show_Swing_Structure=true; // Show Swing Structure On Dashboard
 input int Swing_Structure_Length=50; // Swing Structure Length
+input bool Show_Swing_Structure_Breaks=true; // Show Swing BOS/CHoCH
+input color Swing_Bullish_Color=C'8,153,129'; // Swing Bullish Color
+input color Swing_Bearish_Color=C'242,54,69'; // Swing Bearish Color
+input BASE_LABEL_SIZE Swing_Label_Size=BASE_NORMAL; // Swing Label Size
 input bool Show_Strong_Weak_High_Low=true; // Show Strong/Weak High/Low
 
 input group "MA Filter (HTF)"
@@ -933,6 +937,9 @@ bool AnalyseStructure(const ENUM_TIMEFRAMES timeframe,const int wanted,const int
 //    the lowest low since the latest swing low.  With a bullish swing trend
 //    the low is Strong (it holds the trend) and the high Weak (the next
 //    target); a bearish swing trend reverses this.
+//  * On the chart its breaks are the larger BOS/CHoCH: a solid line from the
+//    swing to the candle that closed through it and a larger caption centred
+//    on the line (see DrawSwingBreaks), beside Base's own dashed structure.
 // As everywhere in Base, only closed candles are used.
 struct BASE_SWING_STRUCTURE
   {
@@ -951,7 +958,34 @@ struct BASE_SWING_STRUCTURE
    double bottom;
    datetime top_time;
    datetime bottom_time;
+   int high_bar;            // the candles of the latest swing high and low
+   int low_bar;
   };
+
+// One swing structure break: the swing it closed through, the candle that
+// did, and the candle midway between them where its caption is centred.
+struct BASE_SWING_BREAK
+  {
+   int direction;           // 1 bullish, -1 bearish
+   bool choch;              // a CHoCH (against the swing trend) or a BOS
+   double level;
+   datetime swing_time;
+   datetime break_time;
+   datetime label_time;
+  };
+
+void AddSwingBreak(BASE_SWING_BREAK &breaks[],const int direction,const bool choch,const double level,
+                   const MqlRates &rates[],const int swing_bar,const int break_bar)
+  {
+   int index=ArraySize(breaks);
+   ArrayResize(breaks,index+1,64);
+   breaks[index].direction=direction;
+   breaks[index].choch=choch;
+   breaks[index].level=level;
+   breaks[index].swing_time=rates[swing_bar].time;
+   breaks[index].break_time=rates[break_bar].time;
+   breaks[index].label_time=rates[(int)MathRound(0.5*(swing_bar+break_bar))].time;
+  }
 
 // Enough candles for the 50-candle legs to settle: at least 1,000.
 int SwingStructureBars()
@@ -959,9 +993,11 @@ int SwingStructureBars()
    return MathMin(100000,MathMax(1000,20*Swing_Structure_Length));
   }
 
-bool ReplaySwingStructure(const MqlRates &rates[],const int total,BASE_SWING_STRUCTURE &swing)
+bool ReplaySwingStructure(const MqlRates &rates[],const int total,BASE_SWING_STRUCTURE &swing,
+                          BASE_SWING_BREAK &breaks[])
   {
    ZeroMemory(swing);
+   ArrayResize(breaks,0);
    int size=Swing_Structure_Length;
    if(total<=size) return false;
    int leg=0;               // 0 bearish leg, 1 bullish leg; it starts bearish
@@ -994,6 +1030,7 @@ bool ReplaySwingStructure(const MqlRates &rates[],const int total,BASE_SWING_STR
            {
             swing.have_low=true;
             swing.low=rates[pivot].low;
+            swing.low_bar=pivot;
             swing.low_crossed=false;
             swing.have_bottom=true;
             swing.bottom=swing.low;
@@ -1003,6 +1040,7 @@ bool ReplaySwingStructure(const MqlRates &rates[],const int total,BASE_SWING_STR
            {
             swing.have_high=true;
             swing.high=rates[pivot].high;
+            swing.high_bar=pivot;
             swing.high_crossed=false;
             swing.have_top=true;
             swing.top=swing.high;
@@ -1016,6 +1054,7 @@ bool ReplaySwingStructure(const MqlRates &rates[],const int total,BASE_SWING_STR
          swing.high_crossed=true;
          swing.trend=1;
          swing.break_level=swing.high;
+         AddSwingBreak(breaks,1,swing.last_choch,swing.high,rates,swing.high_bar,t);
         }
       if(swing.have_low && !swing.low_crossed && close<swing.low)
         {
@@ -1023,6 +1062,7 @@ bool ReplaySwingStructure(const MqlRates &rates[],const int total,BASE_SWING_STR
          swing.low_crossed=true;
          swing.trend=-1;
          swing.break_level=swing.low;
+         AddSwingBreak(breaks,-1,swing.last_choch,swing.low,rates,swing.low_bar,t);
         }
      }
    return true;
@@ -1032,21 +1072,22 @@ bool ReplaySwingStructure(const MqlRates &rates[],const int total,BASE_SWING_STR
 // are fewer than SwingStructureBars(), from a longer copy.  False only while
 // the longer copy is still being synchronised.
 bool AnalyseSwingStructure(const ENUM_TIMEFRAMES timeframe,const MqlRates &rates[],const int total,
-                           BASE_SWING_STRUCTURE &swing)
+                           BASE_SWING_STRUCTURE &swing,BASE_SWING_BREAK &breaks[])
   {
    ZeroMemory(swing);
+   ArrayResize(breaks,0);
    int wanted=SwingStructureBars();
    if(total>=wanted)
      {
-      ReplaySwingStructure(rates,total,swing);
+      ReplaySwingStructure(rates,total,swing,breaks);
       return true;
      }
    MqlRates more[];
    ArraySetAsSeries(more,false);
    int copied=CopyRates(_Symbol,timeframe,1,wanted,more);
    if(copied<=0) return false;
-   if(copied>total) ReplaySwingStructure(more,copied,swing);
-   else ReplaySwingStructure(rates,total,swing);
+   if(copied>total) ReplaySwingStructure(more,copied,swing,breaks);
+   else ReplaySwingStructure(rates,total,swing,breaks);
    return true;
   }
 
@@ -1612,6 +1653,27 @@ void DrawStructure(const MqlRates &rates[],const int total,const int first,
                   state.last_low,clrTeal,STYLE_DOT,1);
   }
 
+// The swing structure's BOS/CHoCH, the larger breaks of LuxAlgo's Smart Money
+// Concepts: a solid line from the broken swing to the candle that closed
+// through it, and a caption in Swing_Label_Size centred on the line, above a
+// line broken upwards and below one broken downwards.  Base's own BOS/CHoCH
+// keep their dashed lines and smaller captions.  A break is drawn when the
+// candle that closed through the swing is in the drawn window.
+void DrawSwingBreaks(const BASE_SWING_BREAK &breaks[],const datetime first_time)
+  {
+   if(!Show_Swing_Structure_Breaks) return;
+   for(int i=0;i<ArraySize(breaks);i++)
+     {
+      if(breaks[i].break_time<first_time) continue;
+      color clr=breaks[i].direction>0?Swing_Bullish_Color:Swing_Bearish_Color;
+      string key="SWING_BREAK_"+(breaks[i].direction>0?"BULL_":"BEAR_")+(string)breaks[i].break_time;
+      DrawSegment(key+"_SEGMENT",breaks[i].swing_time,breaks[i].level,breaks[i].break_time,
+                  breaks[i].level,clr,STYLE_SOLID,1);
+      DrawText(key,breaks[i].label_time,breaks[i].level,breaks[i].choch?"CHoCH":"BOS",clr,
+               breaks[i].direction<0,(int)Swing_Label_Size);
+     }
+  }
+
 // Strong/Weak High/Low: the swing structure's trailing extremes, extended 20
 // candles to the right of the latest closed candle, where their names sit.
 void DrawStrongWeak(const BASE_SWING_STRUCTURE &swing,const datetime last_time,
@@ -1896,24 +1958,27 @@ bool Rebuild(const bool permit_alert)
    ReplayStructure(rates,total,filter,structure_state,points,events);
 
    // The Real Time Swing Structure of each trend timeframe (dashboard) and of
-   // the chart (Strong/Weak High/Low).
+   // the chart (its BOS/CHoCH and Strong/Weak High/Low).
    BASE_SWING_STRUCTURE htf_swing,mtf_swing,ltf_swing,chart_swing;
+   BASE_SWING_BREAK trend_breaks[],chart_breaks[];
    ZeroMemory(htf_swing);
    ZeroMemory(mtf_swing);
    ZeroMemory(ltf_swing);
    ZeroMemory(chart_swing);
-   if(Show_Swing_Structure || (anchored && Show_Strong_Weak_High_Low))
-      if(!AnalyseSwingStructure(timeframe,rates,total,htf_swing)) return false;
+   if(Show_Swing_Structure && !AnalyseSwingStructure(timeframe,rates,total,htf_swing,trend_breaks))
+      return false;
    if(Show_Swing_Structure && Use_MTF &&
-      !AnalyseSwingStructure(SetupTimeframe(),setup_rates,ArraySize(setup_rates),mtf_swing))
+      !AnalyseSwingStructure(SetupTimeframe(),setup_rates,ArraySize(setup_rates),mtf_swing,trend_breaks))
       return false;
    if(Show_Swing_Structure && Use_LTF &&
-      !AnalyseSwingStructure(LTFTimeframe(),ltf_rates,ltf_total,ltf_swing))
+      !AnalyseSwingStructure(LTFTimeframe(),ltf_rates,ltf_total,ltf_swing,trend_breaks))
       return false;
-   if(anchored) chart_swing=htf_swing;
-   else if(Show_Strong_Weak_High_Low &&
-           !AnalyseSwingStructure(chart_timeframe,chart_rates,chart_total,chart_swing))
-      return false;
+   if(Show_Swing_Structure_Breaks || Show_Strong_Weak_High_Low)
+     {
+      bool ready=anchored?AnalyseSwingStructure(timeframe,rates,total,chart_swing,chart_breaks):
+                 AnalyseSwingStructure(chart_timeframe,chart_rates,chart_total,chart_swing,chart_breaks);
+      if(!ready) return false;
+     }
 
    // The MTF MA line, if shown, over the drawn MTF candles.
    MqlRates mtf_rates[];
@@ -1942,6 +2007,8 @@ bool Rebuild(const bool permit_alert)
                        MathMax(0,chart_total-ChartStructureBars(chart_timeframe)),
                        chart_state,chart_points,chart_events);
      }
+   DrawSwingBreaks(chart_breaks,anchored?rates[MathMax(0,total-displayed)].time:
+                   chart_rates[MathMax(0,chart_total-ChartStructureBars(chart_timeframe))].time);
    DrawStrongWeak(chart_swing,anchored?rates[total-1].time:chart_rates[chart_total-1].time,
                   chart_timeframe);
    DrawAverageLines(rates,total,displayed,ma,mtf_rates,mtf_ma,mtf_count);
