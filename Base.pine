@@ -1,12 +1,17 @@
 //@version=5
-// Base - Market Structure (TradingView port of Base.mq5 v2.30)
+// Base - Market Structure (TradingView port of Base.mq5 v2.31)
 //
 // Reads market structure from closed candles only:
 //  * HH/HL/LH/LL swings from two sets of the same two filters (swing strength
 //    and swing size in ATR), blended by Swing Sensitivity (0-100).
-//  * BOS: the most recent HH (LL) is broken by a close, creating a new HH (LL).
-//  * CHoCH: while the bias is not already bullish, the most recent LH is broken
-//    by a close and the next swing high is an HH (bearish mirrors this).
+//  * Only identified swings are broken: a swing is identified once the
+//    opposite leg after it has begun, so it can no longer be replaced and
+//    stays marked on the chart.
+//  * BOS: the most recent identified HH (LL) is broken by a close, creating a
+//    new HH (LL).
+//  * CHoCH: while the bias is not already bullish, the most recent identified
+//    LH is broken by a close and the next swing high is an HH (bearish mirrors
+//    this).
 //  * Bias: Bullish / Bearish after a BOS, Bullish / Bearish Transition after a
 //    CHoCH, Consolidation / Undefined when the structure is sporadic or trapped.
 //  * Dashboard: the HTF breakdown (classification, trigger, evidence,
@@ -178,8 +183,6 @@ type SEngine
     SLevel lh
     SLevel ll
     SLevel hl
-    SLevel prevLh
-    SLevel prevHl
     SPoint highPt
     SPoint lowPt
     int nextId = 0
@@ -210,7 +213,7 @@ type SEngine
     int trapFromIdx = -1
 
 newEngine() =>
-    SEngine.new(points = array.new<SPoint>(), events = array.new<SEvent>(), trapChochs = array.new<SEvent>(), newPoints = array.new<SPoint>(), dropped = array.new<SPoint>(), newEvents = array.new<SEvent>(), hh = SLevel.new(), lh = SLevel.new(), ll = SLevel.new(), hl = SLevel.new(), prevLh = SLevel.new(), prevHl = SLevel.new())
+    SEngine.new(points = array.new<SPoint>(), events = array.new<SEvent>(), trapChochs = array.new<SEvent>(), newPoints = array.new<SPoint>(), dropped = array.new<SPoint>(), newEvents = array.new<SEvent>(), hh = SLevel.new(), lh = SLevel.new(), ll = SLevel.new(), hl = SLevel.new())
 
 method setLevel(SLevel lv, SPoint p) =>
     lv.active := true
@@ -218,9 +221,22 @@ method setLevel(SLevel lv, SPoint p) =>
     lv.swingTime := p.pivotTime
     lv.point := p.id
 
-method dropLevel(SLevel lv, int pointId) =>
-    if lv.active and lv.point == pointId
-        lv.active := false
+// A swing is identified once the opposite leg after it has begun: no later
+// pivot can replace it, so it stays marked on the chart. Only then does it
+// become the HH/LH (or LL/HL) whose close-through is a break.
+method identifySwing(SEngine e, SPoint p) =>
+    if not na(p)
+        if p.side > 0
+            if p.kind > 0
+                e.hh.setLevel(p)
+            else if p.kind < 0
+                e.lh.setLevel(p)
+        else
+            if p.kind > 0
+                e.ll.setLevel(p)
+            else if p.kind < 0
+                e.hl.setLevel(p)
+    p
 
 method highId(SEngine e) =>
     int id = -1
@@ -330,32 +346,19 @@ method onPivotHigh(SEngine e, float v, int pivotBar, int pivotTime, float minSiz
             e.lastSide := 1
             accepted := true
     if accepted
-        int replacedId = -1
-        if sameLeg and not na(e.highPt)
-            replacedId := e.highPt.id
-        bool unbrokenLhReplaced = replacedId >= 0 and e.lh.active and e.lh.point == replacedId
-        if replacedId >= 0
+        // A higher pivot in the same leg replaces the leg's high; the first
+        // high of a new leg ends the low leg, identifying its low.
+        if sameLeg
             e.highPt.superseded := true
             e.dropped.push(e.highPt)
-            e.hh.dropLevel(replacedId)
-            e.lh.dropLevel(replacedId)
+        else
+            e.identifySwing(e.lowPt)
         SPoint p = e.addPoint(pivotBar, pivotTime, v, 1, kind)
         e.highPt := p
         e.lastHighKind := kind
         e.lastHighTime := pivotTime
-        if kind > 0
-            e.hh.setLevel(p)
-        if kind < 0
-            if replacedId < 0
-                e.prevLh := e.lh.copy()
-            e.lh.setLevel(p)
-        else if unbrokenLhReplaced
-            e.lh := e.prevLh.copy()
-        // A higher LH in the same leg replaces the broken one: it is the LH
-        // to break now. Only swings formed after the breaking close cancel.
-        if e.chochDir > 0 and kind < 0 and replacedId >= 0 and replacedId == e.chochLevelPoint
-            e.chochDir := 0
-        else if e.chochDir > 0 and kind < 0 and pivotBar > e.chochBreakBar
+        // Only swings formed after the breaking close can cancel a CHoCH.
+        if e.chochDir > 0 and kind < 0 and pivotBar > e.chochBreakBar
             e.cancelChoch()
         else if e.chochDir < 0 and kind > 0 and pivotBar > e.chochBreakBar
             e.cancelChoch()
@@ -383,30 +386,16 @@ method onPivotLow(SEngine e, float v, int pivotBar, int pivotTime, float minSize
             e.lastSide := -1
             accepted := true
     if accepted
-        int replacedId = -1
-        if sameLeg and not na(e.lowPt)
-            replacedId := e.lowPt.id
-        bool unbrokenHlReplaced = replacedId >= 0 and e.hl.active and e.hl.point == replacedId
-        if replacedId >= 0
+        if sameLeg
             e.lowPt.superseded := true
             e.dropped.push(e.lowPt)
-            e.ll.dropLevel(replacedId)
-            e.hl.dropLevel(replacedId)
+        else
+            e.identifySwing(e.highPt)
         SPoint p = e.addPoint(pivotBar, pivotTime, v, -1, kind)
         e.lowPt := p
         e.lastLowKind := kind
         e.lastLowTime := pivotTime
-        if kind > 0
-            e.ll.setLevel(p)
-        if kind < 0
-            if replacedId < 0
-                e.prevHl := e.hl.copy()
-            e.hl.setLevel(p)
-        else if unbrokenHlReplaced
-            e.hl := e.prevHl.copy()
-        if e.chochDir < 0 and kind < 0 and replacedId >= 0 and replacedId == e.chochLevelPoint
-            e.chochDir := 0
-        else if e.chochDir < 0 and kind < 0 and pivotBar > e.chochBreakBar
+        if e.chochDir < 0 and kind < 0 and pivotBar > e.chochBreakBar
             e.cancelChoch()
         else if e.chochDir > 0 and kind > 0 and pivotBar > e.chochBreakBar
             e.cancelChoch()
@@ -414,10 +403,12 @@ method onPivotLow(SEngine e, float v, int pivotBar, int pivotTime, float minSize
             e.confirmChoch(curBar)
     accepted
 
-// Only a candle close through a swing is a break; a wick is a sweep.
-//  * The most recent LH broken while the bias is not bullish starts a bullish
-//    CHoCH (an LH broken with an HH is the CHoCH, not a BOS).
-//  * The most recent HH broken is a bullish BOS. Bearish mirrors both.
+// Only a candle close through an identified swing is a break; a wick is a
+// sweep.
+//  * The most recent identified LH broken while the bias is not bullish
+//    starts a bullish CHoCH (an LH broken with an HH is the CHoCH, not a BOS).
+//  * The most recent identified HH broken is a bullish BOS. Bearish mirrors
+//    both.
 method onClose(SEngine e, float c, int curBar, int curTime) =>
     if e.lh.active and c > e.lh.price
         e.lh.active := false
@@ -714,6 +705,9 @@ chartSeconds = timeframe.in_seconds()
 htfSeconds = timeframe.in_seconds(htfTf)
 displayBars = math.max(2 * swingStrength + 2, int(math.ceil(float(barsToProcess) * htfSeconds / math.max(chartSeconds, 1))))
 drawFrom = last_bar_index - displayBars
+var int drawFromTime = na
+if bar_index == math.max(drawFrom, 0)
+    drawFromTime := time
 
 swingName(SPoint p) =>
     p.side > 0 ? (p.kind > 0 ? "HH" : "LH") : (p.kind > 0 ? "LL" : "HL")
@@ -754,7 +748,9 @@ if barstate.isconfirmed
         for i = 0 to eventCount - 1
             SEvent ev = chartEngine.newEvents.get(i)
             bool shown = ev.bos ? showBos : showChoch
-            if shown and ev.breakBar >= drawFrom
+            // A break is drawn only with its broken swing, so every BOS and
+            // CHoCH starts from a marked swing.
+            if shown and ev.breakBar >= drawFrom and ev.swingTime >= drawFromTime
                 color textColor = ev.dir > 0 ? (ev.bos ? bullBosColor : bullChochColor) : (ev.bos ? bearBosColor : bearChochColor)
                 label.new(ev.breakTime, ev.level, ev.bos ? "BOS" : "CHoCH", xloc = xloc.bar_time, yloc = yloc.price, color = color.new(color.white, 100), style = ev.dir > 0 ? label.style_label_up : label.style_label_down, textcolor = textColor, size = labelSize)
                 if showLines
