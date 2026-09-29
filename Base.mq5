@@ -1,5 +1,5 @@
 #property copyright "Market Trend Analyser conversion"
-#property version   "2.33"
+#property version   "2.34"
 #property strict
 #property description "BASE: MT5 port of the Market Trend Analyser Pine Script."
 #property description "Signal/visualisation EA only; the source indicator contains no trading rules."
@@ -51,20 +51,19 @@ input bool Show_Structure_Lines=true;
 input ENUM_LINE_STYLE Line_Style=STYLE_DASH;
 input int Line_Width=1;
 
-input group "MA Filter (LTF)"
-input bool Use_MA_Filter=true;
-input int MA_Length=50;
-input BASE_MA_TYPE MA_Type=BASE_EMA;
-input bool Show_MA_Line=false;
-input color MA_Color=clrBlue;
-
 input group "MA Filter (HTF)"
 input bool Use_HTF_MA_Filter=true;
-input ENUM_TIMEFRAMES HTF_Timeframe=PERIOD_H1;
-input int HTF_MA_Length=100;
+input int HTF_MA_Length=50;
 input BASE_MA_TYPE HTF_MA_Type=BASE_EMA; // MA Type
 input bool Show_HTF_MA_Line=false;
-input color HTF_MA_Color=clrOrange;
+input color HTF_MA_Color=clrBlue;
+
+input group "MA Filter (MTF)"
+input bool Use_MTF_MA_Filter=true;
+input int MTF_MA_Length=100;
+input BASE_MA_TYPE MTF_MA_Type=BASE_EMA; // MA Type
+input bool Show_MTF_MA_Line=false;
+input color MTF_MA_Color=clrOrange;
 
 input group "Session Filter"
 input bool Use_Session_Filter=false;
@@ -93,8 +92,8 @@ input bool Enable_Push_Notifications=false;
 
 // Internal tuning values are deliberately kept out of the Inputs dialog. The
 // streamlined UI exposes only settings that are useful during normal use.
-const BASE_MA_FILTER_MODE MA_Filter_Mode=BASE_PRICE_ABOVE_BELOW;
 const BASE_MA_FILTER_MODE HTF_MA_Filter_Mode=BASE_PRICE_ABOVE_BELOW;
+const BASE_MA_FILTER_MODE MTF_MA_Filter_Mode=BASE_PRICE_ABOVE_BELOW;
 const double ADX_Minimum=25.0;
 const BASE_ADX_SCOPE Apply_ADX_Filter_To=BASE_BOS_ONLY;
 const BASE_ATR_MODE ATR_Filter_Mode=BASE_ATR_MINIMUM;
@@ -135,11 +134,27 @@ const int SPORADIC_FLIPS=2;
 const double CHOCH_TRAP_AREA_ATR=4.0;
 
 string g_prefix="";
+bool g_built=false;
+long g_foreground=-1;       // the chart's own "chart on foreground" setting
+
+// Label layout (see PlaceBreakLabel): the chart area each drawing covers, in
+// candles and prices, and the chart's current scale.
+struct BASE_BOX
+  {
+   int from;
+   int to;
+   double low;
+   double high;
+  };
+BASE_BOX g_boxes[];
+double g_bar_px=8.0;        // pixels per candle
+double g_price_px=0.0;      // price per pixel
+long g_layout_scale=-1;
 datetime g_last_ltf_bar=0;
 datetime g_last_structure_bar=0;
 datetime g_last_setup_bar=0;
-int g_ma_handle=INVALID_HANDLE;
 int g_htf_ma_handle=INVALID_HANDLE;
+int g_mtf_ma_handle=INVALID_HANDLE;
 int g_adx_handle=INVALID_HANDLE;
 int g_atr_handle=INVALID_HANDLE;
 int g_ltf_atr_handle=INVALID_HANDLE;
@@ -934,14 +949,25 @@ string EvidenceText(const BASE_STRUCTURE_STATE &state,const BASE_STRUCTURE_POINT
    return text==""?"No labels yet":text;
   }
 
+string TrendWord(const int direction)
+  {
+   return direction>0?"bullish":"bearish";
+  }
+
+string HTFName() { return TimeframeName(BASETimeframe()); }
+string MTFName() { return TimeframeName(SetupTimeframe()); }
+string LTFName() { return TimeframeName(LTFTimeframe()); }
+
+// What to do on one timeframe's trend: one action and the level that
+// decides it.
 string RecommendationText(const BASE_STRUCTURE_STATE &state,const BASE_STRUCTURE_POINT &points[])
   {
    int direction=BiasDirection(state);
    if(state.direction==0)
-      return "Stay on the sidelines until a BoS establishes a trend";
+      return "Stand aside until a BOS sets the trend.";
    if(direction==0)
      {
-      // Range boundaries: the extremes of the last five labels.
+      // Range edges: the extremes of the last five labels.
       double top=0.0,bottom=0.0;
       bool have=false;
       if(state.labels_from>=0)
@@ -952,26 +978,47 @@ string RecommendationText(const BASE_STRUCTURE_STATE &state,const BASE_STRUCTURE
                if(!have || points[k].price<bottom) bottom=points[k].price;
                have=true;
               }
-      string text="Stay on the sidelines";
-      if(have) text+=", or trade only the range boundaries "+PriceText(bottom)+" - "+PriceText(top)+",";
-      text+=" until a valid BoS";
+      string text="Stand aside";
+      if(have) text+=" or trade only the range edges ("+PriceText(bottom)+" to "+PriceText(top)+")";
       if(state.have_hh && state.have_ll)
-         text+=" (close above HH "+PriceText(state.hh)+" or below LL "+PriceText(state.ll)+")";
-      return text;
+         text+="; a close above HH "+PriceText(state.hh)+" or below LL "+PriceText(state.ll)+
+               " starts a new trend";
+      else
+         text+=" until a BOS starts a new trend";
+      return text+".";
      }
    if(direction>0)
      {
       if(!state.last_break_was_bos)
-         return state.have_hh?"Wait for a bullish BoS (close above HH "+PriceText(state.hh)+") before buying":
-                "Wait for a bullish BoS before buying";
-      return state.have_hl?"Favour buys with the trend; a close below HL "+PriceText(state.hl)+" starts a bearish CHoCH":
-             "Favour buys with the trend";
+         return state.have_hh?"Wait for a close above HH "+PriceText(state.hh)+" (bullish BOS) before buying.":
+                "Wait for a bullish BOS before buying.";
+      return state.have_hl?"Look for buys on pullbacks while price holds above HL "+PriceText(state.hl)+".":
+             "Look for buys on pullbacks.";
      }
    if(!state.last_break_was_bos)
-      return state.have_ll?"Wait for a bearish BoS (close below LL "+PriceText(state.ll)+") before selling":
-             "Wait for a bearish BoS before selling";
-   return state.have_lh?"Favour sells with the trend; a close above LH "+PriceText(state.lh)+" starts a bullish CHoCH":
-          "Favour sells with the trend";
+      return state.have_ll?"Wait for a close below LL "+PriceText(state.ll)+" (bearish BOS) before selling.":
+             "Wait for a bearish BOS before selling.";
+   return state.have_lh?"Look for sells on pullbacks while price holds below LH "+PriceText(state.lh)+".":
+          "Look for sells on pullbacks.";
+  }
+
+// The dashboard's recommendation: the HTF's, unless an established HTF trend
+// is held back by a selected lower timeframe, which it then names.
+string TradeRecommendation(const BASE_STRUCTURE_STATE &htf,const BASE_STRUCTURE_POINT &points[],
+                           const BASE_STRUCTURE_STATE &mtf,const BASE_STRUCTURE_STATE &ltf,
+                           const bool tradable)
+  {
+   int direction=BiasDirection(htf);
+   if(!tradable && direction!=0 && htf.last_break_was_bos)
+     {
+      string action=direction>0?"buying":"selling";
+      string lead=HTFName()+" is "+TrendWord(direction)+", but wait for ";
+      if(Use_MTF && BiasDirection(mtf)!=direction)
+         return lead+MTFName()+" to turn "+TrendWord(direction)+" before "+action+".";
+      if(Use_LTF && (BiasDirection(ltf)!=direction || !DefiniteBias(ltf)))
+         return lead+LTFName()+" to confirm with a "+TrendWord(direction)+" BOS before "+action+".";
+     }
+   return RecommendationText(htf,points);
   }
 
 // The four-line breakdown, joined for a tooltip.
@@ -984,21 +1031,42 @@ string BreakdownText(const BASE_STRUCTURE_STATE &state,const BASE_STRUCTURE_POIN
           "\nTrade Recommendations: "+RecommendationText(state,points);
   }
 
+// "H4", "H4 and H1" or "H4, H1 and M15": the selected trend timeframes.
 string TrendTimeframesText()
   {
+   string names[3];
+   int count=0;
+   if(Use_HTF) names[count++]=HTFName();
+   if(Use_MTF) names[count++]=MTFName();
+   if(Use_LTF) names[count++]=LTFName();
    string result="";
-   if(Use_HTF) result="HTF";
-   if(Use_MTF) result+=(result==""?"":" and ")+"MTF";
-   if(Use_LTF) result+=(result==""?"":" and ")+"LTF";
+   for(int i=0;i<count;i++)
+      result+=(i==0?"":(i==count-1?" and ":", "))+names[i];
    return result;
   }
 
-// Market Tradeability: the HTF bias must be established (latest break a
-// BOS); every enabled tradeability timeframe must have a direction and they
-// must all agree; an enabled LTF must itself be established.  The MTF may be
-// transitional.  A Consolidation / Undefined bias has no direction.  Returns
-// the result and the reason shown on the dashboard.
-bool EvaluateTradeability(const BASE_STRUCTURE_STATE &htf,const BASE_STRUCTURE_STATE &mtf,
+// Why a timeframe has no trend direction.
+string NoTrendText(const string name,const BASE_STRUCTURE_STATE &state)
+  {
+   if(state.direction==0) return name+" has no structure break yet.";
+   string why="";
+   if((state.consolidation&1)!=0) why="breaks in both directions over its last 5 swings";
+   if((state.consolidation&2)!=0) why+=(why==""?"":"; ")+"repeated CHoCHs in one area with no BOS";
+   return name+" is ranging ("+why+").";
+  }
+
+string TransitionText(const string name,const BASE_STRUCTURE_STATE &state)
+  {
+   return name+" is only in a "+TrendWord(state.direction)+
+          " transition (a CHoCH not yet confirmed by a BOS).";
+  }
+
+// Market Tradability: the HTF trend must be established (latest break a
+// BOS); every selected trend timeframe must have a direction and they must
+// all agree; a selected LTF must itself be established.  The MTF may be
+// transitional.  A Consolidation / Undefined trend has no direction.  The
+// reason says why in one sentence, naming the timeframes.
+bool EvaluateTradability(const BASE_STRUCTURE_STATE &htf,const BASE_STRUCTURE_STATE &mtf,
                           const BASE_STRUCTURE_STATE &ltf,string &reason)
   {
    bool htf_definite=DefiniteBias(htf);
@@ -1015,24 +1083,31 @@ bool EvaluateTradeability(const BASE_STRUCTURE_STATE &htf,const BASE_STRUCTURE_S
                htf_direction==ltf_direction) &&
               (!Use_MTF || !Use_LTF ||
                mtf_direction==ltf_direction);
-   bool tradeable=htf_definite && available && match && (!Use_LTF || ltf_definite);
-   if(tradeable)
+   bool tradable=htf_definite && available && match && (!Use_LTF || ltf_definite);
+   if(tradable)
      {
-      int selected=(Use_HTF?1:0)+(Use_MTF?1:0)+
-                   (Use_LTF?1:0);
-      reason=TrendTimeframesText()+(selected>1?" correlate":" is directional")+
-             "; HTF is confirmed by HH/LL BOS";
-      if(Use_LTF) reason+="; LTF is confirmed by BOS";
+      int selected=(Use_HTF?1:0)+(Use_MTF?1:0)+(Use_LTF?1:0);
+      int direction=Use_HTF?htf_direction:(Use_MTF?mtf_direction:ltf_direction);
+      reason=TrendTimeframesText()+(selected==1?" is ":selected==2?" are both ":" are all ")+
+             TrendWord(direction)+", and the "+HTFName()+" trend is confirmed by a BOS";
+      if(Use_LTF) reason+=", as is the "+LTFName()+" trend";
+      reason+=".";
      }
-   else if(htf_direction==0) reason="HTF is Consolidation / Undefined ("+TriggerText(htf)+")";
-   else if(!htf_definite) reason="HTF trend is transitional (CHoCH has no subsequent BOS)";
-   else if(Use_MTF && mtf_direction==0)
-      reason="MTF is Consolidation / Undefined ("+TriggerText(mtf)+")";
-   else if(Use_LTF && ltf_direction==0)
-      reason="LTF is Consolidation / Undefined ("+TriggerText(ltf)+")";
-   else if(!match) reason=TrendTimeframesText()+" trends conflict";
-   else reason="LTF trend is transitional (CHoCH has no subsequent BOS)";
-   return tradeable;
+   else if(htf_direction==0) reason=NoTrendText(HTFName(),htf);
+   else if(!htf_definite) reason=TransitionText(HTFName(),htf);
+   else if(Use_MTF && mtf_direction==0) reason=NoTrendText(MTFName(),mtf);
+   else if(Use_LTF && ltf_direction==0) reason=NoTrendText(LTFName(),ltf);
+   else if(!match)
+     {
+      string first=Use_HTF?HTFName():MTFName();
+      int first_direction=Use_HTF?htf_direction:mtf_direction;
+      bool mtf_conflict=Use_HTF && Use_MTF && mtf_direction!=htf_direction;
+      string other=mtf_conflict?MTFName():LTFName();
+      int other_direction=mtf_conflict?mtf_direction:ltf_direction;
+      reason=first+" is "+TrendWord(first_direction)+" but "+other+" is "+TrendWord(other_direction)+".";
+     }
+   else reason=TransitionText(LTFName(),ltf);
+   return tradable;
   }
 
 // Healthy Extension: measured in the HTF bias direction (the trading
@@ -1068,8 +1143,7 @@ bool EvaluateOptimal(const bool bias_ready,const bool healthy_extension,
      }
    reason="";
    if(Use_Timeframe_Correlation_For_Optimal && !bias_ready)
-      reason=TrendTimeframesText()+
-             " trends do not meet the selected correlation requirements";
+      reason="the selected timeframes do not correlate (see Tradability Reason)";
    if(Use_Healthy_Extension_For_Optimal && !healthy_extension)
       reason+=(reason==""?"":"; ")+"price is overextended or lacks a valid corrective anchor";
    if(Use_Market_Volume_For_Optimal && !good_volume)
@@ -1143,23 +1217,14 @@ bool CopyIndicator(const int handle,const int buffer,const int count,double &val
    return CopyBuffer(handle,buffer,1,count,values)==count;
   }
 
-bool HTFValues(const datetime time,double &ma,double &open,double &close)
+// The latest closed MTF candle and its MTF MA.
+bool MTFValues(double &ma,double &open,double &close)
   {
-   int shift=iBarShift(_Symbol,HTF_Timeframe,time,false);
-   // Pine's request.security(..., lookahead_off) exposes the containing HTF
-   // candle only when that candle has closed. Earlier child bars use the
-   // preceding completed HTF candle, avoiding historical future leakage.
-   datetime htf_open_time=shift>=0?iTime(_Symbol,HTF_Timeframe,shift):0;
-   int ltf_seconds=PeriodSeconds(BASETimeframe());
-   int htf_seconds=PeriodSeconds(HTF_Timeframe);
-   if(shift>=0 && ltf_seconds>0 && htf_seconds>0 &&
-      time+ltf_seconds<htf_open_time+htf_seconds)
-      shift++;
    double value[1];
-   if(shift<0 || CopyBuffer(g_htf_ma_handle,0,shift,1,value)!=1) return false;
+   if(g_mtf_ma_handle==INVALID_HANDLE || CopyBuffer(g_mtf_ma_handle,0,1,1,value)!=1) return false;
    ma=value[0];
-   open=iOpen(_Symbol,HTF_Timeframe,shift);
-   close=iClose(_Symbol,HTF_Timeframe,shift);
+   open=iOpen(_Symbol,SetupTimeframe(),1);
+   close=iClose(_Symbol,SetupTimeframe(),1);
    return open!=0.0 && close!=0.0;
   }
 
@@ -1168,36 +1233,38 @@ string PassText(const bool pass)
    return pass?"PASS":"BLOCKED";
   }
 
-// Qualifies the latest closed structure candle with the MA, HTF MA, session,
-// ADX and ATR filters.  The filters never gate structure, bias or alerts;
-// the result is shown as the tooltip of the dashboard's tradeability row.
+// Qualifies the latest closed structure candle with the HTF MA, MTF MA,
+// session, ADX and ATR filters.  The HTF MA filter compares the latest closed
+// HTF candle with the HTF MA, the MTF MA filter the latest closed MTF candle
+// with the MTF MA.  The filters never gate structure, trend or alerts; the
+// result is shown as the tooltip of the dashboard's tradability row.
 string EntryFilterTooltip(const MqlRates &bar,const double &ma[],const double &adx[],
                           const double &atr[])
   {
-   bool ma_long=true,ma_short=true;
-   string ma_text="off";
-   if(Use_MA_Filter)
-     {
-      double value=ma[ArraySize(ma)-1];
-      ma_long=MA_Filter_Mode==BASE_PRICE_ABOVE_BELOW?bar.close>value
-              :bar.close>value && bar.open>value && bar.close>bar.open;
-      ma_short=MA_Filter_Mode==BASE_PRICE_ABOVE_BELOW?bar.close<value
-               :bar.close<value && bar.open<value && bar.close<bar.open;
-      ma_text=ma_long?"long":(ma_short?"short":"neutral");
-     }
-   bool htf_long=!Use_HTF_MA_Filter,htf_short=!Use_HTF_MA_Filter;
+   bool htf_long=true,htf_short=true;
    string htf_text="off";
-   double htf_ma=0.0,htf_open=0.0,htf_close=0.0;
    if(Use_HTF_MA_Filter)
      {
-      htf_text="unavailable";
-      if(HTFValues(bar.time,htf_ma,htf_open,htf_close))
+      double value=ma[ArraySize(ma)-1];
+      htf_long=HTF_MA_Filter_Mode==BASE_PRICE_ABOVE_BELOW?bar.close>value
+               :bar.close>value && bar.open>value && bar.close>bar.open;
+      htf_short=HTF_MA_Filter_Mode==BASE_PRICE_ABOVE_BELOW?bar.close<value
+                :bar.close<value && bar.open<value && bar.close<bar.open;
+      htf_text=htf_long?"long":(htf_short?"short":"neutral");
+     }
+   bool mtf_long=!Use_MTF_MA_Filter,mtf_short=!Use_MTF_MA_Filter;
+   string mtf_text="off";
+   double mtf_ma=0.0,mtf_open=0.0,mtf_close=0.0;
+   if(Use_MTF_MA_Filter)
+     {
+      mtf_text="unavailable";
+      if(MTFValues(mtf_ma,mtf_open,mtf_close))
         {
-         htf_long=HTF_MA_Filter_Mode==BASE_PRICE_ABOVE_BELOW?bar.close>htf_ma
-                  :htf_close>htf_ma && htf_open>htf_ma && htf_close>htf_open;
-         htf_short=HTF_MA_Filter_Mode==BASE_PRICE_ABOVE_BELOW?bar.close<htf_ma
-                   :htf_close<htf_ma && htf_open<htf_ma && htf_close<htf_open;
-         htf_text=htf_long?"long":(htf_short?"short":"neutral");
+         mtf_long=MTF_MA_Filter_Mode==BASE_PRICE_ABOVE_BELOW?mtf_close>mtf_ma
+                  :mtf_close>mtf_ma && mtf_open>mtf_ma && mtf_close>mtf_open;
+         mtf_short=MTF_MA_Filter_Mode==BASE_PRICE_ABOVE_BELOW?mtf_close<mtf_ma
+                   :mtf_close<mtf_ma && mtf_open<mtf_ma && mtf_close<mtf_open;
+         mtf_text=mtf_long?"long":(mtf_short?"short":"neutral");
         }
      }
    bool session=InSession(bar.time);
@@ -1206,15 +1273,15 @@ string EntryFilterTooltip(const MqlRates &bar,const double &ma[],const double &a
                  (ATR_Filter_Mode==BASE_ATR_MINIMUM?atr[0]>=ATR_Minimum:
                   ATR_Filter_Mode==BASE_ATR_MAXIMUM?atr[0]<=ATR_Maximum:
                   atr[0]>=ATR_Minimum && atr[0]<=ATR_Maximum));
-   bool long_direction=ma_long && htf_long && session;
-   bool short_direction=ma_short && htf_short && session;
+   bool long_direction=htf_long && mtf_long && session;
+   bool short_direction=htf_short && mtf_short && session;
    bool choch_adx=!Use_ADX_Filter || Apply_ADX_Filter_To==BASE_BOS_ONLY || adx_pass;
    string text="Entry filters, latest closed "+TimeframeName(BASETimeframe())+" candle";
    text+="\nBOS: long "+PassText(long_direction && adx_pass && atr_pass)+
          ", short "+PassText(short_direction && adx_pass && atr_pass);
    text+="\nCHoCH: long "+PassText(long_direction && choch_adx && atr_pass)+
          ", short "+PassText(short_direction && choch_adx && atr_pass);
-   text+="\nMA "+ma_text+" | HTF MA "+htf_text+" | Session "+
+   text+="\nHTF MA "+htf_text+" | MTF MA "+mtf_text+" | Session "+
          (Use_Session_Filter?(session?"in":"out"):"off");
    text+="\nADX "+(Use_ADX_Filter?DoubleToString(adx[0],1)+" "+PassText(adx_pass):"off")+
          " | ATR "+(Use_ATR_Filter?DoubleToString(atr[0],_Digits)+" "+PassText(atr_pass):"off");
@@ -1222,14 +1289,15 @@ string EntryFilterTooltip(const MqlRates &bar,const double &ma[],const double &a
   }
 
 void DrawText(const string id,const datetime time,const double price,const string text,
-              const color clr,const bool below,const int font_size)
+              const color clr,const ENUM_ANCHOR_POINT anchor,const int font_size)
   {
    string name=g_prefix+id;
    if(ObjectFind(0,name)>=0 || !ObjectCreate(0,name,OBJ_TEXT,0,time,price)) return;
    ObjectSetString(0,name,OBJPROP_TEXT,text);
    ObjectSetInteger(0,name,OBJPROP_COLOR,clr);
    ObjectSetInteger(0,name,OBJPROP_FONTSIZE,font_size);
-   ObjectSetInteger(0,name,OBJPROP_ANCHOR,below?ANCHOR_UPPER:ANCHOR_LOWER);
+   ObjectSetInteger(0,name,OBJPROP_ANCHOR,anchor);
+   ObjectSetInteger(0,name,OBJPROP_BACK,false);
    ObjectSetInteger(0,name,OBJPROP_SELECTABLE,false);
   }
 
@@ -1246,24 +1314,32 @@ void DrawSegment(const string id,const datetime from,const double from_price,
    ObjectSetInteger(0,name,OBJPROP_SELECTABLE,false);
   }
 
-// BOS, CHoCH and LS share one drawing: the caption on the broken level at
-// the breaking candle and a line from the broken swing.  An LS keeps the
-// place of the CHoCH it replaced, in its own colour.
-void DrawSignal(const string kind,const int direction,const datetime swing_time,
-                const double level,const MqlRates &bar)
+bool SignalShown(const string kind)
   {
+   if(kind=="BOS") return Show_BOS_Labels;
+   if(kind=="LS") return Show_LS_Labels;
+   return Show_CHoCH_Labels;
+  }
+
+// BOS, CHoCH and LS share one drawing: a line from the broken swing to the
+// candle that closed through it, and the caption placed by PlaceBreakLabel.
+// An LS keeps the place of the CHoCH it replaced, in its own colour.
+void DrawSignal(const string kind,const int direction,const datetime swing_time,
+                const double level,const datetime break_time,const datetime label_time,
+                const double label_price)
+  {
+   if(!SignalShown(kind)) return;
    bool bos=kind=="BOS",ls=kind=="LS";
-   if((bos && !Show_BOS_Labels) || (ls && !Show_LS_Labels) || (!bos && !ls && !Show_CHoCH_Labels))
-      return;
    color clr=ls?(direction>0?Bullish_LS_Color:Bearish_LS_Color):
              direction>0?(bos?Bullish_BOS_Color:Bullish_CHoCH_Color)
                         :(bos?Bearish_BOS_Color:Bearish_CHoCH_Color);
-   string key=kind+(direction>0?"_UP_":"_DOWN_")+(string)bar.time;
-   // Keep the caption on the broken level.  ANCHOR_UPPER places bullish text
-   // immediately below it; ANCHOR_LOWER places bearish text immediately above.
-   DrawText(key,bar.time,level,kind,clr,direction>0,(int)Label_Size);
+   string key=kind+(direction>0?"_UP_":"_DOWN_")+(string)break_time;
+   // A bullish caption stands on its anchor, above the line; a bearish one
+   // hangs below it.
+   DrawText(key,label_time,label_price,kind,clr,direction>0?ANCHOR_LOWER:ANCHOR_UPPER,
+            (int)Label_Size);
    if(Show_Structure_Lines)
-      DrawSegment(key+"_LINE",swing_time,level,bar.time,level,
+      DrawSegment(key+"_LINE",swing_time,level,break_time,level,
                   ls?clr:(bos?clrBlue:clrRed),Line_Style,Line_Width);
   }
 
@@ -1278,60 +1354,251 @@ void DrawStructurePoint(const string kind,const datetime time,const double price
    if(!Show_Swing_Points) return;
    bool low=kind=="HL" || kind=="LL";
    color clr=low?clrTeal:clrIndianRed;
-   DrawText("STRUCTURE_"+kind+"_"+(string)time,time,price,kind,clr,low,(int)Label_Size);
+   DrawText("STRUCTURE_"+kind+"_"+(string)time,time,price,kind,clr,low?ANCHOR_UPPER:ANCHOR_LOWER,
+            (int)Label_Size);
+  }
+
+// The index of the candle opening at `time` (or the last one before it).
+int BarOfTime(const MqlRates &rates[],const int total,const datetime time)
+  {
+   int low=0,high=total-1;
+   while(low<high)
+     {
+      int middle=(low+high+1)/2;
+      if(rates[middle].time<=time) low=middle;
+      else high=middle-1;
+     }
+   return low;
+  }
+
+// Label layout.  A BOS, CHoCH or LS label sits near the middle of its line,
+// on the side the price did not come from: above a line broken upwards,
+// below one broken downwards.  It then moves away from the line only as far
+// as it must to clear every candle, swing label, dotted level line, MA line,
+// structure line and earlier break label it covers, so it never overlaps a
+// candle or another drawing.  Sizes follow the chart's zoom and height, and
+// a zoom lays the chart out again (see OnChartEvent).
+void StartLayout(const MqlRates &rates[],const int total,const int first)
+  {
+   ArrayResize(g_boxes,0);
+   g_layout_scale=ChartGetInteger(0,CHART_SCALE);
+   g_bar_px=MathPow(2.0,(double)MathMax(0,MathMin(5,(int)g_layout_scale)));
+   long height=ChartGetInteger(0,CHART_HEIGHT_IN_PIXELS);
+   if(height<=0) height=600;
+   // The larger of the drawn and the visible price range, so a label is never
+   // sized smaller than it can appear.
+   double high=rates[first].high,low=rates[first].low;
+   for(int i=first;i<total;i++)
+     {
+      high=MathMax(high,rates[i].high);
+      low=MathMin(low,rates[i].low);
+     }
+   double visible=ChartGetDouble(0,CHART_PRICE_MAX)-ChartGetDouble(0,CHART_PRICE_MIN);
+   g_price_px=MathMax(high-low,visible)/(double)height;
+  }
+
+void TextSize(const string text,int &width,int &height)
+  {
+   uint w=0,h=0;
+   if(TextSetFont("Arial",-(int)Label_Size*10) && TextGetSize(text,w,h) && w>0)
+     {
+      width=(int)w;
+      height=(int)h;
+      return;
+     }
+   width=StringLen(text)*(int)Label_Size;
+   height=2*(int)Label_Size;
+  }
+
+// Candles a centred label of this width reaches on each side, plus one.
+int HalfBars(const int width_px)
+  {
+   return (int)MathCeil(width_px/g_bar_px/2.0)+1;
+  }
+
+void AddBox(const int from,const int to,const double low,const double high)
+  {
+   int n=ArraySize(g_boxes);
+   ArrayResize(g_boxes,n+1,64);
+   g_boxes[n].from=from;
+   g_boxes[n].to=to;
+   g_boxes[n].low=low;
+   g_boxes[n].high=high;
+  }
+
+double Beyond(const double edge,const double obstacle,const bool above,const double gap)
+  {
+   return above?MathMax(edge,obstacle+gap):MathMin(edge,obstacle-gap);
+  }
+
+// The label edge nearest the level (its bottom above the line, its top below
+// it) at which a label centred on candle x covers nothing.
+double ClearEdge(const MqlRates &rates[],const int total,const double &line_a[],
+                 const double &line_b[],const int x,const int half,const double level,
+                 const bool above,const double height)
+  {
+   int from=MathMax(0,x-half),to=MathMin(total-1,x+half);
+   double gap=3.0*g_price_px;
+   double edge=above?level+gap:level-gap;
+   bool have_a=ArraySize(line_a)==total,have_b=ArraySize(line_b)==total;
+   for(int pass=0;pass<100;pass++)
+     {
+      double low=above?edge:edge-height,high=above?edge+height:edge;
+      double moved=edge;
+      for(int i=from;i<=to;i++)
+        {
+         if(rates[i].high>=low && rates[i].low<=high)
+            moved=Beyond(moved,above?rates[i].high:rates[i].low,above,gap);
+         if(have_a && line_a[i]!=EMPTY_VALUE && line_a[i]>=low && line_a[i]<=high)
+            moved=Beyond(moved,line_a[i],above,gap);
+         if(have_b && line_b[i]!=EMPTY_VALUE && line_b[i]>=low && line_b[i]<=high)
+            moved=Beyond(moved,line_b[i],above,gap);
+        }
+      for(int b=ArraySize(g_boxes)-1;b>=0;b--)
+         if(g_boxes[b].to>=from && g_boxes[b].from<=to && g_boxes[b].high>=low && g_boxes[b].low<=high)
+            moved=Beyond(moved,above?g_boxes[b].high:g_boxes[b].low,above,gap);
+      if(moved==edge) break;
+      edge=moved;
+     }
+   return edge;
+  }
+
+// Where a break label goes: the candle it is centred on and the price of its
+// bottom (above the line) or top (below it).  Of the candles near the middle
+// of the line, the one that lets the label sit closest to the line wins.
+void PlaceBreakLabel(const MqlRates &rates[],const int total,const double &line_a[],
+                     const double &line_b[],const int swing_bar,const int break_bar,
+                     const double level,const bool above,const int width_px,const int height_px,
+                     int &x,double &edge)
+  {
+   int half=HalfBars(width_px);
+   double height=height_px*g_price_px;
+   int middle=(swing_bar+break_bar)/2;
+   x=middle;
+   edge=ClearEdge(rates,total,line_a,line_b,middle,half,level,above,height);
+   for(int k=1;k<=6;k++)
+      for(int sign=1;sign>=-1;sign-=2)
+        {
+         int candidate=middle+sign*k*half;
+         if(candidate<=swing_bar || candidate>=break_bar) continue;
+         double candidate_edge=ClearEdge(rates,total,line_a,line_b,candidate,half,level,above,height);
+         if(MathAbs(candidate_edge-level)<MathAbs(edge-level))
+           {
+            x=candidate;
+            edge=candidate_edge;
+           }
+        }
+   AddBox(x-half,x+half,above?edge:edge-height,above?edge+height:edge);
+  }
+
+string EventKind(const BASE_STRUCTURE_EVENT &event)
+  {
+   return event.ls?"LS":(event.bos?"BOS":"CHoCH");
+  }
+
+bool EventDrawn(const BASE_STRUCTURE_EVENT &event,const MqlRates &rates[],const int first)
+  {
+   return event.break_bar>=first && event.swing_time>=rates[first].time && SignalShown(EventKind(event));
   }
 
 // Draws one replay from candle `first` onwards (earlier candles are warm-up):
-// HH/HL/LH/LL labels (superseded and untyped points are skipped), BOS/CHoCH
-// signals and the dotted current swing levels.  A CHoCH may be confirmed
-// several candles after its break; it is drawn on the candle that actually
-// closed through the level.
+// HH/HL/LH/LL labels (superseded and untyped points are skipped), the dotted
+// current swing levels and the BOS/CHoCH/LS signals, whose labels are laid
+// out last so they keep clear of everything else.  A CHoCH may be confirmed
+// several candles after its break; its line ends on the candle that
+// actually closed through the level.  line_a/line_b are the MA lines at each
+// candle (EMPTY_VALUE where not drawn).
 void DrawStructure(const MqlRates &rates[],const int total,const int first,
                    const BASE_STRUCTURE_STATE &state,const BASE_STRUCTURE_POINT &points[],
-                   const BASE_STRUCTURE_EVENT &events[])
+                   const BASE_STRUCTURE_EVENT &events[],const double &line_a[],
+                   const double &line_b[])
   {
+   StartLayout(rates,total,first);
+   int width=0,height=0;
    int point_count=ArraySize(points);
    for(int i=0;i<point_count;i++)
       if(!points[i].superseded && points[i].kind!=0 && points[i].pivot>=first)
-         DrawStructurePoint(StructureLabel(points[i]),points[i].time,points[i].price);
-   // A break is drawn only with its broken swing, so every BOS and CHoCH
-   // starts from a marked swing.
-   int event_count=ArraySize(events);
-   for(int i=0;i<event_count;i++)
-      if(events[i].break_bar>=first && events[i].swing_time>=rates[first].time)
-         DrawSignal(events[i].ls?"LS":(events[i].bos?"BOS":"CHoCH"),events[i].direction,events[i].swing_time,
-                    events[i].level,rates[events[i].break_bar]);
+        {
+         string kind=StructureLabel(points[i]);
+         DrawStructurePoint(kind,points[i].time,points[i].price);
+         if(!Show_Swing_Points) continue;
+         TextSize(kind,width,height);
+         int half=HalfBars(width);
+         double h=height*g_price_px,price=points[i].price;
+         if(points[i].side>0) AddBox(points[i].pivot-half,points[i].pivot+half,price,price+h);
+         else AddBox(points[i].pivot-half,points[i].pivot+half,price-h,price);
+        }
    if(Show_Swing_Points && state.have_high)
+     {
       DrawSegment("LAST_HIGH",state.last_high_time,state.last_high,rates[total-1].time,
                   state.last_high,clrIndianRed,STYLE_DOT,1);
+      AddBox(BarOfTime(rates,total,state.last_high_time),total-1,state.last_high,state.last_high);
+     }
    if(Show_Swing_Points && state.have_low)
+     {
       DrawSegment("LAST_LOW",state.last_low_time,state.last_low,rates[total-1].time,
                   state.last_low,clrTeal,STYLE_DOT,1);
+      AddBox(BarOfTime(rates,total,state.last_low_time),total-1,state.last_low,state.last_low);
+     }
+   // A break is drawn only with its broken swing, so every BOS, CHoCH and LS
+   // starts from a marked swing.  All structure lines are placed before any
+   // label, so no label crosses another break's line.
+   int event_count=ArraySize(events);
+   for(int i=0;i<event_count;i++)
+      if(EventDrawn(events[i],rates,first) && Show_Structure_Lines)
+         AddBox(BarOfTime(rates,total,events[i].swing_time),events[i].break_bar,events[i].level,
+                events[i].level);
+   for(int i=0;i<event_count;i++)
+     {
+      if(!EventDrawn(events[i],rates,first)) continue;
+      string kind=EventKind(events[i]);
+      TextSize(kind,width,height);
+      int x=0;
+      double edge=0.0;
+      PlaceBreakLabel(rates,total,line_a,line_b,BarOfTime(rates,total,events[i].swing_time),
+                      events[i].break_bar,events[i].level,events[i].direction>0,width,height,x,edge);
+      DrawSignal(kind,events[i].direction,events[i].swing_time,events[i].level,
+                 rates[events[i].break_bar].time,rates[x].time,edge);
+     }
   }
 
-void DrawAverageLines(const MqlRates &rates[],const int total,const int displayed,
-                      const double &ma[])
+// A polyline (the times of line_rates[from..count-1], values) at each candle
+// of rates: linear between its points, EMPTY_VALUE outside them.
+void SampleLine(const MqlRates &line_rates[],const double &values[],const int from,
+                const int count,const MqlRates &rates[],const int total,double &out[])
   {
-   int first=MathMax(1,total-MathMin(500,displayed));
-   if(Show_MA_Line && Use_MA_Filter && ArraySize(ma)==total)
-      for(int i=first;i<total;i++)
-         DrawSegment("MA_"+(string)rates[i].time,rates[i-1].time,ma[i-1],rates[i].time,ma[i],
-                     MA_Color,STYLE_SOLID,2);
-   if(Show_HTF_MA_Line && Use_HTF_MA_Filter)
+   ArrayResize(out,total);
+   ArrayInitialize(out,EMPTY_VALUE);
+   if(from<0 || count-from<2) return;
+   int j=from+1;
+   for(int i=0;i<total;i++)
      {
-      double previous=0.0,open=0.0,close=0.0;
-      bool have_previous=HTFValues(rates[first-1].time,previous,open,close);
-      for(int i=first;i<total;i++)
-        {
-         double value=0.0;
-         bool have=HTFValues(rates[i].time,value,open,close);
-         if(have && have_previous)
-            DrawSegment("HTF_MA_"+(string)rates[i].time,rates[i-1].time,previous,rates[i].time,
-                        value,HTF_MA_Color,STYLE_SOLID,2);
-         previous=value;
-         have_previous=have;
-        }
+      datetime t=rates[i].time;
+      if(t<line_rates[from].time || t>line_rates[count-1].time) continue;
+      while(j<count-1 && line_rates[j].time<t) j++;
+      datetime t0=line_rates[j-1].time,t1=line_rates[j].time;
+      out[i]=t1>t0?values[j-1]+(values[j]-values[j-1])*(double)(t-t0)/(double)(t1-t0):values[j];
      }
+  }
+
+int FirstMABar(const int total,const int displayed)
+  {
+   return MathMax(1,total-MathMin(500,displayed));
+  }
+
+// The HTF MA over the drawn HTF candles and the MTF MA over the drawn MTF
+// candles (at most 500 segments each).
+void DrawAverageLines(const MqlRates &rates[],const int total,const int displayed,
+                      const double &ma[],const MqlRates &mtf[],const double &mtf_ma[],
+                      const int mtf_count)
+  {
+   if(Show_HTF_MA_Line && Use_HTF_MA_Filter && ArraySize(ma)==total)
+      for(int i=FirstMABar(total,displayed);i<total;i++)
+         DrawSegment("HTF_MA_"+(string)rates[i].time,rates[i-1].time,ma[i-1],rates[i].time,ma[i],
+                     HTF_MA_Color,STYLE_SOLID,2);
+   for(int i=1;i<mtf_count;i++)
+      DrawSegment("MTF_MA_"+(string)mtf[i].time,mtf[i-1].time,mtf_ma[i-1],mtf[i].time,mtf_ma[i],
+                  MTF_MA_Color,STYLE_SOLID,2);
   }
 
 void SendBASEAlert(const string signal,const datetime bar_time)
@@ -1344,10 +1611,10 @@ void SendBASEAlert(const string signal,const datetime bar_time)
    if(Enable_Push_Notifications) SendNotification(message);
   }
 
-// Dashboard styling: component names are black, the main components in bold,
-// and only the outputs are coloured.  Trends are green (Bullish, Bullish
+// Dashboard styling: component names are black and bold, and only the
+// outputs are coloured.  Trends are green (Bullish, Bullish
 // Transition), red (Bearish, Bearish Transition) or grey (Consolidation /
-// Undefined); tradeability and conditions are green when they pass and red
+// Undefined); tradability and conditions are green when they pass and red
 // when they do not.  There is no background or border.
 const int DASHBOARD_FONT_SIZE=10;
 const int DASHBOARD_ROW_HEIGHT=18;
@@ -1448,14 +1715,14 @@ color PassColor(const bool pass)
   }
 
 // Each selected timeframe's Market Trend (its breakdown is the tooltip),
-// Market Tradeability (the entry filters are its tooltip), the reason, the
+// Market Tradability (the entry filters are its tooltip), the reason, the
 // HTF trade recommendation, and Optimal Conditions with each selected
 // condition (the reason is the tooltip).
 void DrawDashboard(const BASE_STRUCTURE_STATE &htf,const string htf_breakdown,
                    const string recommendation,const BASE_STRUCTURE_STATE &mtf,
                    const string mtf_breakdown,const BASE_STRUCTURE_STATE &ltf,
-                   const string ltf_breakdown,const bool tradeable,
-                   const string tradeability_reason,const string filter_tooltip,
+                   const string ltf_breakdown,const bool tradable,
+                   const string tradability_reason,const string filter_tooltip,
                    const bool optimal,const string optimal_reason,const bool correlated,
                    const bool healthy_extension,const bool good_volume,const double volume_ratio,
                    const bool good_momentum,const double momentum_ratio)
@@ -1471,26 +1738,26 @@ void DrawDashboard(const BASE_STRUCTURE_STATE &htf,const string htf_breakdown,
    if(Use_LTF)
       AddDashboardRow(rows,"LTF Market Trend ("+TimeframeName(LTFTimeframe())+"):",BiasText(ltf),
                       TrendColor(ltf),ltf_breakdown);
-   AddDashboardRow(rows,"Market Tradeability:",tradeable?"Tradable":"Not Tradable",
-                   PassColor(tradeable),filter_tooltip);
-   AddDashboardRow(rows,"Tradeability Reason:",tradeability_reason,DASHBOARD_TEXT_COLOR);
+   AddDashboardRow(rows,"Market Tradability:",tradable?"Tradable":"Not Tradable",
+                   PassColor(tradable),filter_tooltip);
+   AddDashboardRow(rows,"Tradability Reason:",tradability_reason,DASHBOARD_TEXT_COLOR);
    AddDashboardRow(rows,"Trade Recommendations:",recommendation,DASHBOARD_TEXT_COLOR);
    AddDashboardRow(rows,"","",DASHBOARD_TEXT_COLOR);
    AddDashboardRow(rows,"Optimal Conditions:",optimal?"OPTIMAL":"NOT OPTIMAL",PassColor(optimal),
                    optimal_reason);
    if(Use_Timeframe_Correlation_For_Optimal)
       AddDashboardRow(rows,"Timeframe Correlation:",PassText(correlated),PassColor(correlated),
-                      optimal_reason,false,DASHBOARD_INDENT);
+                      optimal_reason,true,DASHBOARD_INDENT);
    if(Use_Healthy_Extension_For_Optimal)
       AddDashboardRow(rows,"Healthy Extension:",PassText(healthy_extension),
-                      PassColor(healthy_extension),optimal_reason,false,DASHBOARD_INDENT);
+                      PassColor(healthy_extension),optimal_reason,true,DASHBOARD_INDENT);
    if(Use_Market_Volume_For_Optimal)
       AddDashboardRow(rows,"Market Volume:",PassText(good_volume)+" ("+DoubleToString(volume_ratio,2)+
-                      "x average)",PassColor(good_volume),optimal_reason,false,DASHBOARD_INDENT);
+                      "x average)",PassColor(good_volume),optimal_reason,true,DASHBOARD_INDENT);
    if(Use_Price_Momentum_For_Optimal)
       AddDashboardRow(rows,"Price Momentum:",PassText(good_momentum)+" ("+
                       DoubleToString(momentum_ratio,2)+"x average range)",PassColor(good_momentum),
-                      optimal_reason,false,DASHBOARD_INDENT);
+                      optimal_reason,true,DASHBOARD_INDENT);
    DrawDashboardRows(rows);
   }
 
@@ -1513,7 +1780,7 @@ bool Rebuild(const bool permit_alert)
 
    // Only the MA line needs history; the filters use the latest closed bar.
    double ma[],adx[],atr[];
-   if(Use_MA_Filter && !CopyIndicator(g_ma_handle,0,Show_MA_Line?total:1,ma)) return false;
+   if(Use_HTF_MA_Filter && !CopyIndicator(g_htf_ma_handle,0,Show_HTF_MA_Line?total:1,ma)) return false;
    if(Use_ADX_Filter && !CopyIndicator(g_adx_handle,0,1,adx)) return false;
    if(Use_ATR_Filter && !CopyIndicator(g_atr_handle,0,1,atr)) return false;
 
@@ -1552,25 +1819,47 @@ bool Rebuild(const bool permit_alert)
    BASE_STRUCTURE_EVENT events[];
    ReplayStructure(rates,total,filter,structure_state,points,events);
 
+   // The MTF MA line, if shown, over the drawn MTF candles.
+   MqlRates mtf_rates[];
+   double mtf_ma[];
+   int mtf_count=0;
+   ArraySetAsSeries(mtf_rates,false);
+   if(Show_MTF_MA_Line && Use_MTF_MA_Filter)
+     {
+      mtf_count=MathMin(501,ChartStructureBars(SetupTimeframe()));
+      if(CopyRates(_Symbol,SetupTimeframe(),1,mtf_count,mtf_rates)!=mtf_count ||
+         !CopyIndicator(g_mtf_ma_handle,0,mtf_count,mtf_ma))
+         mtf_count=0;
+     }
+   bool htf_line=Show_HTF_MA_Line && Use_HTF_MA_Filter && ArraySize(ma)==total;
+
+   // The MA lines at each drawn candle, so labels keep clear of them.
+   double line_a[],line_b[];
    ObjectsDeleteAll(0,g_prefix);
    if(anchored)
-      DrawStructure(rates,total,MathMax(0,total-displayed),structure_state,points,events);
+     {
+      if(htf_line) SampleLine(rates,ma,FirstMABar(total,displayed)-1,total,rates,total,line_a);
+      if(mtf_count>1) SampleLine(mtf_rates,mtf_ma,0,mtf_count,rates,total,line_b);
+      DrawStructure(rates,total,MathMax(0,total-displayed),structure_state,points,events,line_a,line_b);
+     }
    else
      {
       BASE_STRUCTURE_STATE chart_state;
       BASE_STRUCTURE_POINT chart_points[];
       BASE_STRUCTURE_EVENT chart_events[];
+      if(htf_line) SampleLine(rates,ma,FirstMABar(total,displayed)-1,total,chart_rates,chart_total,line_a);
+      if(mtf_count>1) SampleLine(mtf_rates,mtf_ma,0,mtf_count,chart_rates,chart_total,line_b);
       if(ReplayStructure(chart_rates,chart_total,SwingFilter(ChartSensitivity(chart_timeframe)),
                          chart_state,chart_points,chart_events))
          DrawStructure(chart_rates,chart_total,
                        MathMax(0,chart_total-ChartStructureBars(chart_timeframe)),
-                       chart_state,chart_points,chart_events);
+                       chart_state,chart_points,chart_events,line_a,line_b);
      }
-   DrawAverageLines(rates,total,displayed,ma);
+   DrawAverageLines(rates,total,displayed,ma,mtf_rates,mtf_ma,mtf_count);
 
-   string tradeability_reason="";
-   bool bias_ready=EvaluateTradeability(structure_state,setup_state,ltf_state,tradeability_reason);
-   bool tradeable=bias_ready;
+   string tradability_reason="";
+   bool bias_ready=EvaluateTradability(structure_state,setup_state,ltf_state,tradability_reason);
+   bool tradable=bias_ready;
    bool healthy_extension=HealthyExtension(structure_state,ltf_state,
                                            ltf_rates[ltf_total-1].close,ltf_atr[0]);
 
@@ -1596,10 +1885,10 @@ bool Rebuild(const bool permit_alert)
                                 good_momentum,momentum_ratio,optimal_reason);
 
    DrawDashboard(structure_state,BreakdownText(structure_state,points,events),
-                 RecommendationText(structure_state,points),
+                 TradeRecommendation(structure_state,points,setup_state,ltf_state,tradable),
                  setup_state,BreakdownText(setup_state,setup_points,setup_events),
                  ltf_state,BreakdownText(ltf_state,ltf_points,ltf_events),
-                 tradeable,tradeability_reason,EntryFilterTooltip(rates[total-1],ma,adx,atr),
+                 tradable,tradability_reason,EntryFilterTooltip(rates[total-1],ma,adx,atr),
                  optimal,optimal_reason,bias_ready,healthy_extension,good_volume,volume_ratio,
                  good_momentum,momentum_ratio);
    // Alert every event that became known on the newest closed candle (a CHoCH
@@ -1618,6 +1907,7 @@ bool Rebuild(const bool permit_alert)
         }
    if(permit_alert && signal!="") SendBASEAlert(signal,rates[total-1].time);
    ChartRedraw();
+   g_built=true;
    return true;
   }
 
@@ -1630,8 +1920,8 @@ bool ValidInputs()
       problem="each Swing Sensitivity must be between 0 and 100";
    else if(Bars_To_Process<100)
       problem="Bars_To_Process must be at least 100";
-   else if(MA_Length<1 || HTF_MA_Length<1 || ADX_Length<1 || ATR_Length<1)
-      problem="MA, HTF MA, ADX and ATR lengths must be positive";
+   else if(HTF_MA_Length<1 || MTF_MA_Length<1 || ADX_Length<1 || ATR_Length<1)
+      problem="HTF MA, MTF MA, ADX and ATR lengths must be positive";
    else if(!Use_Timeframe_Correlation_For_Optimal && !Use_Healthy_Extension_For_Optimal &&
            !Use_Market_Volume_For_Optimal && !Use_Price_Momentum_For_Optimal)
       problem="enable at least one Optimal Conditions requirement";
@@ -1653,8 +1943,13 @@ int OnInit()
    g_last_setup_bar=0;
    ENUM_TIMEFRAMES timeframe=BASETimeframe();
    g_prefix="BASE_"+(string)ChartID()+"_";
-   if(Use_MA_Filter && (g_ma_handle=iMA(_Symbol,timeframe,MA_Length,0,BASEMAMethod(MA_Type),PRICE_CLOSE))==INVALID_HANDLE) return INIT_FAILED;
-   if(Use_HTF_MA_Filter && (g_htf_ma_handle=iMA(_Symbol,HTF_Timeframe,HTF_MA_Length,0,BASEMAMethod(HTF_MA_Type),PRICE_CLOSE))==INVALID_HANDLE) return INIT_FAILED;
+   g_built=false;
+   // Draw objects in front of the candles so no label is hidden behind one;
+   // the chart's own setting is restored when Base is removed.
+   if(g_foreground<0) g_foreground=ChartGetInteger(0,CHART_FOREGROUND);
+   ChartSetInteger(0,CHART_FOREGROUND,false);
+   if(Use_HTF_MA_Filter && (g_htf_ma_handle=iMA(_Symbol,timeframe,HTF_MA_Length,0,BASEMAMethod(HTF_MA_Type),PRICE_CLOSE))==INVALID_HANDLE) return INIT_FAILED;
+   if(Use_MTF_MA_Filter && (g_mtf_ma_handle=iMA(_Symbol,SetupTimeframe(),MTF_MA_Length,0,BASEMAMethod(MTF_MA_Type),PRICE_CLOSE))==INVALID_HANDLE) return INIT_FAILED;
    if(Use_ADX_Filter && (g_adx_handle=iADX(_Symbol,timeframe,ADX_Length))==INVALID_HANDLE) return INIT_FAILED;
    if(Use_ATR_Filter && (g_atr_handle=iATR(_Symbol,timeframe,ATR_Length))==INVALID_HANDLE) return INIT_FAILED;
    if((g_ltf_atr_handle=iATR(_Symbol,LTFTimeframe(),ATR_Length))==INVALID_HANDLE) return INIT_FAILED;
@@ -1666,18 +1961,31 @@ int OnInit()
 void OnDeinit(const int reason)
   {
    EventKillTimer();
-   if(g_ma_handle!=INVALID_HANDLE) IndicatorRelease(g_ma_handle);
    if(g_htf_ma_handle!=INVALID_HANDLE) IndicatorRelease(g_htf_ma_handle);
+   if(g_mtf_ma_handle!=INVALID_HANDLE) IndicatorRelease(g_mtf_ma_handle);
    if(g_adx_handle!=INVALID_HANDLE) IndicatorRelease(g_adx_handle);
    if(g_atr_handle!=INVALID_HANDLE) IndicatorRelease(g_atr_handle);
    if(g_ltf_atr_handle!=INVALID_HANDLE) IndicatorRelease(g_ltf_atr_handle);
-   g_ma_handle=INVALID_HANDLE;
    g_htf_ma_handle=INVALID_HANDLE;
+   g_mtf_ma_handle=INVALID_HANDLE;
    g_adx_handle=INVALID_HANDLE;
    g_atr_handle=INVALID_HANDLE;
    g_ltf_atr_handle=INVALID_HANDLE;
    ObjectsDeleteAll(0,g_prefix);
    Comment("");
+   if(g_foreground>=0 && reason!=REASON_CHARTCHANGE && reason!=REASON_PARAMETERS)
+     {
+      ChartSetInteger(0,CHART_FOREGROUND,g_foreground!=0);
+      g_foreground=-1;
+     }
+  }
+
+// A zoom changes how many candles each label covers: lay the chart out
+// again.  Scrolling alone changes nothing.
+void OnChartEvent(const int id,const long &lparam,const double &dparam,const string &sparam)
+  {
+   if(id==CHARTEVENT_CHART_CHANGE && g_built && ChartGetInteger(0,CHART_SCALE)!=g_layout_scale)
+      Rebuild(false);
   }
 
 void CheckForBar()

@@ -1,5 +1,5 @@
 //@version=6
-// Base - Market Structure (TradingView port of Base.mq5 v2.33)
+// Base - Market Structure (TradingView port of Base.mq5 v2.34)
 //
 // Reads market structure from closed candles only:
 //  * HH/HL/LH/LL swings from two sets of the same two filters (swing strength
@@ -21,7 +21,7 @@
 //    a CHoCH, Consolidation / Undefined when the structure is sporadic or
 //    trapped.
 //  * Dashboard: the Market Trend of each selected timeframe, Market
-//    Tradeability and its reason, the trade recommendation and Optimal
+//    Tradability and its reason, the trade recommendation and Optimal
 //    Conditions. It is an analysis tool and never places orders.
 indicator("Base - Market Structure", shorttitle = "Base", overlay = true, max_labels_count = 500, max_lines_count = 500)
 
@@ -66,20 +66,19 @@ showLines = input.bool(true, "Show Structure Lines", group = grpLines)
 lineStyleInput = input.string("Dashed", "Line Style", options = ["Solid", "Dashed", "Dotted"], group = grpLines)
 lineWidth = input.int(1, "Line Width", minval = 1, maxval = 4, group = grpLines)
 
-grpMa = "MA Filter (LTF)"
-useMa = input.bool(true, "Use MA Filter", group = grpMa)
-maLength = input.int(50, "MA Length", minval = 1, group = grpMa)
-maType = input.string("EMA", "MA Type", options = ["EMA", "SMA"], group = grpMa)
-showMaLine = input.bool(false, "Show MA Line", group = grpMa)
-maColor = input.color(color.blue, "MA Color", group = grpMa)
-
 grpHtfMa = "MA Filter (HTF)"
 useHtfMa = input.bool(true, "Use HTF MA Filter", group = grpHtfMa)
-htfMaTf = input.timeframe("60", "HTF Timeframe", group = grpHtfMa)
-htfMaLength = input.int(100, "HTF MA Length", minval = 1, group = grpHtfMa)
+htfMaLength = input.int(50, "HTF MA Length", minval = 1, group = grpHtfMa)
 htfMaType = input.string("EMA", "MA Type", options = ["EMA", "SMA"], group = grpHtfMa)
 showHtfMaLine = input.bool(false, "Show HTF MA Line", group = grpHtfMa)
-htfMaColor = input.color(color.orange, "HTF MA Color", group = grpHtfMa)
+htfMaColor = input.color(color.blue, "HTF MA Color", group = grpHtfMa)
+
+grpMtfMa = "MA Filter (MTF)"
+useMtfMa = input.bool(true, "Use MTF MA Filter", group = grpMtfMa)
+mtfMaLength = input.int(100, "MTF MA Length", minval = 1, group = grpMtfMa)
+mtfMaType = input.string("EMA", "MA Type", options = ["EMA", "SMA"], group = grpMtfMa)
+showMtfMaLine = input.bool(false, "Show MTF MA Line", group = grpMtfMa)
+mtfMaColor = input.color(color.orange, "MTF MA Color", group = grpMtfMa)
 
 grpSession = "Session Filter"
 useSession = input.bool(false, "Use Session Filter", group = grpSession)
@@ -107,8 +106,8 @@ enableAlerts = input.bool(false, "Alert On Structure-Timeframe BOS / CHoCH / LS"
 
 // ------------------------------------------------------ internal tuning
 // Kept out of the inputs, as in Base.mq5.
-MA_FULL_BODY = false
 HTF_MA_FULL_BODY = false
+MTF_MA_FULL_BODY = false
 ADX_MINIMUM = 25.0
 ADX_BOS_AND_CHOCH = false
 ATR_MODE = "Minimum"
@@ -187,12 +186,14 @@ type SEvent
     int seq = 0
     bool ls = false
     int lsBar = -1
+    int swingBar = -1
 
 type SLevel
     bool active = false
     float price = na
     int swingTime = na
     int point = -1
+    int swingBar = -1
 
 type SEngine
     array<SPoint> points
@@ -228,6 +229,7 @@ type SEngine
     int chochBreakTime = na
     float chochLevel = na
     int chochLevelTime = na
+    int chochLevelBar = -1
     int chochLevelPoint = -1
     int eventTotal = 0
     int consolidation = 0
@@ -253,6 +255,7 @@ method setLevel(SLevel lv, SPoint p) =>
     lv.active := true
     lv.price := p.price
     lv.swingTime := p.pivotTime
+    lv.swingBar := p.pivotBar
     lv.point := p.id
 
 // A swing is identified once the opposite leg after it has begun: no later
@@ -296,8 +299,8 @@ method addPoint(SEngine e, int pivotBar, int pivotTime, float price, int side, i
 // A BOS that follows an event in the same direction confirms that direction
 // and ends any CHoCH trap; every other CHoCH joins the trap window.
 // e.dir is the direction of the latest event that is not an LS.
-method addEvent(SEngine e, int bar, int breakBar, int breakTime, int dir, bool bos, int swingTime, float level) =>
-    SEvent ev = SEvent.new(bar, breakBar, breakTime, dir, bos, swingTime, level, e.eventTotal)
+method addEvent(SEngine e, int bar, int breakBar, int breakTime, int dir, bool bos, int swingTime, float level, int swingBar) =>
+    SEvent ev = SEvent.new(bar, breakBar, breakTime, dir, bos, swingTime, level, e.eventTotal, swingBar = swingBar)
     int prevDir = e.dir
     e.events.push(ev)
     if e.events.size() > MAX_EVENTS
@@ -319,6 +322,7 @@ method startChoch(SEngine e, int dir, int bar, int barTime, SLevel lv) =>
     e.chochBreakTime := barTime
     e.chochLevel := lv.price
     e.chochLevelTime := lv.swingTime
+    e.chochLevelBar := lv.swingBar
     e.chochLevelPoint := lv.point
 
 // Drops a candidate. While the broken LH/HL is still the latest swing on its
@@ -326,9 +330,9 @@ method startChoch(SEngine e, int dir, int bar, int barTime, SLevel lv) =>
 // fresh break.
 method cancelChoch(SEngine e) =>
     if e.chochDir > 0 and e.highId() == e.chochLevelPoint
-        e.lh := SLevel.new(true, e.chochLevel, e.chochLevelTime, e.chochLevelPoint)
+        e.lh := SLevel.new(true, e.chochLevel, e.chochLevelTime, e.chochLevelPoint, e.chochLevelBar)
     if e.chochDir < 0 and e.lowId() == e.chochLevelPoint
-        e.hl := SLevel.new(true, e.chochLevel, e.chochLevelTime, e.chochLevelPoint)
+        e.hl := SLevel.new(true, e.chochLevel, e.chochLevelTime, e.chochLevelPoint, e.chochLevelBar)
     e.chochDir := 0
 
 // The swings after the broken LH have made an HH (bullish), or after the
@@ -367,7 +371,7 @@ method confirmChoch(SEngine e, int bar) =>
     int priorDir = e.dir
     bool priorBos = e.lastBos
     int direction = e.chochDir
-    e.addEvent(bar, e.chochBreakBar, e.chochBreakTime, direction, false, e.chochLevelTime, e.chochLevel)
+    e.addEvent(bar, e.chochBreakBar, e.chochBreakTime, direction, false, e.chochLevelTime, e.chochLevel, e.chochLevelBar)
     e.chochDir := 0
     e.lsSeq := -1
     SPoint origin = direction > 0 ? e.lowPt : e.highPt
@@ -535,7 +539,7 @@ method onClose(SEngine e, float c, int curBar, int curTime) =>
         e.hh.active := false
         if e.chochDir <= 0
             e.cancelChoch()
-            e.addEvent(curBar, curBar, curTime, 1, true, e.hh.swingTime, e.hh.price)
+            e.addEvent(curBar, curBar, curTime, 1, true, e.hh.swingTime, e.hh.price, e.hh.swingBar)
     if e.hl.active and c < e.hl.price
         e.hl.active := false
         if e.dir >= 0 and e.chochDir >= 0
@@ -547,7 +551,7 @@ method onClose(SEngine e, float c, int curBar, int curTime) =>
         e.ll.active := false
         if e.chochDir >= 0
             e.cancelChoch()
-            e.addEvent(curBar, curBar, curTime, -1, true, e.ll.swingTime, e.ll.price)
+            e.addEvent(curBar, curBar, curTime, -1, true, e.ll.swingTime, e.ll.price, e.ll.swingBar)
     e.dir
 
 // One closed candle: the swing confirmed on it (its pivot is swing strength
@@ -785,9 +789,9 @@ sessionOk() =>
 // timeframe ([1] with lookahead on), so nothing repaints.
 htfRequest() =>
     [d, b, cons, lc, rlo, rhi, bc, bn, tc, tn, t1, t2, t3, t4, lcd, llv, nc, vhh, vlh, vll, vhl, et, hp, hk, hv, lp, lk, lv] = structureRequest(swingStrengthFor(htfSensitivity), swingSizeFor(htfSensitivity))
-    float maE = ta.ema(close, maLength)
-    float maS = ta.sma(close, maLength)
-    float maV = maType == "EMA" ? maE : maS
+    float maE = ta.ema(close, htfMaLength)
+    float maS = ta.sma(close, htfMaLength)
+    float maV = htfMaType == "EMA" ? maE : maS
     [diPlus, diMinus, adxV] = ta.dmi(adxLength, adxLength)
     float atrV = ta.sma(ta.tr(true), atrLength)
     int sess = sessionOk() ? 1 : 0
@@ -807,16 +811,16 @@ ltfRequest() =>
     float momRatio = trAvg > 0 ? trL / trAvg : 0.0
     [d[1], b[1], cons[1], lc[1], rlo[1], rhi[1], bc[1], bn[1], tc[1], tn[1], t1[1], t2[1], t3[1], t4[1], lcd[1], llv[1], vhh[1], vlh[1], vll[1], vhl[1], hp[1], hk[1], hv[1], lp[1], lk[1], lv[1], close[1], atrL[1], volAvg[1], volRatio[1], trAvg[1], momRatio[1]]
 
-htfMaRequest() =>
-    float e1 = ta.ema(close, htfMaLength)
-    float s1 = ta.sma(close, htfMaLength)
-    float m = htfMaType == "EMA" ? e1 : s1
+mtfMaRequest() =>
+    float e1 = ta.ema(close, mtfMaLength)
+    float s1 = ta.sma(close, mtfMaLength)
+    float m = mtfMaType == "EMA" ? e1 : s1
     [m[1], open[1], close[1]]
 
 [hDir, hBos, hCons, hLabels, hRangeLo, hRangeHi, hBreaks, hBreaksN, hTrap, hTrapN, hT1, hT2, hT3, hT4, hLatest, hLatestLv, hNew, hHH, hLH, hLL, hHL, hEvents, hClose, hOpen, hMa, hAdx, hAtr, hSession] = request.security(syminfo.tickerid, htfTf, htfRequest(), lookahead = barmerge.lookahead_on)
 [mDir, mBos, mCons, mLabels, mRangeLo, mRangeHi, mBreaks, mBreaksN, mTrap, mTrapN, mT1, mT2, mT3, mT4, mLatest, mLatestLv, mHH, mLH, mLL, mHL] = request.security(syminfo.tickerid, mtfTf, mtfRequest(), lookahead = barmerge.lookahead_on)
 [lDir, lBos, lCons, lLabels, lRangeLo, lRangeHi, lBreaks, lBreaksN, lTrap, lTrapN, lT1, lT2, lT3, lT4, lLatest, lLatestLv, lHH, lLH, lLL, lHL, lLastHigh, lLastHighKind, lHaveHigh, lLastLow, lLastLowKind, lHaveLow, lClose, lAtr, lVolAvg, lVolRatio, lTrAvg, lMomRatio] = request.security(syminfo.tickerid, ltfTf, ltfRequest(), lookahead = barmerge.lookahead_on)
-[htfMaValue, htfMaOpen, htfMaClose] = request.security(syminfo.tickerid, htfMaTf, htfMaRequest(), lookahead = barmerge.lookahead_on)
+[mtfMaValue, mtfMaOpen, mtfMaClose] = request.security(syminfo.tickerid, mtfTf, mtfMaRequest(), lookahead = barmerge.lookahead_on)
 
 // ---------------------------------------------------- chart structure
 // Labels and signals follow the chart timeframe, while the dashboard stays on
@@ -846,88 +850,299 @@ if bar_index == math.max(drawFrom, 0)
 swingName(SPoint p) =>
     p.side > 0 ? (p.kind > 0 ? "HH" : "LH") : (p.kind > 0 ? "LL" : "HL")
 
+// ---------------------------------------------------------- label layout
+// A BOS, CHoCH or LS label sits near the middle of its line, on the side the
+// price did not come from: above a line broken upwards, below one broken
+// downwards. It then moves away from the line only as far as it must to clear
+// every candle, swing label, MA line, structure line, dotted swing level and
+// earlier break label it covers, so it never overlaps a candle or another
+// drawing. Pine cannot read the chart's zoom, so labels are sized for a dense
+// chart (5 px candles in a 450 px pane). Candles, swing labels and lines that
+// appear later under a label move it again.
+LAYOUT_BAR_PX = 5.0
+LAYOUT_PANE_PX = 450.0
+LAYOUT_KEEP = 5000
+fontPx = labelSizeInput == "Tiny" ? 8.0 : labelSizeInput == "Normal" ? 13.0 : labelSizeInput == "Large" ? 18.0 : 11.0
+layoutPricePx = nz((ta.highest(high, 200) - ta.lowest(low, 200)) / LAYOUT_PANE_PX)
+htfLineShown = useHtfMa and showHtfMaLine
+mtfLineShown = useMtfMa and showMtfMaLine
+
+// The chart area a drawing covers: candles x0..x1, prices lo..hi.
+type LBox
+    int id
+    int x0
+    int x1
+    float lo
+    float hi
+    bool alive = true
+
+// A placed break label, kept so later drawings can move it clear.
+type LPlaced
+    label lbl
+    LBox area
+    bool above
+    float h
+    int made
+
+var array<float> layHigh = array.new<float>()
+var array<float> layLow = array.new<float>()
+var array<float> layLineA = array.new<float>()
+var array<float> layLineB = array.new<float>()
+var array<LBox> layBoxes = array.new<LBox>()
+var array<LPlaced> layPlaced = array.new<LPlaced>()
+var array<int> layNextId = array.from(0)
+
+labelHalfBars(string txt) =>
+    int(math.ceil((str.length(txt) * 0.65 * fontPx + 10) / LAYOUT_BAR_PX / 2)) + 1
+
+labelHeight() =>
+    (fontPx + 12) * layoutPricePx
+
+addBox(int x0, int x1, float lo, float hi) =>
+    layNextId.set(0, layNextId.get(0) + 1)
+    LBox b = LBox.new(layNextId.get(0), x0, x1, lo, hi)
+    layBoxes.push(b)
+    if layBoxes.size() > 600
+        layBoxes.shift()
+    b
+
+beyond(float edge, float obstacle, bool above, float gap) =>
+    above ? math.max(edge, obstacle + gap) : math.min(edge, obstacle - gap)
+
+// The label edge (its bottom above the line, its top below it), starting at
+// `start` and moving only away from the line, at which a label over candles
+// x0..x1 covers no candle, line or box known so far (box skipId is its own).
+clearEdge(int x0, int x1, float start, bool above, float h, int skipId) =>
+    int base = bar_index - layHigh.size() + 1
+    int firstBar = math.max(x0, base)
+    int lastBar = math.min(x1, bar_index)
+    float gap = 3 * layoutPricePx
+    float edge = start
+    for pass = 0 to 60
+        float lo = above ? edge : edge - h
+        float hi = above ? edge + h : edge
+        float moved = edge
+        if lastBar >= firstBar
+            for k = firstBar to lastBar
+                int j = k - base
+                if layHigh.get(j) >= lo and layLow.get(j) <= hi
+                    moved := beyond(moved, above ? layHigh.get(j) : layLow.get(j), above, gap)
+                float a = layLineA.get(j)
+                if not na(a) and a >= lo and a <= hi
+                    moved := beyond(moved, a, above, gap)
+                float b = layLineB.get(j)
+                if not na(b) and b >= lo and b <= hi
+                    moved := beyond(moved, b, above, gap)
+        int nb = layBoxes.size()
+        if nb > 0
+            for i = 0 to nb - 1
+                LBox bx = layBoxes.get(i)
+                if bx.alive and bx.id != skipId and bx.x1 >= x0 and bx.x0 <= x1 and bx.hi >= lo and bx.lo <= hi
+                    moved := beyond(moved, above ? bx.hi : bx.lo, above, gap)
+        if moved == edge
+            break
+        edge := moved
+    edge
+
+// Moves a placed label clear again after something new appeared under it.
+reclear(LPlaced p) =>
+    float edge = p.above ? p.area.lo : p.area.hi
+    float cleared = clearEdge(p.area.x0, p.area.x1, edge, p.above, p.h, p.area.id)
+    if cleared != edge
+        p.area.lo := p.above ? cleared : cleared - p.h
+        p.area.hi := p.above ? cleared + p.h : cleared
+        label.set_y(p.lbl, cleared)
+    cleared
+
+// After adding an obstacle, moves every placed label it overlaps.
+pushPlaced(LBox b) =>
+    int n = layPlaced.size()
+    if n > 0
+        for i = 0 to n - 1
+            LPlaced p = layPlaced.get(i)
+            if p.area.alive and p.area.x1 >= b.x0 and p.area.x0 <= b.x1 and p.area.hi >= b.lo and p.area.lo <= b.hi
+                reclear(p)
+    n
+
+// Where a break label goes: the candle it is centred on and the price of its
+// bottom (above the line) or top (below it). Of the candles near the middle
+// of the line, the one that lets the label sit closest to the line wins.
+placeBreakLabel(int swingBar, int breakBar, float level, bool above, string txt) =>
+    int half = labelHalfBars(txt)
+    float h = labelHeight()
+    float start = above ? level + 3 * layoutPricePx : level - 3 * layoutPricePx
+    int middle = int((swingBar + breakBar) / 2)
+    int x = middle
+    float edge = clearEdge(middle - half, middle + half, start, above, h, -1)
+    for k = 1 to 6
+        for side = 0 to 1
+            int candidate = middle + (side == 0 ? 1 : -1) * k * half
+            if candidate > swingBar and candidate < breakBar
+                float candidateEdge = clearEdge(candidate - half, candidate + half, start, above, h, -1)
+                if math.abs(candidateEdge - level) < math.abs(edge - level)
+                    x := candidate
+                    edge := candidateEdge
+    [x, edge, half, h]
+
+// Draws a break's caption where placeBreakLabel puts it and records it.
+drawBreakLabel(SEvent ev, string txt, color textColor) =>
+    bool above = ev.dir > 0
+    [x, edge, half, h] = placeBreakLabel(ev.swingBar, ev.breakBar, ev.level, above, txt)
+    label lbl = label.new(x, edge, txt, xloc = xloc.bar_index, yloc = yloc.price, color = color.new(color.white, 100), style = above ? label.style_label_down : label.style_label_up, textcolor = textColor, size = labelSize)
+    LBox area = addBox(x - half, x + half, above ? edge : edge - h, above ? edge + h : edge)
+    LPlaced placed = LPlaced.new(lbl, area, above, h, bar_index)
+    layPlaced.push(placed)
+    if layPlaced.size() > 500
+        layPlaced.shift()
+    placed
+
+// Draws a break's line and records it as an obstacle.
+drawBreakLine(SEvent ev, color lineColor) =>
+    line ln = line.new(ev.swingTime, ev.level, ev.breakTime, ev.level, xloc = xloc.bar_time, color = lineColor, style = lineStyle, width = lineWidth)
+    pushPlaced(addBox(ev.swingBar, ev.breakBar, ev.level, ev.level))
+    ln
+
 // Only the newest swing on each side can be superseded, so the chart keeps
-// the label of the newest high and low to delete when that happens.
-// The drawing of the latest CHoCH, replaced if it becomes an LS.
+// the label (and layout box) of the newest high and low to delete when that
+// happens. The drawing of the latest CHoCH is kept too: it becomes an LS.
 var int lastChochSeq = -1
-var label lastChochLabel = na
+var LPlaced lastChochPlaced = na
 var line lastChochLine = na
 var label highSwingLabel = na
+var LBox highSwingBox = na
 var int highSwingId = -1
 var label lowSwingLabel = na
+var LBox lowSwingBox = na
 var int lowSwingId = -1
 
 if barstate.isconfirmed
+    // The candles and MA lines as drawn, for the label layout.
+    layHigh.push(high)
+    layLow.push(low)
+    layLineA.push(htfLineShown ? hMa : na)
+    layLineB.push(mtfLineShown ? mtfMaValue : na)
+    if layHigh.size() > LAYOUT_KEEP
+        layHigh.shift()
+        layLow.shift()
+        layLineA.shift()
+        layLineB.shift()
     chartEngine.step(chartPh, chartPl, high[chartStrength], low[chartStrength], bar_index - chartStrength, time[chartStrength], chartSizeAtr * nz(chartAtr[chartStrength]), close, bar_index, time)
+    // A new candle under a recent label moves it clear.
+    int placedCount = layPlaced.size()
+    if placedCount > 0
+        for i = placedCount - 1 to 0
+            LPlaced p = layPlaced.get(i)
+            if p.made < bar_index - 60
+                break
+            if p.area.alive and p.area.x0 <= bar_index and p.area.x1 >= bar_index
+                reclear(p)
     int droppedCount = chartEngine.dropped.size()
     if droppedCount > 0
         for i = 0 to droppedCount - 1
             SPoint gone = chartEngine.dropped.get(i)
             if gone.side > 0 and gone.id == highSwingId
                 label.delete(highSwingLabel)
+                highSwingBox.alive := false
                 highSwingId := -1
             if gone.side < 0 and gone.id == lowSwingId
                 label.delete(lowSwingLabel)
+                lowSwingBox.alive := false
                 lowSwingId := -1
     int pointCount = chartEngine.newPoints.size()
     if pointCount > 0
         for i = 0 to pointCount - 1
             SPoint p = chartEngine.newPoints.get(i)
             if showSwingPoints and p.kind != 0 and p.pivotBar >= drawFrom
-                label lbl = label.new(p.pivotTime, p.price, swingName(p), xloc = xloc.bar_time, yloc = yloc.price, color = color.new(color.white, 100), style = p.side > 0 ? label.style_label_down : label.style_label_up, textcolor = p.side > 0 ? HIGH_LABEL_COLOR : LOW_LABEL_COLOR, size = labelSize)
+                string name = swingName(p)
+                label lbl = label.new(p.pivotTime, p.price, name, xloc = xloc.bar_time, yloc = yloc.price, color = color.new(color.white, 100), style = p.side > 0 ? label.style_label_down : label.style_label_up, textcolor = p.side > 0 ? HIGH_LABEL_COLOR : LOW_LABEL_COLOR, size = labelSize)
+                int half = labelHalfBars(name)
+                float h = labelHeight()
+                LBox swingArea = addBox(p.pivotBar - half, p.pivotBar + half, p.side > 0 ? p.price : p.price - h, p.side > 0 ? p.price + h : p.price)
+                pushPlaced(swingArea)
                 if p.side > 0
                     highSwingLabel := lbl
+                    highSwingBox := swingArea
                     highSwingId := p.id
                 else
                     lowSwingLabel := lbl
+                    lowSwingBox := swingArea
                     lowSwingId := p.id
-    // An LS replaces the drawing of the CHoCH it reclassifies and keeps its
-    // place, in its own colour. It is known before this candle's events.
+    // An LS replaces the caption and line of the CHoCH it reclassifies, in
+    // place and in its own colour. It is known before this candle's events.
     int lsCount = chartEngine.newLs.size()
     if lsCount > 0
         for i = 0 to lsCount - 1
             SEvent ev = chartEngine.newLs.get(i)
+            color lsColor = ev.dir > 0 ? bullLsColor : bearLsColor
+            bool inWindow = ev.breakBar >= drawFrom and ev.swingTime >= drawFromTime
+            if ev.seq == lastChochSeq and not na(lastChochLine)
+                if showLs
+                    line.set_color(lastChochLine, lsColor)
+                else
+                    line.delete(lastChochLine)
+            else if showLs and inWindow and showLines
+                drawBreakLine(ev, lsColor)
+            bool drawn = ev.seq == lastChochSeq and not na(lastChochPlaced)
+            if drawn and showLs
+                label.set_text(lastChochPlaced.lbl, "LS")
+                label.set_textcolor(lastChochPlaced.lbl, lsColor)
+            else if drawn
+                label.delete(lastChochPlaced.lbl)
+                lastChochPlaced.area.alive := false
+            else if showLs and inWindow
+                drawBreakLabel(ev, "LS", lsColor)
             if ev.seq == lastChochSeq
-                label.delete(lastChochLabel)
-                line.delete(lastChochLine)
                 lastChochSeq := -1
-            if showLs and ev.breakBar >= drawFrom and ev.swingTime >= drawFromTime
-                color lsColor = ev.dir > 0 ? bullLsColor : bearLsColor
-                label.new(ev.breakTime, ev.level, "LS", xloc = xloc.bar_time, yloc = yloc.price, color = color.new(color.white, 100), style = ev.dir > 0 ? label.style_label_up : label.style_label_down, textcolor = lsColor, size = labelSize)
-                if showLines
-                    line.new(ev.swingTime, ev.level, ev.breakTime, ev.level, xloc = xloc.bar_time, color = lsColor, style = lineStyle, width = lineWidth)
     int eventCount = chartEngine.newEvents.size()
     if eventCount > 0
         for i = 0 to eventCount - 1
             SEvent ev = chartEngine.newEvents.get(i)
             bool shown = ev.bos ? showBos : showChoch
-            label lbl = na
+            LPlaced placed = na
             line ln = na
             // A break is drawn only with its broken swing, so every BOS, CHoCH
-            // and LS starts from a marked swing.
+            // and LS starts from a marked swing. The line goes first, so the
+            // caption keeps clear of it.
             if shown and ev.breakBar >= drawFrom and ev.swingTime >= drawFromTime
                 color textColor = ev.dir > 0 ? (ev.bos ? bullBosColor : bullChochColor) : (ev.bos ? bearBosColor : bearChochColor)
-                lbl := label.new(ev.breakTime, ev.level, ev.bos ? "BOS" : "CHoCH", xloc = xloc.bar_time, yloc = yloc.price, color = color.new(color.white, 100), style = ev.dir > 0 ? label.style_label_up : label.style_label_down, textcolor = textColor, size = labelSize)
                 if showLines
-                    ln := line.new(ev.swingTime, ev.level, ev.breakTime, ev.level, xloc = xloc.bar_time, color = ev.bos ? color.blue : color.red, style = lineStyle, width = lineWidth)
+                    ln := drawBreakLine(ev, ev.bos ? color.blue : color.red)
+                placed := drawBreakLabel(ev, ev.bos ? "BOS" : "CHoCH", textColor)
             // Only the latest CHoCH can still become an LS.
             if not ev.bos
                 lastChochSeq := ev.seq
-                lastChochLabel := lbl
+                lastChochPlaced := placed
                 lastChochLine := ln
 
 var line lastHighLine = na
 var line lastLowLine = na
+var LBox lastHighBox = na
+var LBox lastLowBox = na
 if barstate.islast
     line.delete(lastHighLine)
     line.delete(lastLowLine)
     if showSwingPoints and chartEngine.haveHigh
         lastHighLine := line.new(chartEngine.lastHighTime, chartEngine.lastHigh, time, chartEngine.lastHigh, xloc = xloc.bar_time, color = HIGH_LABEL_COLOR, style = line.style_dotted, width = 1)
+        // Labels keep clear of the dotted swing level too.
+        if na(lastHighBox)
+            lastHighBox := addBox(chartEngine.highPt.pivotBar, bar_index, chartEngine.lastHigh, chartEngine.lastHigh)
+        lastHighBox.x0 := chartEngine.highPt.pivotBar
+        lastHighBox.x1 := bar_index
+        lastHighBox.lo := chartEngine.lastHigh
+        lastHighBox.hi := chartEngine.lastHigh
+        pushPlaced(lastHighBox)
     if showSwingPoints and chartEngine.haveLow
         lastLowLine := line.new(chartEngine.lastLowTime, chartEngine.lastLow, time, chartEngine.lastLow, xloc = xloc.bar_time, color = LOW_LABEL_COLOR, style = line.style_dotted, width = 1)
+        if na(lastLowBox)
+            lastLowBox := addBox(chartEngine.lowPt.pivotBar, bar_index, chartEngine.lastLow, chartEngine.lastLow)
+        lastLowBox.x0 := chartEngine.lowPt.pivotBar
+        lastLowBox.x1 := bar_index
+        lastLowBox.lo := chartEngine.lastLow
+        lastLowBox.hi := chartEngine.lastLow
+        pushPlaced(lastLowBox)
 
-plot(useMa and showMaLine ? hMa : na, "Structure MA", color = maColor, linewidth = 2)
-plot(useHtfMa and showHtfMaLine ? htfMaValue : na, "HTF MA", color = htfMaColor, linewidth = 2)
+plot(useHtfMa and showHtfMaLine ? hMa : na, "HTF MA", color = htfMaColor, linewidth = 2)
+plot(useMtfMa and showMtfMaLine ? mtfMaValue : na, "MTF MA", color = mtfMaColor, linewidth = 2)
 
 // ------------------------------------------------------- trend breakdown
 type TfView
@@ -1029,28 +1244,34 @@ evidenceText(TfView v) =>
         out := out + (out == "" ? "" : "; ") + "latest " + breakName(v.latestCode) + " " + priceText(v.latestLevel)
     out == "" ? "No labels yet" : out
 
+trendWord(int d) =>
+    d > 0 ? "bullish" : "bearish"
+
+// What to do on one timeframe's trend: one action and the level that decides
+// it.
 recommendationText(TfView v) =>
     int d = biasDirection(v)
     string s = ""
     if v.dir == 0
-        s := "Stay on the sidelines until a BoS establishes a trend"
+        s := "Stand aside until a BOS sets the trend."
     else if d == 0
-        s := "Stay on the sidelines"
+        s := "Stand aside"
         if not na(v.rangeLo) and not na(v.rangeHi)
-            s := s + ", or trade only the range boundaries " + priceText(v.rangeLo) + " - " + priceText(v.rangeHi) + ","
-        s := s + " until a valid BoS"
+            s := s + " or trade only the range edges (" + priceText(v.rangeLo) + " to " + priceText(v.rangeHi) + ")"
         if not na(v.hh) and not na(v.ll)
-            s := s + " (close above HH " + priceText(v.hh) + " or below LL " + priceText(v.ll) + ")"
+            s := s + "; a close above HH " + priceText(v.hh) + " or below LL " + priceText(v.ll) + " starts a new trend."
+        else
+            s := s + " until a BOS starts a new trend."
     else if d > 0
         if not v.lastBos
-            s := not na(v.hh) ? "Wait for a bullish BoS (close above HH " + priceText(v.hh) + ") before buying" : "Wait for a bullish BoS before buying"
+            s := not na(v.hh) ? "Wait for a close above HH " + priceText(v.hh) + " (bullish BOS) before buying." : "Wait for a bullish BOS before buying."
         else
-            s := not na(v.hl) ? "Favour buys with the trend; a close below HL " + priceText(v.hl) + " starts a bearish CHoCH" : "Favour buys with the trend"
+            s := not na(v.hl) ? "Look for buys on pullbacks while price holds above HL " + priceText(v.hl) + "." : "Look for buys on pullbacks."
     else
         if not v.lastBos
-            s := not na(v.ll) ? "Wait for a bearish BoS (close below LL " + priceText(v.ll) + ") before selling" : "Wait for a bearish BoS before selling"
+            s := not na(v.ll) ? "Wait for a close below LL " + priceText(v.ll) + " (bearish BOS) before selling." : "Wait for a bearish BOS before selling."
         else
-            s := not na(v.lh) ? "Favour sells with the trend; a close above LH " + priceText(v.lh) + " starts a bullish CHoCH" : "Favour sells with the trend"
+            s := not na(v.lh) ? "Look for sells on pullbacks while price holds below LH " + priceText(v.lh) + "." : "Look for sells on pullbacks."
     s
 
 breakdownText(TfView v) =>
@@ -1073,20 +1294,40 @@ tfName(string tf) =>
         s := "MN" + str.tostring(int(math.round(secs / 2592000)))
     s
 
+// "H4", "H4 and H1" or "H4, H1 and M15": the selected trend timeframes.
 trendTimeframesText() =>
-    string r = ""
+    array<string> names = array.new<string>()
     if useHtf
-        r := "HTF"
+        names.push(tfName(htfTf))
     if useMtf
-        r := r + (r == "" ? "" : " and ") + "MTF"
+        names.push(tfName(mtfTf))
     if useLtf
-        r := r + (r == "" ? "" : " and ") + "LTF"
+        names.push(tfName(ltfTf))
+    string r = ""
+    int count = names.size()
+    if count > 0
+        for i = 0 to count - 1
+            r := r + (i == 0 ? "" : i == count - 1 ? " and " : ", ") + names.get(i)
     r
 
-// Market Tradeability: the HTF trend must be established (latest break a BOS,
+// Why a timeframe has no trend direction.
+noTrendText(string name, TfView v) =>
+    string s = name + " has no structure break yet."
+    if v.dir != 0
+        string why = v.cons % 2 == 1 ? "breaks in both directions over its last 5 swings" : ""
+        if v.cons >= 2
+            why := why + (why == "" ? "" : "; ") + "repeated CHoCHs in one area with no BOS"
+        s := name + " is ranging (" + why + ")."
+    s
+
+transitionText(string name, TfView v) =>
+    name + " is only in a " + trendWord(v.dir) + " transition (a CHoCH not yet confirmed by a BOS)."
+
+// Market Tradability: the HTF trend must be established (latest break a BOS,
 // not Consolidation / Undefined); every selected timeframe must have a
 // direction and they must agree; a selected LTF must itself be established.
-evaluateTradeability(TfView htf, TfView mtf, TfView ltf) =>
+// The reason says why in one sentence, naming the timeframes.
+evaluateTradability(TfView htf, TfView mtf, TfView ltf) =>
     bool htfDef = definiteBias(htf)
     bool ltfDef = definiteBias(ltf)
     int hd = biasDirection(htf)
@@ -1098,22 +1339,43 @@ evaluateTradeability(TfView htf, TfView mtf, TfView ltf) =>
     string reason = ""
     if ok
         int selected = (useHtf ? 1 : 0) + (useMtf ? 1 : 0) + (useLtf ? 1 : 0)
-        reason := trendTimeframesText() + (selected > 1 ? " correlate" : " is directional") + "; HTF is confirmed by HH/LL BOS"
+        int direction = useHtf ? hd : useMtf ? md : ld
+        reason := trendTimeframesText() + (selected == 1 ? " is " : selected == 2 ? " are both " : " are all ") + trendWord(direction) + ", and the " + tfName(htfTf) + " trend is confirmed by a BOS"
         if useLtf
-            reason := reason + "; LTF is confirmed by BOS"
+            reason := reason + ", as is the " + tfName(ltfTf) + " trend"
+        reason := reason + "."
     else if hd == 0
-        reason := "HTF is Consolidation / Undefined (" + triggerText(htf) + ")"
+        reason := noTrendText(tfName(htfTf), htf)
     else if not htfDef
-        reason := "HTF trend is transitional (CHoCH has no subsequent BOS)"
+        reason := transitionText(tfName(htfTf), htf)
     else if useMtf and md == 0
-        reason := "MTF is Consolidation / Undefined (" + triggerText(mtf) + ")"
+        reason := noTrendText(tfName(mtfTf), mtf)
     else if useLtf and ld == 0
-        reason := "LTF is Consolidation / Undefined (" + triggerText(ltf) + ")"
+        reason := noTrendText(tfName(ltfTf), ltf)
     else if not agree
-        reason := trendTimeframesText() + " trends conflict"
+        string first = useHtf ? tfName(htfTf) : tfName(mtfTf)
+        int firstDir = useHtf ? hd : md
+        bool mtfConflict = useHtf and useMtf and md != hd
+        string other = mtfConflict ? tfName(mtfTf) : tfName(ltfTf)
+        int otherDir = mtfConflict ? md : ld
+        reason := first + " is " + trendWord(firstDir) + " but " + other + " is " + trendWord(otherDir) + "."
     else
-        reason := "LTF trend is transitional (CHoCH has no subsequent BOS)"
+        reason := transitionText(tfName(ltfTf), ltf)
     [ok, reason]
+
+// The dashboard's recommendation: the HTF's, unless an established HTF trend
+// is held back by a selected lower timeframe, which it then names.
+tradeRecommendation(TfView htf, TfView mtf, TfView ltf, bool tradable) =>
+    int d = biasDirection(htf)
+    string s = recommendationText(htf)
+    if not tradable and d != 0 and htf.lastBos
+        string action = d > 0 ? "buying" : "selling"
+        string lead = tfName(htfTf) + " is " + trendWord(d) + ", but wait for "
+        if useMtf and biasDirection(mtf) != d
+            s := lead + tfName(mtfTf) + " to turn " + trendWord(d) + " before " + action + "."
+        else if useLtf and (biasDirection(ltf) != d or not definiteBias(ltf))
+            s := lead + tfName(ltfTf) + " to confirm with a " + trendWord(d) + " BOS before " + action + "."
+    s
 
 // Healthy Extension: in the HTF trend direction, from the latest LTF HL
 // (bullish) or LH (bearish) to the latest LTF close, 0 to 3 LTF ATR.
@@ -1133,36 +1395,38 @@ passText(bool pass) =>
     pass ? "PASS" : "BLOCKED"
 
 // Entry filters for the latest closed structure candle: the tooltip of the
-// Market Tradeability row. They never change structure, trend or alerts.
+// Market Tradability row. The HTF MA filter compares the latest closed HTF
+// candle with the HTF MA, the MTF MA filter the latest closed MTF candle with
+// the MTF MA. They never change structure, trend or alerts.
 entryFilterTooltip() =>
-    bool maLong = true
-    bool maShort = true
-    string maText = "off"
-    if useMa
-        maLong := MA_FULL_BODY ? (hClose > hMa and hOpen > hMa and hClose > hOpen) : hClose > hMa
-        maShort := MA_FULL_BODY ? (hClose < hMa and hOpen < hMa and hClose < hOpen) : hClose < hMa
-        maText := maLong ? "long" : maShort ? "short" : "neutral"
-    bool htfLong = not useHtfMa
-    bool htfShort = not useHtfMa
+    bool htfLong = true
+    bool htfShort = true
     string htfText = "off"
     if useHtfMa
-        htfText := "unavailable"
-        if not na(htfMaValue) and not na(htfMaOpen) and not na(htfMaClose)
-            htfLong := HTF_MA_FULL_BODY ? (htfMaClose > htfMaValue and htfMaOpen > htfMaValue and htfMaClose > htfMaOpen) : hClose > htfMaValue
-            htfShort := HTF_MA_FULL_BODY ? (htfMaClose < htfMaValue and htfMaOpen < htfMaValue and htfMaClose < htfMaOpen) : hClose < htfMaValue
-            htfText := htfLong ? "long" : htfShort ? "short" : "neutral"
+        htfLong := HTF_MA_FULL_BODY ? (hClose > hMa and hOpen > hMa and hClose > hOpen) : hClose > hMa
+        htfShort := HTF_MA_FULL_BODY ? (hClose < hMa and hOpen < hMa and hClose < hOpen) : hClose < hMa
+        htfText := htfLong ? "long" : htfShort ? "short" : "neutral"
+    bool mtfLong = not useMtfMa
+    bool mtfShort = not useMtfMa
+    string mtfText = "off"
+    if useMtfMa
+        mtfText := "unavailable"
+        if not na(mtfMaValue) and not na(mtfMaOpen) and not na(mtfMaClose)
+            mtfLong := MTF_MA_FULL_BODY ? (mtfMaClose > mtfMaValue and mtfMaOpen > mtfMaValue and mtfMaClose > mtfMaOpen) : mtfMaClose > mtfMaValue
+            mtfShort := MTF_MA_FULL_BODY ? (mtfMaClose < mtfMaValue and mtfMaOpen < mtfMaValue and mtfMaClose < mtfMaOpen) : mtfMaClose < mtfMaValue
+            mtfText := mtfLong ? "long" : mtfShort ? "short" : "neutral"
     bool sess = nz(hSession) == 1
     bool adxPass = not useAdx or (not na(hAdx) and hAdx >= ADX_MINIMUM)
     bool atrPass = true
     if useAtr
         atrPass := not na(hAtr) and (ATR_MODE == "Minimum" ? hAtr >= ATR_MINIMUM : ATR_MODE == "Maximum" ? hAtr <= ATR_MAXIMUM : hAtr >= ATR_MINIMUM and hAtr <= ATR_MAXIMUM)
-    bool longDir = maLong and htfLong and sess
-    bool shortDir = maShort and htfShort and sess
+    bool longDir = htfLong and mtfLong and sess
+    bool shortDir = htfShort and mtfShort and sess
     bool chochAdx = not useAdx or not ADX_BOS_AND_CHOCH or adxPass
     string out = "Entry filters, latest closed " + tfName(htfTf) + " candle"
     out := out + "\nBOS: long " + passText(longDir and adxPass and atrPass) + ", short " + passText(shortDir and adxPass and atrPass)
     out := out + "\nCHoCH: long " + passText(longDir and chochAdx and atrPass) + ", short " + passText(shortDir and chochAdx and atrPass)
-    out := out + "\nMA " + maText + " | HTF MA " + htfText + " | Session " + (useSession ? (sess ? "in" : "out") : "off")
+    out := out + "\nHTF MA " + htfText + " | MTF MA " + mtfText + " | Session " + (useSession ? (sess ? "in" : "out") : "off")
     out := out + "\nADX " + (useAdx ? str.tostring(hAdx, "#.0") + " " + passText(adxPass) : "off") + " | ATR " + (useAtr ? str.tostring(hAtr, format.mintick) + " " + passText(atrPass) : "off")
     out
 
@@ -1174,7 +1438,7 @@ evaluateOptimal(bool biasReady, bool healthy, bool goodVolume, float volumeRatio
         reason := "All selected requirements are met"
     else
         if useCorrOpt and not biasReady
-            reason := trendTimeframesText() + " trends do not meet the selected correlation requirements"
+            reason := "the selected timeframes do not correlate (see Tradability Reason)"
         if useExtOpt and not healthy
             reason := reason + (reason == "" ? "" : "; ") + "price is overextended or lacks a valid corrective anchor"
         if useVolOpt and not goodVolume
@@ -1185,20 +1449,16 @@ evaluateOptimal(bool biasReady, bool healthy, bool goodVolume, float volumeRatio
 
 // ---------------------------------------------------------------- dashboard
 dashPosition = dashPositionInput == "Top Left" ? position.top_left : dashPositionInput == "Bottom Left" ? position.bottom_left : dashPositionInput == "Bottom Right" ? position.bottom_right : position.top_right
-// Component names are black (the main components bold) and only the outputs
-// are coloured: trends green (Bullish, Bullish Transition), red (Bearish,
-// Bearish Transition) or grey (Consolidation / Undefined); tradeability and
-// conditions green when they pass and red when they do not. No background
-// and no borders.
+// Component names are black and bold, and only the outputs are coloured:
+// trends green (Bullish, Bullish Transition), red (Bearish, Bearish
+// Transition) or grey (Consolidation / Undefined); tradability and conditions
+// green when they pass and red when they do not. No background and no
+// borders.
 DASH_TEXT_COLOR = color.black
 DASH_POSITIVE_COLOR = color.green
 DASH_NEGATIVE_COLOR = color.red
 DASH_NEUTRAL_COLOR = color.gray
 var table dash = table.new(dashPosition, 2, 24, bgcolor = color.new(color.white, 100), frame_width = 0, border_width = 0)
-
-// Timeframes below the chart's are sampled once per chart candle.
-lowestTf = timeframe.in_seconds(htfTf) <= timeframe.in_seconds(mtfTf) and timeframe.in_seconds(htfTf) <= timeframe.in_seconds(ltfTf) ? htfTf : timeframe.in_seconds(mtfTf) <= timeframe.in_seconds(ltfTf) ? mtfTf : ltfTf
-chartAboveTf = timeframe.in_seconds() > timeframe.in_seconds(lowestTf)
 
 trendColor(TfView v) =>
     int d = biasDirection(v)
@@ -1207,16 +1467,13 @@ trendColor(TfView v) =>
 passColor(bool pass) =>
     pass ? DASH_POSITIVE_COLOR : DASH_NEGATIVE_COLOR
 
-// One row: the component name, then its coloured output.
-dashRow(int row, string component, string output, color outputColor, string tip, bool bold) =>
-    if bold
-        table.cell(dash, 0, row, component, text_color = DASH_TEXT_COLOR, text_halign = text.align_left, text_size = size.small, tooltip = tip, text_formatting = text.format_bold)
-    else
-        table.cell(dash, 0, row, component, text_color = DASH_TEXT_COLOR, text_halign = text.align_left, text_size = size.small, tooltip = tip)
+// One row: the component name in bold, then its coloured output.
+dashRow(int row, string component, string output, color outputColor, string tip) =>
+    table.cell(dash, 0, row, component, text_color = DASH_TEXT_COLOR, text_halign = text.align_left, text_size = size.small, tooltip = tip, text_formatting = text.format_bold)
     table.cell(dash, 1, row, output, text_color = outputColor, text_halign = text.align_left, text_size = size.small, tooltip = tip)
 
 if barstate.islast
-    [tradable, tradeReason] = evaluateTradeability(htfView, mtfView, ltfView)
+    [tradable, tradeReason] = evaluateTradability(htfView, mtfView, ltfView)
     bool healthy = healthyExtension(htfView, lClose, lAtr, lLastLow, nz(lLastLowKind), nz(lHaveLow) == 1, lLastHigh, nz(lLastHighKind), nz(lHaveHigh) == 1)
     float volRatio = nz(lVolRatio)
     bool goodVolume = nz(lVolAvg) > 0 and volRatio >= VOLUME_MIN_RATIO and volRatio <= VOLUME_MAX_RATIO
@@ -1226,38 +1483,36 @@ if barstate.islast
     table.clear(dash, 0, 0, 1, 23)
     int row = 0
     if useHtf
-        dashRow(row, "HTF Market Trend (" + tfName(htfTf) + "):", biasText(htfView), trendColor(htfView), breakdownText(htfView), true)
+        dashRow(row, "HTF Market Trend (" + tfName(htfTf) + "):", biasText(htfView), trendColor(htfView), breakdownText(htfView))
         row += 1
     if useMtf
-        dashRow(row, "MTF Market Trend (" + tfName(mtfTf) + "):", biasText(mtfView), trendColor(mtfView), breakdownText(mtfView), true)
+        dashRow(row, "MTF Market Trend (" + tfName(mtfTf) + "):", biasText(mtfView), trendColor(mtfView), breakdownText(mtfView))
         row += 1
     if useLtf
-        dashRow(row, "LTF Market Trend (" + tfName(ltfTf) + "):", biasText(ltfView), trendColor(ltfView), breakdownText(ltfView), true)
+        dashRow(row, "LTF Market Trend (" + tfName(ltfTf) + "):", biasText(ltfView), trendColor(ltfView), breakdownText(ltfView))
         row += 1
-    dashRow(row, "Market Tradeability:", tradable ? "Tradable" : "Not Tradable", passColor(tradable), entryFilterTooltip(), true)
+    dashRow(row, "Market Tradability:", tradable ? "Tradable" : "Not Tradable", passColor(tradable), entryFilterTooltip())
     row += 1
-    dashRow(row, "Tradeability Reason:", tradeReason, DASH_TEXT_COLOR, "", true)
+    dashRow(row, "Tradability Reason:", tradeReason, DASH_TEXT_COLOR, "")
     row += 1
-    dashRow(row, "Trade Recommendations:", recommendationText(htfView), DASH_TEXT_COLOR, "", true)
+    dashRow(row, "Trade Recommendations:", tradeRecommendation(htfView, mtfView, ltfView, tradable), DASH_TEXT_COLOR, "")
     row += 1
-    dashRow(row, " ", " ", DASH_TEXT_COLOR, "", false)
+    dashRow(row, " ", " ", DASH_TEXT_COLOR, "")
     row += 1
-    dashRow(row, "Optimal Conditions:", optimal ? "OPTIMAL" : "NOT OPTIMAL", passColor(optimal), optimalReason, true)
+    dashRow(row, "Optimal Conditions:", optimal ? "OPTIMAL" : "NOT OPTIMAL", passColor(optimal), optimalReason)
     row += 1
     if useCorrOpt
-        dashRow(row, "Timeframe Correlation:", passText(tradable), passColor(tradable), optimalReason, false)
+        dashRow(row, "Timeframe Correlation:", passText(tradable), passColor(tradable), optimalReason)
         row += 1
     if useExtOpt
-        dashRow(row, "Healthy Extension:", passText(healthy), passColor(healthy), optimalReason, false)
+        dashRow(row, "Healthy Extension:", passText(healthy), passColor(healthy), optimalReason)
         row += 1
     if useVolOpt
-        dashRow(row, "Market Volume:", passText(goodVolume) + " (" + str.tostring(volRatio, "#.00") + "x average)", passColor(goodVolume), optimalReason, false)
+        dashRow(row, "Market Volume:", passText(goodVolume) + " (" + str.tostring(volRatio, "#.00") + "x average)", passColor(goodVolume), optimalReason)
         row += 1
     if useMomOpt
-        dashRow(row, "Price Momentum:", passText(goodMomentum) + " (" + str.tostring(momRatio, "#.00") + "x average range)", passColor(goodMomentum), optimalReason, false)
+        dashRow(row, "Price Momentum:", passText(goodMomentum) + " (" + str.tostring(momRatio, "#.00") + "x average range)", passColor(goodMomentum), optimalReason)
         row += 1
-    if chartAboveTf
-        dashRow(row, "Note:", "use a " + tfName(lowestTf) + " or lower chart for exact " + tfName(lowestTf) + " values", DASH_TEXT_COLOR, "", false)
 
 // ------------------------------------------------------------------- alerts
 // Structure-timeframe events that became known on its latest closed candle.
