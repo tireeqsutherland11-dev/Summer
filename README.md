@@ -178,8 +178,8 @@ and then tune its thresholds for the symbol and timeframe.
 (EA)**. It reconstructs
 market structure from closed candles, draws HH/HL/LH/LL, BOS and CHoCH, and
 reports multi-timeframe tradability and market conditions. It also marks
-equal highs and lows (EQH/EQL) and shows a larger-scale Real Time Swing
-Structure with its own BOS/CHoCH and Strong/Weak High/Low. It never places, modifies, or closes
+equal highs and lows (EQH/EQL), Strong/Weak High/Low, and a finer Internal
+Structure with its own BOS/CHoCH. It never places, modifies, or closes
 trades.
 
 ## Install and start
@@ -210,45 +210,39 @@ Base prints every structure event from closed candles only. A wick beyond a
 swing is a liquidity sweep, never a break; a candle must close beyond it. The
 label of the swing that is broken decides the event.
 
-- **Swings.** Two filters decide what counts as a swing:
-  - **Swing strength:** a swing high must be at least as high as that many
-    candles on its left and strictly higher than as many on its right. It is
-    also how many candles it takes to confirm the swing. Equal highs (a
-    double top) form one swing at the latest of the equal candles.
-  - **Swing size:** a new swing must travel at least that many ATR from the
-    previous opposite swing. A smaller bounce is a pullback inside the
-    current leg, not a swing. A swing beyond the previous high or low (an
-    HH or LL) always counts, because it takes out a structure level.
+- **Swings.** A swing high is a pivot of the timeframe's Swing Detection
+  Length (default 10): at least as high as that many candles on its left
+  and strictly higher than as many on its right. It is also how many candles
+  it takes to confirm the swing. Equal highs (a double top) form one swing at
+  the latest of the equal candles. Swing lows mirror this. Swings alternate
+  high, low, high, low: several highs confirmed before the next low are one
+  leg, and only its highest high is kept (likewise the lowest low). This is
+  the swing detection of WillyAlgoTrader's Smart Money Engine (SME).
+- **Swing Detection Length (2-50), one per timeframe.**
+  `HTF_Swing_Length`, `MTF_Swing_Length` and `LTF_Swing_Length` (default 10
+  each) set the swing size of each timeframe. The chart's own labels use the
+  length of the timeframe the chart is on, or the HTF length on any other
+  chart period. Lower it for more, faster swings; raise it for fewer, cleaner
+  ones. It replaces the Swing Sensitivity (0-100) of v2.37 and earlier,
+  which blended a 2-4 candle strength with a 1-3 ATR size filter; at length
+  10 a size filter removes almost nothing, so there is none.
 
-  Swing lows mirror this. Swings alternate high, low, high, low: several
-  highs confirmed before the next low are one leg, and only its highest high
-  is kept (likewise the lowest low).
-- **Swing Sensitivity (0-100), one per timeframe.** Base keeps two sets of
-  these filters.
+  On real market data (EURUSD H1, an index on M1 and M5, the S&P 500 on M1,
+  and six stocks on D1; about 60,000 candles), length 10 compared with the
+  old default (Swing Sensitivity 50) as follows:
 
-  | Set | Strength | Size | Finds |
-  |---|---|---|---|
-  | Sensitive | 2 candles | 1.0 ATR | quick, detailed swings |
-  | Smooth | 4 candles | 3.0 ATR | only major swings |
+  | | Sensitivity 50 (v2.37) | Length 10 (v2.38) |
+  |---|---|---|
+  | BOS/CHoCH/LS per 1,000 candles | 36.9 | 19.3 |
+  | BOS follow-through (1 ATR before a close back) | 71.3% | 77.7% |
+  | CHoCH follow-through | 70.7% | 73.3% |
+  | CHoCH followed by a BOS in its direction | 74.6% | 72.3% |
+  | Trend flips per 1,000 candles | 16.6 | 9.1 |
 
-  `HTF_Swing_Sensitivity`, `MTF_Swing_Sensitivity` and
-  `LTF_Swing_Sensitivity` (default 50 each) blend the two sets for their
-  timeframe. The chart's own labels use the sensitivity of the timeframe the
-  chart is on, or the HTF sensitivity on any other chart period.
-
-  | Value | Strength | Size | Meaning |
-  |---|---|---|---|
-  | 0 | 4 | 3.0 ATR | the Smooth set |
-  | 25 | 4 | 2.5 ATR | |
-  | **50 (default)** | **3** | **2.0 ATR** | **Balanced: the exact average of both sets** |
-  | 75 | 3 | 1.5 ATR | |
-  | 100 | 2 | 1.0 ATR | the Sensitive set |
-
-  Lower it for a cleaner chart with fewer, bigger swings; raise it for more
-  detail and faster swings. On 40 synthetic markets, Balanced finds about as
-  many swings as the previous fixed 5-candle setting. Its swings confirm 2
-  candles sooner and it kept every major market swing. 70% of its CHoCHs were
-  followed by a BOS in their direction, against 61% before.
+  So about half as many breaks, each more reliable, and half as many trend
+  flips. The trade-off is that each swing confirms 10 candles after its
+  pivot instead of 3, so trend changes are recognised later (see
+  `Roadmap.txt`). Length 5 is close to the old default in count and speed.
 - **HH / LH / LL / HL.** Each swing is compared with the extreme of the
   previous leg on its side: a higher high is HH, otherwise LH; a lower low is
   LL, otherwise HL. Every accepted swing inside the displayed window is
@@ -324,10 +318,12 @@ label of the swing that is broken decides the event.
   (usually Bearish), as if the CHoCH had never printed. The break of the
   protected low is then a pullback inside that trend, so no bearish CHoCH
   prints for it.
-- **Captions.** Each BOS, CHoCH and LS caption is centred on its line, on the
-  candle midway between the broken swing and the candle that closed through
-  it: above a line broken upwards, below one broken downwards (the layout of
-  LuxAlgo's Smart Money Concepts).
+- **Captions and lines.** Each BOS, CHoCH and LS caption is centred on its
+  line, on the candle midway between the broken swing and the candle that
+  closed through it: above a line broken upwards, below one broken downwards.
+  The lines are solid and 2 pixels wide by default (`Line_Style`,
+  `Line_Width`), as in SME, so they stand out from the dashed, thinner
+  Internal Structure.
 - **Pullbacks inside a trend.** A broken LH while the trend is already bullish
   (or a broken HL while it is bearish) prints nothing.
 - **Trend.** Bullish after a bullish BOS: the market is breaking HH
@@ -356,43 +352,40 @@ label of the swing that is broken decides the event.
   It also applies before the first structure break of the replay. An LS is
   not a break: it counts in neither condition.
 
-## Real Time Swing Structure
+## Strong / Weak High / Low
 
-A second, larger-scale reading of each timeframe, taken from the swing
-structure of LuxAlgo's Smart Money Concepts. It gives context to the Market
-Trend but never changes it, and never changes Tradability, Optimal
-Conditions or alerts.
+From SME. Each break protects the latest swing on the other side of the
+trend:
 
-- **Swings.** A candle that is higher than each of the next
-  `Swing_Structure_Length` candles (default 50) starts a bearish leg, and one
-  lower than all of them a bullish leg. The candle that starts a leg is a
-  swing high (low).
-- **Breaks.** The first close above the latest swing high is a bullish BOS,
-  or a bullish CHoCH when the swing trend was bearish; bearish mirrors this.
-  Each swing is broken once, and the break sets the swing trend.
-- **Swing BOS / CHoCH on the chart.** These are the larger breaks, drawn as
-  in LuxAlgo's indicator:
-  - a solid line from the broken swing to the candle that closed through it;
-  - a caption (`Swing_Label_Size`, default one size larger than Base's
-    labels) centred on the line, above a line broken upwards and below one
-    broken downwards;
-  - green for bullish, red for bearish (`Swing_Bullish_Color`,
-    `Swing_Bearish_Color`).
+- A bullish break (a bullish BOS, a confirmed bullish CHoCH, or an LS that
+  restores a bullish trend) makes the latest swing low the **Strong Low**: it
+  holds the trend. While the trend is bullish, the highest high since then is
+  the **Weak High**: the next target.
+- A bearish break mirrors this: **Strong High** and **Weak Low**.
+- Both are drawn as dashed lines that extend 20 candles right of the latest
+  candle, where their names sit, and are listed in each Market Trend's
+  breakdown (`Show_Strong_Weak_High_Low` hides the lines).
 
-  Base's own BOS/CHoCH/LS keep their dashed lines and smaller captions, so
-  the two scales are easy to tell apart. A swing break is drawn when the
-  candle that closed through the swing is inside the drawn window
-  (`Bars_To_Process`); its line may start further back.
-  `Show_Swing_Structure_Breaks` hides them.
-- **Strong / Weak High / Low.** The highest high since the latest swing high
-  and the lowest low since the latest swing low, drawn as solid lines that
-  extend 20 candles to the right, where their names sit. With a bullish swing
-  trend the low is **Strong** (it holds the trend) and the high **Weak** (the
-  next target); a bearish swing trend reverses this.
-- Only closed candles are used, as everywhere in Base, so a swing break is
-  drawn once the candle that closed through the swing has closed.
-- Each replay uses at least 1,000 candles (20 x the length) so the 50-candle
-  legs have settled.
+## Internal Structure
+
+Also from SME: minor structure inside the swings, from shorter pivots of the
+timeframe's Internal Structure Length (`HTF_Internal_Length`,
+`MTF_Internal_Length`, `LTF_Internal_Length`, 2-50, default 5). It shows
+what price is doing between the swings but never changes the Market Trend,
+Tradability, Optimal Conditions or alerts.
+
+- Each internal pivot high (low) becomes the internal high (low) level.
+- The first close above the internal high is an internal bullish BOS, or an
+  internal bullish CHoCH when the internal trend was bearish; bearish mirrors
+  this. Each level is broken once, and the break sets the internal trend.
+- On the chart its breaks are dashed 1-pixel lines with faded captions
+  (`Internal_Bullish_Color`, `Internal_Bearish_Color`), centred like the
+  main ones. Where the internal pivot is also a swing of the main structure,
+  only the main structure draws that level, so the chart does not double up.
+- Keep it shorter than the Swing Detection Length. At or above it, almost
+  every internal pivot is also a main swing, so almost nothing is drawn.
+- `Show_Internal_Structure` hides the chart drawings and
+  `Show_Internal_On_Dashboard` its dashboard rows.
 
 ## Reading the dashboard
 
@@ -402,7 +395,7 @@ and bold, for example **Market Trend (H4):**. Only the outputs are coloured:
 | Output | Green | Red | Grey |
 |---|---|---|---|
 | Market Trend | Bullish, Bullish Transition | Bearish, Bearish Transition | Consolidation / Undefined |
-| Swing Structure | Bullish | Bearish | Undefined |
+| Internal Structure | Bullish | Bearish | Undefined |
 | Market Tradability | Tradable | Not Tradable | |
 | Optimal Conditions and each condition | OPTIMAL, PASS | NOT OPTIMAL, BLOCKED | |
 
@@ -417,23 +410,23 @@ The black text is made for a light chart background.
     without BoS, or clear trending structure.
   - **Structural Evidence:** the last 5 labels, plus the alternating breaks or
     the CHoCHs of the trap. For a clear structure, the latest break.
+  - **Strong/Weak:** that timeframe's Strong/Weak High/Low, for example
+    `Weak High 1.09800 | Strong Low 1.07900`.
   - **Trade Recommendations:** that timeframe's recommendation (see below).
 
-  Each trend is replayed independently with its own Swing Sensitivity, and
-  new swings that break nothing never change it.
-- **Swing Structure.** Below each Market Trend, that timeframe's Real Time
-  Swing Structure: Bullish or Bearish with its latest break, for example
+  Each trend is replayed independently with its own Swing Detection Length,
+  and new swings that break nothing never change it.
+- **Internal Structure.** Below each Market Trend, indented, that
+  timeframe's internal trend with its latest internal break, for example
   `Bullish (CHoCH)`, or Undefined before the first break (green, red or
   grey). Hover it for:
-  - the break that set the swing trend, for example `Swing trend: Bullish
-    since a bullish CHoCH through 1.08500`;
-  - Strong/Weak High/Low, for example `Weak High 1.09800 | Strong Low
-    1.07900`;
+  - the break that set it, for example `Internal trend: Bullish since a
+    bullish CHoCH through 1.08500`;
   - how it relates to the Market Trend: `Agrees with the H4 Market Trend.`,
-    or `Opposes the H4 Market Trend: its bullish trend is a counter-move
-    inside a bearish swing structure.`
+    or `Opposes the H4 Market Trend: a bearish move inside the bullish trend
+    (a pullback until the swing structure breaks).`
 
-  `Show_Swing_Structure` hides these rows.
+  `Show_Internal_On_Dashboard` hides these rows.
 - **Market Tradability.** Tradable always requires an established Bullish or
   Bearish HTF trend (latest break a BOS, not Consolidation / Undefined).
   - Every timeframe selected in **Trend Analysis Timeframes** must have a
@@ -518,10 +511,10 @@ The black text is made for a light chart background.
   stock data about 3.5% of swings were equal, and BOS/CHoCH follow-through,
   CHoCH-to-BOS confirmation and the LS rate stayed within noise of the
   version without EQH/EQL (see `Roadmap.txt`).
-- **Real Time Swing Structure.** `Swing_Structure_Length` (10 to 1000,
-  default 50) sets its swing size. `Show_Swing_Structure_Breaks` and
-  `Show_Strong_Weak_High_Low` hide its chart drawings, and
-  `Show_Swing_Structure` its dashboard rows.
+- **Swing Detection and Internal Structure.** Each timeframe has its own
+  Swing Detection Length (default 10) and Internal Structure Length (default
+  5), both 2 to 50. The Real Time Swing Structure (LuxAlgo) of v2.36-v2.37
+  was removed: SME's Strong/Weak High/Low and Internal Structure replace it.
 - **MA filters.** `MA Filter (HTF)` compares the latest closed HTF candle
   with an MA of the HTF (default EMA 50). `MA Filter (MTF)` compares the latest
   closed MTF candle with an MA of the MTF (default EMA 100). Each can draw its
@@ -542,34 +535,33 @@ outside the EA.
 ## Base for TradingView (`Base.pine`)
 
 `Base.pine` is a Pine Script v6 indicator with the same functionality as
-`Base.mq5`. It uses the same structure engine: the two swing filter sets and
-per-timeframe Swing Sensitivity blend, HH/HL/LH/LL and EQH/EQL labels,
-close-only BOS/CHoCH/LS with centred captions, trend, Consolidation /
-Undefined, the Real Time Swing Structure with its larger BOS/CHoCH and
-Strong/Weak High/Low, and the
-same dashboard (Market Trends with their breakdowns and Swing Structure,
-Market Tradability with the entry-filter tooltip, the trade recommendation,
-and Optimal Conditions). It has the same inputs,
+`Base.mq5`. It uses the same structure engine: per-timeframe Swing Detection
+Length, HH/HL/LH/LL and EQH/EQL labels, close-only BOS/CHoCH/LS with centred
+captions, trend, Consolidation / Undefined, Strong/Weak High/Low, the
+Internal Structure with its dashed BOS/CHoCH, and the same dashboard (Market
+Trends with their breakdowns and Internal Structure, Market Tradability with
+the entry-filter tooltip, the trade recommendation, and Optimal Conditions). It has the same inputs,
 groups and defaults, except for the session and alert inputs described below.
 Like the EA, it only analyses the chart and never places orders.
 
 To install it, open the **Pine Editor** in TradingView, paste the contents of
 `Base.pine`, save the script, and click **Add to chart**.
 
-The engine was checked bar by bar against the EA's engine on 36 generated
-markets. The check covered Swing Sensitivity 0, 25, 50, 75 and 100, and both
-forex and gold price scales. The labels (including EQH/EQL), BOS/CHoCH/LS
-events, trend, Consolidation / Undefined flags, break levels and the Real Time
-Swing Structure (including every drawn swing BOS/CHoCH) were identical. The
-swing structure was also identical to a literal simulation of LuxAlgo's own
-Pine code.
+The engine was checked bar by bar against the EA's engine on 30 generated
+markets. The check covered Swing Detection Lengths 2, 3, 5, 10, 15 and 20,
+Internal Structure Lengths 2, 3, 5, 8 and 15, and both forex and gold price
+scales. The labels (including EQH/EQL), BOS/CHoCH/LS events, trend,
+Consolidation / Undefined flags, break levels, Strong/Weak High/Low, the
+internal trend, and the drawn internal BOS/CHoCH (including which are left to
+the main structure) were identical.
 
 Differences from the EA:
 
-- **History.** Structure and the Real Time Swing Structure are replayed over
-  all loaded history, not over three times `Bars To Process` (at least 1,000
-  candles for the swing structure). `Bars To Process` only limits how far back
-  labels are drawn.
+- **History.** Structure and the Internal Structure are replayed over all
+  loaded history, not over three times `Bars To Process`. `Bars To Process`
+  only limits how far back labels are drawn.
+- **Internal captions.** They are faded with 30% transparency; the EA blends
+  them 30% towards the chart background, which looks the same.
 - **Timeframes.** Each timeframe is read with `request.security` from its
   latest closed candle, so nothing repaints. Use a chart timeframe at or below
   the lowest of the three structure timeframes.
