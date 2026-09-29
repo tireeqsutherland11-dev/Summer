@@ -1,5 +1,5 @@
 //@version=6
-// Base - Market Structure (TradingView port of Base.mq5 v2.34)
+// Base - Market Structure (TradingView port of Base.mq5 v2.35)
 //
 // Reads market structure from closed candles only:
 //  * HH/HL/LH/LL swings from two sets of the same two filters (swing strength
@@ -186,14 +186,12 @@ type SEvent
     int seq = 0
     bool ls = false
     int lsBar = -1
-    int swingBar = -1
 
 type SLevel
     bool active = false
     float price = na
     int swingTime = na
     int point = -1
-    int swingBar = -1
 
 type SEngine
     array<SPoint> points
@@ -229,7 +227,6 @@ type SEngine
     int chochBreakTime = na
     float chochLevel = na
     int chochLevelTime = na
-    int chochLevelBar = -1
     int chochLevelPoint = -1
     int eventTotal = 0
     int consolidation = 0
@@ -255,7 +252,6 @@ method setLevel(SLevel lv, SPoint p) =>
     lv.active := true
     lv.price := p.price
     lv.swingTime := p.pivotTime
-    lv.swingBar := p.pivotBar
     lv.point := p.id
 
 // A swing is identified once the opposite leg after it has begun: no later
@@ -299,8 +295,8 @@ method addPoint(SEngine e, int pivotBar, int pivotTime, float price, int side, i
 // A BOS that follows an event in the same direction confirms that direction
 // and ends any CHoCH trap; every other CHoCH joins the trap window.
 // e.dir is the direction of the latest event that is not an LS.
-method addEvent(SEngine e, int bar, int breakBar, int breakTime, int dir, bool bos, int swingTime, float level, int swingBar) =>
-    SEvent ev = SEvent.new(bar, breakBar, breakTime, dir, bos, swingTime, level, e.eventTotal, swingBar = swingBar)
+method addEvent(SEngine e, int bar, int breakBar, int breakTime, int dir, bool bos, int swingTime, float level) =>
+    SEvent ev = SEvent.new(bar, breakBar, breakTime, dir, bos, swingTime, level, e.eventTotal)
     int prevDir = e.dir
     e.events.push(ev)
     if e.events.size() > MAX_EVENTS
@@ -322,7 +318,6 @@ method startChoch(SEngine e, int dir, int bar, int barTime, SLevel lv) =>
     e.chochBreakTime := barTime
     e.chochLevel := lv.price
     e.chochLevelTime := lv.swingTime
-    e.chochLevelBar := lv.swingBar
     e.chochLevelPoint := lv.point
 
 // Drops a candidate. While the broken LH/HL is still the latest swing on its
@@ -330,9 +325,9 @@ method startChoch(SEngine e, int dir, int bar, int barTime, SLevel lv) =>
 // fresh break.
 method cancelChoch(SEngine e) =>
     if e.chochDir > 0 and e.highId() == e.chochLevelPoint
-        e.lh := SLevel.new(true, e.chochLevel, e.chochLevelTime, e.chochLevelPoint, e.chochLevelBar)
+        e.lh := SLevel.new(true, e.chochLevel, e.chochLevelTime, e.chochLevelPoint)
     if e.chochDir < 0 and e.lowId() == e.chochLevelPoint
-        e.hl := SLevel.new(true, e.chochLevel, e.chochLevelTime, e.chochLevelPoint, e.chochLevelBar)
+        e.hl := SLevel.new(true, e.chochLevel, e.chochLevelTime, e.chochLevelPoint)
     e.chochDir := 0
 
 // The swings after the broken LH have made an HH (bullish), or after the
@@ -371,7 +366,7 @@ method confirmChoch(SEngine e, int bar) =>
     int priorDir = e.dir
     bool priorBos = e.lastBos
     int direction = e.chochDir
-    e.addEvent(bar, e.chochBreakBar, e.chochBreakTime, direction, false, e.chochLevelTime, e.chochLevel, e.chochLevelBar)
+    e.addEvent(bar, e.chochBreakBar, e.chochBreakTime, direction, false, e.chochLevelTime, e.chochLevel)
     e.chochDir := 0
     e.lsSeq := -1
     SPoint origin = direction > 0 ? e.lowPt : e.highPt
@@ -539,7 +534,7 @@ method onClose(SEngine e, float c, int curBar, int curTime) =>
         e.hh.active := false
         if e.chochDir <= 0
             e.cancelChoch()
-            e.addEvent(curBar, curBar, curTime, 1, true, e.hh.swingTime, e.hh.price, e.hh.swingBar)
+            e.addEvent(curBar, curBar, curTime, 1, true, e.hh.swingTime, e.hh.price)
     if e.hl.active and c < e.hl.price
         e.hl.active := false
         if e.dir >= 0 and e.chochDir >= 0
@@ -551,7 +546,7 @@ method onClose(SEngine e, float c, int curBar, int curTime) =>
         e.ll.active := false
         if e.chochDir >= 0
             e.cancelChoch()
-            e.addEvent(curBar, curBar, curTime, -1, true, e.ll.swingTime, e.ll.price, e.ll.swingBar)
+            e.addEvent(curBar, curBar, curTime, -1, true, e.ll.swingTime, e.ll.price)
     e.dir
 
 // One closed candle: the swing confirmed on it (its pivot is swing strength
@@ -850,296 +845,85 @@ if bar_index == math.max(drawFrom, 0)
 swingName(SPoint p) =>
     p.side > 0 ? (p.kind > 0 ? "HH" : "LH") : (p.kind > 0 ? "LL" : "HL")
 
-// ---------------------------------------------------------- label layout
-// A BOS, CHoCH or LS label sits near the middle of its line, on the side the
-// price did not come from: above a line broken upwards, below one broken
-// downwards. It then moves away from the line only as far as it must to clear
-// every candle, swing label, MA line, structure line, dotted swing level and
-// earlier break label it covers, so it never overlaps a candle or another
-// drawing. Pine cannot read the chart's zoom, so labels are sized for a dense
-// chart (5 px candles in a 450 px pane). Candles, swing labels and lines that
-// appear later under a label move it again.
-LAYOUT_BAR_PX = 5.0
-LAYOUT_PANE_PX = 450.0
-LAYOUT_KEEP = 5000
-fontPx = labelSizeInput == "Tiny" ? 8.0 : labelSizeInput == "Normal" ? 13.0 : labelSizeInput == "Large" ? 18.0 : 11.0
-layoutPricePx = nz((ta.highest(high, 200) - ta.lowest(low, 200)) / LAYOUT_PANE_PX)
-htfLineShown = useHtfMa and showHtfMaLine
-mtfLineShown = useMtfMa and showMtfMaLine
-
-// The chart area a drawing covers: candles x0..x1, prices lo..hi.
-type LBox
-    int id
-    int x0
-    int x1
-    float lo
-    float hi
-    bool alive = true
-
-// A placed break label, kept so later drawings can move it clear.
-type LPlaced
-    label lbl
-    LBox area
-    bool above
-    float h
-    int made
-
-var array<float> layHigh = array.new<float>()
-var array<float> layLow = array.new<float>()
-var array<float> layLineA = array.new<float>()
-var array<float> layLineB = array.new<float>()
-var array<LBox> layBoxes = array.new<LBox>()
-var array<LPlaced> layPlaced = array.new<LPlaced>()
-var array<int> layNextId = array.from(0)
-
-labelHalfBars(string txt) =>
-    int(math.ceil((str.length(txt) * 0.65 * fontPx + 10) / LAYOUT_BAR_PX / 2)) + 1
-
-labelHeight() =>
-    (fontPx + 12) * layoutPricePx
-
-addBox(int x0, int x1, float lo, float hi) =>
-    layNextId.set(0, layNextId.get(0) + 1)
-    LBox b = LBox.new(layNextId.get(0), x0, x1, lo, hi)
-    layBoxes.push(b)
-    if layBoxes.size() > 600
-        layBoxes.shift()
-    b
-
-beyond(float edge, float obstacle, bool above, float gap) =>
-    above ? math.max(edge, obstacle + gap) : math.min(edge, obstacle - gap)
-
-// The label edge (its bottom above the line, its top below it), starting at
-// `start` and moving only away from the line, at which a label over candles
-// x0..x1 covers no candle, line or box known so far (box skipId is its own).
-clearEdge(int x0, int x1, float start, bool above, float h, int skipId) =>
-    int base = bar_index - layHigh.size() + 1
-    int firstBar = math.max(x0, base)
-    int lastBar = math.min(x1, bar_index)
-    float gap = 3 * layoutPricePx
-    float edge = start
-    for pass = 0 to 60
-        float lo = above ? edge : edge - h
-        float hi = above ? edge + h : edge
-        float moved = edge
-        if lastBar >= firstBar
-            for k = firstBar to lastBar
-                int j = k - base
-                if layHigh.get(j) >= lo and layLow.get(j) <= hi
-                    moved := beyond(moved, above ? layHigh.get(j) : layLow.get(j), above, gap)
-                float a = layLineA.get(j)
-                if not na(a) and a >= lo and a <= hi
-                    moved := beyond(moved, a, above, gap)
-                float b = layLineB.get(j)
-                if not na(b) and b >= lo and b <= hi
-                    moved := beyond(moved, b, above, gap)
-        int nb = layBoxes.size()
-        if nb > 0
-            for i = 0 to nb - 1
-                LBox bx = layBoxes.get(i)
-                if bx.alive and bx.id != skipId and bx.x1 >= x0 and bx.x0 <= x1 and bx.hi >= lo and bx.lo <= hi
-                    moved := beyond(moved, above ? bx.hi : bx.lo, above, gap)
-        if moved == edge
-            break
-        edge := moved
-    edge
-
-// Moves a placed label clear again after something new appeared under it.
-reclear(LPlaced p) =>
-    float edge = p.above ? p.area.lo : p.area.hi
-    float cleared = clearEdge(p.area.x0, p.area.x1, edge, p.above, p.h, p.area.id)
-    if cleared != edge
-        p.area.lo := p.above ? cleared : cleared - p.h
-        p.area.hi := p.above ? cleared + p.h : cleared
-        label.set_y(p.lbl, cleared)
-    cleared
-
-// After adding an obstacle, moves every placed label it overlaps.
-pushPlaced(LBox b) =>
-    int n = layPlaced.size()
-    if n > 0
-        for i = 0 to n - 1
-            LPlaced p = layPlaced.get(i)
-            if p.area.alive and p.area.x1 >= b.x0 and p.area.x0 <= b.x1 and p.area.hi >= b.lo and p.area.lo <= b.hi
-                reclear(p)
-    n
-
-// Where a break label goes: the candle it is centred on and the price of its
-// bottom (above the line) or top (below it). Of the candles near the middle
-// of the line, the one that lets the label sit closest to the line wins.
-placeBreakLabel(int swingBar, int breakBar, float level, bool above, string txt) =>
-    int half = labelHalfBars(txt)
-    float h = labelHeight()
-    float start = above ? level + 3 * layoutPricePx : level - 3 * layoutPricePx
-    int middle = int((swingBar + breakBar) / 2)
-    int x = middle
-    float edge = clearEdge(middle - half, middle + half, start, above, h, -1)
-    for k = 1 to 6
-        for side = 0 to 1
-            int candidate = middle + (side == 0 ? 1 : -1) * k * half
-            if candidate > swingBar and candidate < breakBar
-                float candidateEdge = clearEdge(candidate - half, candidate + half, start, above, h, -1)
-                if math.abs(candidateEdge - level) < math.abs(edge - level)
-                    x := candidate
-                    edge := candidateEdge
-    [x, edge, half, h]
-
-// Draws a break's caption where placeBreakLabel puts it and records it.
-drawBreakLabel(SEvent ev, string txt, color textColor) =>
-    bool above = ev.dir > 0
-    [x, edge, half, h] = placeBreakLabel(ev.swingBar, ev.breakBar, ev.level, above, txt)
-    label lbl = label.new(x, edge, txt, xloc = xloc.bar_index, yloc = yloc.price, color = color.new(color.white, 100), style = above ? label.style_label_down : label.style_label_up, textcolor = textColor, size = labelSize)
-    LBox area = addBox(x - half, x + half, above ? edge : edge - h, above ? edge + h : edge)
-    LPlaced placed = LPlaced.new(lbl, area, above, h, bar_index)
-    layPlaced.push(placed)
-    if layPlaced.size() > 500
-        layPlaced.shift()
-    placed
-
-// Draws a break's line and records it as an obstacle.
-drawBreakLine(SEvent ev, color lineColor) =>
-    line ln = line.new(ev.swingTime, ev.level, ev.breakTime, ev.level, xloc = xloc.bar_time, color = lineColor, style = lineStyle, width = lineWidth)
-    pushPlaced(addBox(ev.swingBar, ev.breakBar, ev.level, ev.level))
-    ln
-
 // Only the newest swing on each side can be superseded, so the chart keeps
-// the label (and layout box) of the newest high and low to delete when that
-// happens. The drawing of the latest CHoCH is kept too: it becomes an LS.
+// the label of the newest high and low to delete when that happens.
+// The drawing of the latest CHoCH, replaced if it becomes an LS.
 var int lastChochSeq = -1
-var LPlaced lastChochPlaced = na
+var label lastChochLabel = na
 var line lastChochLine = na
 var label highSwingLabel = na
-var LBox highSwingBox = na
 var int highSwingId = -1
 var label lowSwingLabel = na
-var LBox lowSwingBox = na
 var int lowSwingId = -1
 
 if barstate.isconfirmed
-    // The candles and MA lines as drawn, for the label layout.
-    layHigh.push(high)
-    layLow.push(low)
-    layLineA.push(htfLineShown ? hMa : na)
-    layLineB.push(mtfLineShown ? mtfMaValue : na)
-    if layHigh.size() > LAYOUT_KEEP
-        layHigh.shift()
-        layLow.shift()
-        layLineA.shift()
-        layLineB.shift()
     chartEngine.step(chartPh, chartPl, high[chartStrength], low[chartStrength], bar_index - chartStrength, time[chartStrength], chartSizeAtr * nz(chartAtr[chartStrength]), close, bar_index, time)
-    // A new candle under a recent label moves it clear.
-    int placedCount = layPlaced.size()
-    if placedCount > 0
-        for i = placedCount - 1 to 0
-            LPlaced p = layPlaced.get(i)
-            if p.made < bar_index - 60
-                break
-            if p.area.alive and p.area.x0 <= bar_index and p.area.x1 >= bar_index
-                reclear(p)
     int droppedCount = chartEngine.dropped.size()
     if droppedCount > 0
         for i = 0 to droppedCount - 1
             SPoint gone = chartEngine.dropped.get(i)
             if gone.side > 0 and gone.id == highSwingId
                 label.delete(highSwingLabel)
-                highSwingBox.alive := false
                 highSwingId := -1
             if gone.side < 0 and gone.id == lowSwingId
                 label.delete(lowSwingLabel)
-                lowSwingBox.alive := false
                 lowSwingId := -1
     int pointCount = chartEngine.newPoints.size()
     if pointCount > 0
         for i = 0 to pointCount - 1
             SPoint p = chartEngine.newPoints.get(i)
             if showSwingPoints and p.kind != 0 and p.pivotBar >= drawFrom
-                string name = swingName(p)
-                label lbl = label.new(p.pivotTime, p.price, name, xloc = xloc.bar_time, yloc = yloc.price, color = color.new(color.white, 100), style = p.side > 0 ? label.style_label_down : label.style_label_up, textcolor = p.side > 0 ? HIGH_LABEL_COLOR : LOW_LABEL_COLOR, size = labelSize)
-                int half = labelHalfBars(name)
-                float h = labelHeight()
-                LBox swingArea = addBox(p.pivotBar - half, p.pivotBar + half, p.side > 0 ? p.price : p.price - h, p.side > 0 ? p.price + h : p.price)
-                pushPlaced(swingArea)
+                label lbl = label.new(p.pivotTime, p.price, swingName(p), xloc = xloc.bar_time, yloc = yloc.price, color = color.new(color.white, 100), style = p.side > 0 ? label.style_label_down : label.style_label_up, textcolor = p.side > 0 ? HIGH_LABEL_COLOR : LOW_LABEL_COLOR, size = labelSize)
                 if p.side > 0
                     highSwingLabel := lbl
-                    highSwingBox := swingArea
                     highSwingId := p.id
                 else
                     lowSwingLabel := lbl
-                    lowSwingBox := swingArea
                     lowSwingId := p.id
-    // An LS replaces the caption and line of the CHoCH it reclassifies, in
-    // place and in its own colour. It is known before this candle's events.
+    // An LS replaces the drawing of the CHoCH it reclassifies and keeps its
+    // place, in its own colour. It is known before this candle's events.
     int lsCount = chartEngine.newLs.size()
     if lsCount > 0
         for i = 0 to lsCount - 1
             SEvent ev = chartEngine.newLs.get(i)
-            color lsColor = ev.dir > 0 ? bullLsColor : bearLsColor
-            bool inWindow = ev.breakBar >= drawFrom and ev.swingTime >= drawFromTime
-            if ev.seq == lastChochSeq and not na(lastChochLine)
-                if showLs
-                    line.set_color(lastChochLine, lsColor)
-                else
-                    line.delete(lastChochLine)
-            else if showLs and inWindow and showLines
-                drawBreakLine(ev, lsColor)
-            bool drawn = ev.seq == lastChochSeq and not na(lastChochPlaced)
-            if drawn and showLs
-                label.set_text(lastChochPlaced.lbl, "LS")
-                label.set_textcolor(lastChochPlaced.lbl, lsColor)
-            else if drawn
-                label.delete(lastChochPlaced.lbl)
-                lastChochPlaced.area.alive := false
-            else if showLs and inWindow
-                drawBreakLabel(ev, "LS", lsColor)
             if ev.seq == lastChochSeq
+                label.delete(lastChochLabel)
+                line.delete(lastChochLine)
                 lastChochSeq := -1
+            if showLs and ev.breakBar >= drawFrom and ev.swingTime >= drawFromTime
+                color lsColor = ev.dir > 0 ? bullLsColor : bearLsColor
+                label.new(ev.breakTime, ev.level, "LS", xloc = xloc.bar_time, yloc = yloc.price, color = color.new(color.white, 100), style = ev.dir > 0 ? label.style_label_up : label.style_label_down, textcolor = lsColor, size = labelSize)
+                if showLines
+                    line.new(ev.swingTime, ev.level, ev.breakTime, ev.level, xloc = xloc.bar_time, color = lsColor, style = lineStyle, width = lineWidth)
     int eventCount = chartEngine.newEvents.size()
     if eventCount > 0
         for i = 0 to eventCount - 1
             SEvent ev = chartEngine.newEvents.get(i)
             bool shown = ev.bos ? showBos : showChoch
-            LPlaced placed = na
+            label lbl = na
             line ln = na
             // A break is drawn only with its broken swing, so every BOS, CHoCH
-            // and LS starts from a marked swing. The line goes first, so the
-            // caption keeps clear of it.
+            // and LS starts from a marked swing.
             if shown and ev.breakBar >= drawFrom and ev.swingTime >= drawFromTime
                 color textColor = ev.dir > 0 ? (ev.bos ? bullBosColor : bullChochColor) : (ev.bos ? bearBosColor : bearChochColor)
+                lbl := label.new(ev.breakTime, ev.level, ev.bos ? "BOS" : "CHoCH", xloc = xloc.bar_time, yloc = yloc.price, color = color.new(color.white, 100), style = ev.dir > 0 ? label.style_label_up : label.style_label_down, textcolor = textColor, size = labelSize)
                 if showLines
-                    ln := drawBreakLine(ev, ev.bos ? color.blue : color.red)
-                placed := drawBreakLabel(ev, ev.bos ? "BOS" : "CHoCH", textColor)
+                    ln := line.new(ev.swingTime, ev.level, ev.breakTime, ev.level, xloc = xloc.bar_time, color = ev.bos ? color.blue : color.red, style = lineStyle, width = lineWidth)
             // Only the latest CHoCH can still become an LS.
             if not ev.bos
                 lastChochSeq := ev.seq
-                lastChochPlaced := placed
+                lastChochLabel := lbl
                 lastChochLine := ln
 
 var line lastHighLine = na
 var line lastLowLine = na
-var LBox lastHighBox = na
-var LBox lastLowBox = na
 if barstate.islast
     line.delete(lastHighLine)
     line.delete(lastLowLine)
     if showSwingPoints and chartEngine.haveHigh
         lastHighLine := line.new(chartEngine.lastHighTime, chartEngine.lastHigh, time, chartEngine.lastHigh, xloc = xloc.bar_time, color = HIGH_LABEL_COLOR, style = line.style_dotted, width = 1)
-        // Labels keep clear of the dotted swing level too.
-        if na(lastHighBox)
-            lastHighBox := addBox(chartEngine.highPt.pivotBar, bar_index, chartEngine.lastHigh, chartEngine.lastHigh)
-        lastHighBox.x0 := chartEngine.highPt.pivotBar
-        lastHighBox.x1 := bar_index
-        lastHighBox.lo := chartEngine.lastHigh
-        lastHighBox.hi := chartEngine.lastHigh
-        pushPlaced(lastHighBox)
     if showSwingPoints and chartEngine.haveLow
         lastLowLine := line.new(chartEngine.lastLowTime, chartEngine.lastLow, time, chartEngine.lastLow, xloc = xloc.bar_time, color = LOW_LABEL_COLOR, style = line.style_dotted, width = 1)
-        if na(lastLowBox)
-            lastLowBox := addBox(chartEngine.lowPt.pivotBar, bar_index, chartEngine.lastLow, chartEngine.lastLow)
-        lastLowBox.x0 := chartEngine.lowPt.pivotBar
-        lastLowBox.x1 := bar_index
-        lastLowBox.lo := chartEngine.lastLow
-        lastLowBox.hi := chartEngine.lastLow
-        pushPlaced(lastLowBox)
 
 plot(useHtfMa and showHtfMaLine ? hMa : na, "HTF MA", color = htfMaColor, linewidth = 2)
 plot(useMtfMa and showMtfMaLine ? mtfMaValue : na, "MTF MA", color = mtfMaColor, linewidth = 2)

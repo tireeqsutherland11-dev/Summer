@@ -276,7 +276,7 @@ Bullish_LS_Color / Bearish_LS_Color (default deep yellow, C'229,184,0')
 
 Label_Size (default BASE_SMALL)
   Font size enumeration: TINY=7, SMALL=9, NORMAL=11, LARGE=14. It affects
-  BOS/CHoCH/LS and swing-point text, and how far captions move to stay clear.
+  BOS/CHoCH and swing-point text.
 
 Show_Structure_Lines (default true)
   Draws a horizontal segment from the broken swing to the candle that closed
@@ -288,37 +288,10 @@ Line_Style (default STYLE_DASH) / Line_Width (default 1)
   Style the BOS/CHoCH segments. Width is clamped at drawing time to 1..4;
   changing either is visual only.
 
-Caption layout (PlaceBreakLabel / ClearEdge)
-  A BOS, CHoCH or LS caption sits at the midpoint of its line, on the side
-  price did not come from: above a line broken upwards, below one broken
-  downwards. It then moves away from the line only as far as it must to clear
-  everything drawn under it:
-    * every candle's high-low range;
-    * the HH/HL/LH/LL labels and the dotted LAST_HIGH/LAST_LOW segments;
-    * every structure line, and every caption placed before it;
-    * the HTF and MTF MA lines, when shown.
-  Candidate spots every half caption-width either side of the midpoint, still
-  over the line, are tried too, and the one that lets the caption sit closest
-  to the line wins, so one tall candle at the midpoint does not push it far
-  away. The gap to any obstacle is 3 pixels.
-  * Sizes come from the chart itself: the pixel width of a candle
-    (CHART_SCALE), the pane height (CHART_HEIGHT_IN_PIXELS), the larger of the
-    drawn and visible price ranges, and the caption's measured text size
-    (TextGetSize), so the layout is right at the current zoom whatever the
-    vertical scroll.
-  * Zooming in or out (a CHART_SCALE change) lays the captions out again
-    without a replay; scrolling keeps them.
-  * While attached, Base turns off the terminal's "Chart on foreground"
-    setting (CHART_FOREGROUND) so its objects are drawn in front of the
-    candles, and restores the setting when it is removed.
-  * The dashboard is a fixed overlay in the top-left corner of the window; a
-    caption scrolled into that corner can sit under its text.
-
 Result
-  HL/LL labels are teal below the swing low; HH/LH labels are red above the
-  swing high. On 32 generated charts (H4, H1 and M15, zoom levels 0 to 5, with
-  and without MA lines), no caption overlapped a candle, a swing label, a
-  line, an MA line or another caption. Object IDs include event type,
+  Signal text sits on the broken level at the breaking candle: below bullish
+  breaks and above bearish breaks. HL/LL labels are teal below the swing low;
+  HH/LH labels are red above the swing high. Object IDs include event type,
   direction, and candle time to avoid duplicates within a rebuild.
 
 
@@ -380,7 +353,7 @@ Show_MTF_MA_Line (default false) / MTF_MA_Color (default orange)
 Result
   The HTF and MTF MA sides contribute to the bull/bear BOS and CHoCH filter
   results shown in the Market Tradability tooltip. They do not change
-  detection, drawing or alerts. Labels keep clear of both MA lines.
+  detection, drawing or alerts.
 
 
 6. SESSION QUALIFICATION SYSTEM

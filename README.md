@@ -334,26 +334,6 @@ label of the swing that is broken decides the event.
   It also applies before the first structure break of the replay. An LS is
   not a break: it counts in neither condition.
 
-## Chart labels
-
-Each BOS, CHoCH and LS caption sits at the middle of its line, on the side
-price did not come from: above a line broken upwards, below one broken
-downwards. It then moves away from the line only as far as it must to clear
-everything under it: candles, HH/HL/LH/LL labels, structure lines, the dotted
-swing levels, the MA lines and earlier captions. If a tall candle sits at the
-middle, a nearby spot along the line that lets the caption sit closer is used
-instead.
-
-- The layout is measured in screen pixels from the chart's zoom, height and
-  font, with a 3-pixel gap. Zooming in or out lays the captions out again;
-  scrolling does not need to.
-- Base draws its objects in front of the candles. It turns off MT5's **Chart
-  on foreground** setting while attached and restores it when removed.
-- On 32 generated charts (H4, H1 and M15, every zoom level, with and without
-  MA lines), no caption touched a candle, label, line or another caption.
-- The dashboard is fixed in the top-left corner of the window, so a caption
-  scrolled into that corner can sit under its text.
-
 ## Reading the dashboard
 
 The dashboard has no background and no border. Every component name is black
@@ -501,13 +481,6 @@ Differences from the EA:
 - **Timeframes.** Each timeframe is read with `request.security` from its
   latest closed candle, so nothing repaints. Use a chart timeframe at or below
   the lowest of the three structure timeframes.
-- **Chart labels.** Captions follow the same rules as the EA. Pine cannot
-  read the chart's zoom or pane height, so the layout assumes a dense chart:
-  5-pixel candles in a 450-pixel pane, with the font height of the chosen
-  label size. At that zoom or closer, captions keep clear of candles, labels,
-  lines, MA lines and each other. When zoomed further out, neighbouring
-  candles can come closer than that. A candle, swing label or line drawn later
-  under a caption moves it clear.
 - **Sessions.** The session presets use named time zones, so daylight saving
   time is handled:
   - New York `America/New_York`
