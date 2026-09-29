@@ -193,10 +193,34 @@ CHoCH confirmation
   * A swing printed before the breaking close but confirmed after it (for
     example the low of a sharp V-reversal) never cancels a CHoCH.
 
+LS (liquidity sweep): a CHoCH that failed
+  A CHoCH that reversed a trend (the trend before it had a direction) is
+  watched while it is the latest event. For a bullish CHoCH (bearish mirrors
+  it):
+  * Protected low: the swing low the breaking rally started from, the last
+    low before the HH that confirmed the CHoCH.
+  * Old LL: the most recent identified LL when the CHoCH is confirmed (the
+    protected low itself when that low is an LL).
+  * Trigger: a candle closes below the protected low.
+  * Confirmation: the old trend carries on below the old LL, by a close
+    (which is also a bearish BOS on that candle) or by a confirmed swing low,
+    while the CHoCH is still the latest event.
+  * Any other event first ends the watch and the CHoCH stands: a bullish BOS
+    (the CHoCH is confirmed), or a bearish CHoCH (the low after the trigger
+    held above the old LL, which is chop).
+  On confirmation the CHoCH is relabelled LS and drawn in the LS colour in
+  the same place, and the trend before it is restored (Bearish or Bearish
+  Transition), as if the CHoCH had never printed. The LS is checked before
+  the candle's other breaks, so the protected low's break is then a pullback
+  inside the restored trend, and a pending bearish CHoCH attempt ends. An LS
+  is not a break for Consolidation / Undefined (section 9).
+
 Trend
   * Bullish: the latest event is a bullish BOS (breaking HH structure to
     create new HHs). Bullish Transition: the latest event is a bullish
-    CHoCH. Bearish and Bearish Transition mirror this. Consolidation /
+    CHoCH, until the next bullish BOS or until the CHoCH fails as an LS
+    (which restores the previous trend). Bearish and Bearish Transition
+    mirror this. Consolidation /
     Undefined overrides them all when the structure is sporadic or trapped
     (section 9), and before the first event.
   * Because the label decides the event, an HH broken while the trend is
@@ -206,15 +230,21 @@ Trend
     then a close above the HH before that LL. That is "HH broken, creating a
     new HH".
 
-  Checked on 40 synthetic markets x 4,500 H1 candles (7,206 events):
-  - Correct level: every CHoCH breaks an LH/HL, every BOS breaks an HH/LL,
-    and every BOS creates a new HH/LL.
+  Checked on 40 synthetic markets x 4,500 H1 candles at the default
+  sensitivity (6,290 events):
+  - Correct level: every CHoCH breaks an identified LH/HL and every BOS an
+    identified HH/LL that stays marked, and every BOS creates a new HH/LL.
   - Correct sequence and direction: every CHoCH is followed by an HH (LL),
     and no CHoCH points in the trend's existing direction.
-  - Nothing missed: none of the 2,315 LH->HH / HL->LL sequences with a
-    qualifying break is without its CHoCH.
+  - Nothing missed: none of the 1,809 LH->HH / HL->LL sequences with a
+    qualifying break is without its CHoCH, and no watched CHoCH that met the
+    LS conditions stayed a CHoCH. 479 of 2,230 watched CHoCHs (21%) became
+    LS, each following every LS rule.
   - No repainting: every event is a close beyond its level, and no drawn
-    label or event changes when newer candles arrive.
+    label or event changes when newer candles arrive, other than a CHoCH
+    being relabelled LS when its failure is confirmed.
+  - With LS, Consolidation / Undefined fell from 13.0% to 2.9% of sampled
+    candles; failed CHoCHs no longer count as flips or trap CHoCHs.
 
 Outputs
   Structure_Timeframe events set dashboard market trend, participate in
@@ -229,15 +259,18 @@ Outputs
 3. BOS, CHoCH, LABEL, AND LINE DISPLAY SYSTEM
 ---------------------------------------------
 
-Show_BOS_Labels / Show_CHoCH_Labels (defaults true)
+Show_BOS_Labels / Show_CHoCH_Labels / Show_LS_Labels (defaults true)
   Control drawing of the corresponding signal. Turning one off suppresses both
   its text and its structure segment. It does not suppress event
   classification, market trend, tradeability, or alerts.
 
 Bullish_BOS_Color / Bearish_BOS_Color (default blue)
 Bullish_CHoCH_Color / Bearish_CHoCH_Color (default red)
+Bullish_LS_Color / Bearish_LS_Color (default deep yellow, C'229,184,0')
   Set label color for each direction/type; visual effect only. Structure line
-  colors remain blue for BOS and red for CHoCH.
+  colors remain blue for BOS and red for CHoCH; an LS line uses the LS color.
+  An LS follows the same drawing rules as a BOS or CHoCH: it replaces the
+  failed CHoCH's label and line in the same place.
 
 Label_Size (default BASE_SMALL)
   Font size enumeration: TINY=7, SMALL=9, NORMAL=11, LARGE=14. It affects
@@ -566,7 +599,9 @@ Eligibility and deduplication
   only for events that became known on the most recently closed structure
   candle. A CHoCH is alerted when it is confirmed. When a second break
   confirms a CHoCH, both events arrive on the same candle and are sent as one
-  message ("CHoCH bullish + BOS bullish"). A static last-alert time prevents a
+  message ("CHoCH bullish + BOS bullish"). An LS alerts when it is confirmed,
+  before the old trend's BOS on the same candle ("LS (bullish CHoCH failed) +
+  BOS bearish"). A static last-alert time prevents a
   second alert for the same or an older candle. Display toggles and the
   qualification filters do not gate alerts.
 

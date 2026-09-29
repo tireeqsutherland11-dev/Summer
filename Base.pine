@@ -1,5 +1,5 @@
 //@version=6
-// Base - Market Structure (TradingView port of Base.mq5 v2.32)
+// Base - Market Structure (TradingView port of Base.mq5 v2.33)
 //
 // Reads market structure from closed candles only:
 //  * HH/HL/LH/LL swings from two sets of the same two filters (swing strength
@@ -13,6 +13,10 @@
 //  * CHoCH: while the trend is not already bullish, the most recent identified
 //    LH is broken by a close and the next swing high is an HH (bearish mirrors
 //    this).
+//  * LS (liquidity sweep): a CHoCH that reversed a trend fails when, before
+//    anything else prints, a close breaks its protected swing and the old
+//    trend carries on beyond its extreme. The CHoCH is relabelled LS (deep
+//    yellow) and the trend before it is restored.
 //  * Trend: Bullish / Bearish after a BOS, Bullish / Bearish Transition after
 //    a CHoCH, Consolidation / Undefined when the structure is sporadic or
 //    trapped.
@@ -50,6 +54,11 @@ grpChoch = "CHoCH Display"
 showChoch = input.bool(true, "Show CHoCH Labels", group = grpChoch)
 bullChochColor = input.color(color.red, "Bullish CHoCH Color", group = grpChoch)
 bearChochColor = input.color(color.red, "Bearish CHoCH Color", group = grpChoch)
+
+grpLs = "LS Display"
+showLs = input.bool(true, "Show LS Labels", group = grpLs)
+bullLsColor = input.color(#E5B800, "Bullish LS Color (a failed bullish CHoCH)", group = grpLs)
+bearLsColor = input.color(#E5B800, "Bearish LS Color (a failed bearish CHoCH)", group = grpLs)
 
 grpLines = "Labels and Lines"
 labelSizeInput = input.string("Small", "Label Size", options = ["Tiny", "Small", "Normal", "Large"], group = grpLines)
@@ -94,7 +103,7 @@ useMomOpt = input.bool(false, "Use Price Momentum For Optimal", group = grpOpt)
 
 grpDash = "Dashboard and Alerts"
 dashPositionInput = input.string("Top Right", "Dashboard Position", options = ["Top Left", "Top Right", "Bottom Left", "Bottom Right"], group = grpDash)
-enableAlerts = input.bool(false, "Alert On Structure-Timeframe BOS / CHoCH", group = grpDash)
+enableAlerts = input.bool(false, "Alert On Structure-Timeframe BOS / CHoCH / LS", group = grpDash)
 
 // ------------------------------------------------------ internal tuning
 // Kept out of the inputs, as in Base.mq5.
@@ -175,6 +184,9 @@ type SEvent
     bool bos
     int swingTime
     float level
+    int seq = 0
+    bool ls = false
+    int lsBar = -1
 
 type SLevel
     bool active = false
@@ -221,9 +233,21 @@ type SEngine
     int consolidation = 0
     int labelsFromIdx = -1
     int trapFromIdx = -1
+    // LS watch on the latest CHoCH (see lsClose).
+    SEvent lsEvent
+    int lsSeq = -1
+    int lsDir = 0
+    float lsOrigin = na
+    float lsExtreme = na
+    int lsPriorDir = 0
+    bool lsPriorBos = false
+    bool lsTriggered = false
+    bool lsBeyond = false
+    int lsTotal = 0
+    array<SEvent> newLs
 
 newEngine() =>
-    SEngine.new(points = array.new<SPoint>(), events = array.new<SEvent>(), trapChochs = array.new<SEvent>(), newPoints = array.new<SPoint>(), dropped = array.new<SPoint>(), newEvents = array.new<SEvent>(), hh = SLevel.new(), lh = SLevel.new(), ll = SLevel.new(), hl = SLevel.new())
+    SEngine.new(points = array.new<SPoint>(), events = array.new<SEvent>(), trapChochs = array.new<SEvent>(), newPoints = array.new<SPoint>(), dropped = array.new<SPoint>(), newEvents = array.new<SEvent>(), hh = SLevel.new(), lh = SLevel.new(), ll = SLevel.new(), hl = SLevel.new(), newLs = array.new<SEvent>())
 
 method setLevel(SLevel lv, SPoint p) =>
     lv.active := true
@@ -271,12 +295,10 @@ method addPoint(SEngine e, int pivotBar, int pivotTime, float price, int side, i
 
 // A BOS that follows an event in the same direction confirms that direction
 // and ends any CHoCH trap; every other CHoCH joins the trap window.
+// e.dir is the direction of the latest event that is not an LS.
 method addEvent(SEngine e, int bar, int breakBar, int breakTime, int dir, bool bos, int swingTime, float level) =>
-    SEvent ev = SEvent.new(bar, breakBar, breakTime, dir, bos, swingTime, level)
-    int n = e.events.size()
-    int prevDir = 0
-    if n > 0
-        prevDir := e.events.get(n - 1).dir
+    SEvent ev = SEvent.new(bar, breakBar, breakTime, dir, bos, swingTime, level, e.eventTotal)
+    int prevDir = e.dir
     e.events.push(ev)
     if e.events.size() > MAX_EVENTS
         e.events.shift()
@@ -329,8 +351,79 @@ method chochComplete(SEngine e) =>
                 done := opp.id < ext.id or opp.kind < 0
     done
 
+// A CHoCH that reversed a trend is watched while it is the latest event: if
+// the old trend carries on instead, it was a liquidity sweep (LS).
+//  * Protected swing (origin): the swing the breaking move started from, the
+//    last low before the HH of a bullish CHoCH (the last high before the LL
+//    of a bearish one).
+//  * Extreme: the old trend's most recent identified LL (bullish CHoCH) or
+//    HH (bearish CHoCH).
+//  * Trigger: a close through the protected swing.
+//  * Confirmation: the old trend carries on beyond its extreme, by a close
+//    (which is also the old trend's BOS) or by a swing, before anything else
+//    prints. A BOS in the CHoCH's direction or an opposite CHoCH ends the
+//    watch, and the CHoCH stands.
 method confirmChoch(SEngine e, int bar) =>
-    e.addEvent(bar, e.chochBreakBar, e.chochBreakTime, e.chochDir, false, e.chochLevelTime, e.chochLevel)
+    int priorDir = e.dir
+    bool priorBos = e.lastBos
+    int direction = e.chochDir
+    e.addEvent(bar, e.chochBreakBar, e.chochBreakTime, direction, false, e.chochLevelTime, e.chochLevel)
+    e.chochDir := 0
+    e.lsSeq := -1
+    SPoint origin = direction > 0 ? e.lowPt : e.highPt
+    SLevel extreme = direction > 0 ? e.ll : e.hh
+    if priorDir != 0 and not na(origin) and not na(extreme.swingTime)
+        e.lsEvent := e.events.last()
+        e.lsSeq := e.lsEvent.seq
+        e.lsDir := direction
+        e.lsOrigin := origin.price
+        e.lsExtreme := extreme.price
+        e.lsPriorDir := priorDir
+        e.lsPriorBos := priorBos
+        e.lsTriggered := false
+        e.lsBeyond := false
+    e.lsSeq
+
+method lsWatching(SEngine e) =>
+    e.lsSeq >= 0 and e.lsSeq == e.eventTotal - 1
+
+// A swing on the old trend's side (side -1 low, 1 high) while watching:
+// beyond the extreme it shows the old trend carrying on. True when that
+// confirms the LS.
+method lsSwing(SEngine e, int side, float price) =>
+    bool confirm = false
+    if e.lsWatching() and e.lsDir == -side
+        if side < 0 ? price < e.lsExtreme : price > e.lsExtreme
+            e.lsBeyond := true
+        confirm := e.lsTriggered and e.lsBeyond
+    confirm
+
+// A close while watching. True when it confirms the LS.
+method lsClose(SEngine e, float c) =>
+    bool confirm = false
+    if e.lsWatching()
+        bool bullish = e.lsDir > 0
+        if bullish ? c < e.lsOrigin : c > e.lsOrigin
+            e.lsTriggered := true
+        confirm := e.lsTriggered and (e.lsBeyond or (bullish ? c < e.lsExtreme : c > e.lsExtreme))
+    confirm
+
+// The CHoCH was a liquidity sweep: it is relabelled LS and the trend it
+// changed is restored, as if it had never printed. It also leaves the CHoCH
+// trap, and any CHoCH attempt still pending ends.
+method confirmLs(SEngine e, int bar) =>
+    SEvent ev = e.lsEvent
+    ev.ls := true
+    ev.lsBar := bar
+    e.dir := e.lsPriorDir
+    e.lastBos := e.lsPriorBos
+    int t = e.trapChochs.size()
+    if t > 0
+        if e.trapChochs.get(t - 1).seq == ev.seq
+            e.trapChochs.pop()
+    e.newLs.push(ev)
+    e.lsTotal += 1
+    e.lsSeq := -1
     e.chochDir := 0
 
 // A pivot high is accepted if it extends the current high leg, or starts a
@@ -367,8 +460,12 @@ method onPivotHigh(SEngine e, float v, int pivotBar, int pivotTime, float minSiz
         e.highPt := p
         e.lastHighKind := kind
         e.lastHighTime := pivotTime
+        // An HH beyond the old uptrend's extreme after a failed bearish CHoCH
+        // confirms the LS; a pending CHoCH attempt ends with it.
+        if e.lsSwing(1, v)
+            e.confirmLs(curBar)
         // Only swings formed after the breaking close can cancel a CHoCH.
-        if e.chochDir > 0 and kind < 0 and pivotBar > e.chochBreakBar
+        else if e.chochDir > 0 and kind < 0 and pivotBar > e.chochBreakBar
             e.cancelChoch()
         else if e.chochDir < 0 and kind > 0 and pivotBar > e.chochBreakBar
             e.cancelChoch()
@@ -405,7 +502,9 @@ method onPivotLow(SEngine e, float v, int pivotBar, int pivotTime, float minSize
         e.lowPt := p
         e.lastLowKind := kind
         e.lastLowTime := pivotTime
-        if e.chochDir < 0 and kind < 0 and pivotBar > e.chochBreakBar
+        if e.lsSwing(-1, v)
+            e.confirmLs(curBar)
+        else if e.chochDir < 0 and kind < 0 and pivotBar > e.chochBreakBar
             e.cancelChoch()
         else if e.chochDir > 0 and kind > 0 and pivotBar > e.chochBreakBar
             e.cancelChoch()
@@ -420,6 +519,11 @@ method onPivotLow(SEngine e, float v, int pivotBar, int pivotTime, float minSize
 //  * The most recent identified HH broken is a bullish BOS. Bearish mirrors
 //    both.
 method onClose(SEngine e, float c, int curBar, int curTime) =>
+    // LS first: the restored trend then decides the breaks below, so the
+    // protected swing's break is a pullback and a close beyond the old extreme
+    // is that trend's BOS.
+    if e.lsClose(c)
+        e.confirmLs(curBar)
     if e.lh.active and c > e.lh.price
         e.lh.active := false
         if e.dir <= 0 and e.chochDir <= 0
@@ -452,6 +556,7 @@ method step(SEngine e, bool isPh, bool isPl, float phV, float plV, int pivotBar,
     e.newPoints.clear()
     e.dropped.clear()
     e.newEvents.clear()
+    e.newLs.clear()
     if isPh
         e.onPivotHigh(phV, pivotBar, pivotTime, minSize, curBar)
     if isPl
@@ -484,6 +589,9 @@ method classify(SEngine e, float atrNow) =>
                 SEvent ev = e.events.get(i)
                 if ev.breakBar < fromBar
                     break
+                // An LS is not a break: it never flips the structure.
+                if ev.ls
+                    continue
                 if prevDir != 0 and ev.dir != prevDir
                     flips += 1
                 prevDir := ev.dir
@@ -528,15 +636,17 @@ method summary(SEngine e) =>
     int m = e.events.size()
     if e.consolidation % 2 == 1 and m > 0 and e.labelsFromIdx >= 0
         int fromBar = e.points.get(e.labelsFromIdx).pivotBar
-        int startIdx = m
+        array<int> breaks = array.new<int>()
         for i = m - 1 to 0
-            if e.events.get(i).breakBar < fromBar
+            SEvent ev = e.events.get(i)
+            if ev.breakBar < fromBar
                 break
-            startIdx := i
-        breaksCount := m - startIdx
+            if not ev.ls
+                breaks.unshift(i)
+        breaksCount := breaks.size()
         if breaksCount > 0
-            for i = math.max(startIdx, m - 9) to m - 1
-                breaksCode := breaksCode * 10 + eventDigit(e.events.get(i))
+            for j = math.max(0, breaksCount - 9) to breaksCount - 1
+                breaksCode := breaksCode * 10 + eventDigit(e.events.get(breaks.get(j)))
     int trapCode = 0
     int trapCount = 0
     float trap1 = na
@@ -562,10 +672,19 @@ method summary(SEngine e) =>
     int latestCode = 0
     float latestLevel = na
     if m > 0
-        SEvent last = e.events.get(m - 1)
-        latestCode := eventDigit(last)
-        latestLevel := last.level
+        for i = m - 1 to 0
+            SEvent ev = e.events.get(i)
+            if not ev.ls
+                latestCode := eventDigit(ev)
+                latestLevel := ev.level
+                break
+    // New on this candle: an LS first (5 a failed bullish CHoCH, 6 a failed
+    // bearish one), then the events.
     int newCode = 0
+    int lsFresh = e.newLs.size()
+    if lsFresh > 0
+        for i = 0 to lsFresh - 1
+            newCode := newCode * 10 + (e.newLs.get(i).dir > 0 ? 5 : 6)
     int fresh = e.newEvents.size()
     if fresh > 0
         for i = 0 to math.min(fresh, 3) - 1
@@ -620,7 +739,7 @@ structureRequest(int strength, float sizeAtr) =>
     e.classify(atrS)
     [labelsCode, rangeLo, rangeHi, breaksCode, breaksCount, trapCode, trapCount, trap1, trap2, trap3, trap4, latestCode, latestLevel, newCode, hhV, lhV, llV, hlV] = e.summary()
     // Flags cross request.security as 0/1 so a missing value is simply 0.
-    [e.dir, e.lastBos ? 1 : 0, e.consolidation, labelsCode, rangeLo, rangeHi, breaksCode, breaksCount, trapCode, trapCount, trap1, trap2, trap3, trap4, latestCode, latestLevel, newCode, hhV, lhV, llV, hlV, e.eventTotal, e.lastHigh, e.lastHighKind, e.haveHigh ? 1 : 0, e.lastLow, e.lastLowKind, e.haveLow ? 1 : 0]
+    [e.dir, e.lastBos ? 1 : 0, e.consolidation, labelsCode, rangeLo, rangeHi, breaksCode, breaksCount, trapCode, trapCount, trap1, trap2, trap3, trap4, latestCode, latestLevel, newCode, hhV, lhV, llV, hlV, e.eventTotal + e.lsTotal, e.lastHigh, e.lastHighKind, e.haveHigh ? 1 : 0, e.lastLow, e.lastLowKind, e.haveLow ? 1 : 0]
 
 validSession(string s) =>
     bool ok = str.length(s) == 9 and str.match(s, "^[0-9]{4}-[0-9]{4}$") != ""
@@ -729,6 +848,10 @@ swingName(SPoint p) =>
 
 // Only the newest swing on each side can be superseded, so the chart keeps
 // the label of the newest high and low to delete when that happens.
+// The drawing of the latest CHoCH, replaced if it becomes an LS.
+var int lastChochSeq = -1
+var label lastChochLabel = na
+var line lastChochLine = na
 var label highSwingLabel = na
 var int highSwingId = -1
 var label lowSwingLabel = na
@@ -758,18 +881,40 @@ if barstate.isconfirmed
                 else
                     lowSwingLabel := lbl
                     lowSwingId := p.id
+    // An LS replaces the drawing of the CHoCH it reclassifies and keeps its
+    // place, in its own colour. It is known before this candle's events.
+    int lsCount = chartEngine.newLs.size()
+    if lsCount > 0
+        for i = 0 to lsCount - 1
+            SEvent ev = chartEngine.newLs.get(i)
+            if ev.seq == lastChochSeq
+                label.delete(lastChochLabel)
+                line.delete(lastChochLine)
+                lastChochSeq := -1
+            if showLs and ev.breakBar >= drawFrom and ev.swingTime >= drawFromTime
+                color lsColor = ev.dir > 0 ? bullLsColor : bearLsColor
+                label.new(ev.breakTime, ev.level, "LS", xloc = xloc.bar_time, yloc = yloc.price, color = color.new(color.white, 100), style = ev.dir > 0 ? label.style_label_up : label.style_label_down, textcolor = lsColor, size = labelSize)
+                if showLines
+                    line.new(ev.swingTime, ev.level, ev.breakTime, ev.level, xloc = xloc.bar_time, color = lsColor, style = lineStyle, width = lineWidth)
     int eventCount = chartEngine.newEvents.size()
     if eventCount > 0
         for i = 0 to eventCount - 1
             SEvent ev = chartEngine.newEvents.get(i)
             bool shown = ev.bos ? showBos : showChoch
-            // A break is drawn only with its broken swing, so every BOS and
-            // CHoCH starts from a marked swing.
+            label lbl = na
+            line ln = na
+            // A break is drawn only with its broken swing, so every BOS, CHoCH
+            // and LS starts from a marked swing.
             if shown and ev.breakBar >= drawFrom and ev.swingTime >= drawFromTime
                 color textColor = ev.dir > 0 ? (ev.bos ? bullBosColor : bullChochColor) : (ev.bos ? bearBosColor : bearChochColor)
-                label.new(ev.breakTime, ev.level, ev.bos ? "BOS" : "CHoCH", xloc = xloc.bar_time, yloc = yloc.price, color = color.new(color.white, 100), style = ev.dir > 0 ? label.style_label_up : label.style_label_down, textcolor = textColor, size = labelSize)
+                lbl := label.new(ev.breakTime, ev.level, ev.bos ? "BOS" : "CHoCH", xloc = xloc.bar_time, yloc = yloc.price, color = color.new(color.white, 100), style = ev.dir > 0 ? label.style_label_up : label.style_label_down, textcolor = textColor, size = labelSize)
                 if showLines
-                    line.new(ev.swingTime, ev.level, ev.breakTime, ev.level, xloc = xloc.bar_time, color = ev.bos ? color.blue : color.red, style = lineStyle, width = lineWidth)
+                    ln := line.new(ev.swingTime, ev.level, ev.breakTime, ev.level, xloc = xloc.bar_time, color = ev.bos ? color.blue : color.red, style = lineStyle, width = lineWidth)
+            // Only the latest CHoCH can still become an LS.
+            if not ev.bos
+                lastChochSeq := ev.seq
+                lastChochLabel := lbl
+                lastChochLine := ln
 
 var line lastHighLine = na
 var line lastLowLine = na
@@ -1122,7 +1267,7 @@ eventsText(int code) =>
     if digits.size() > 0
         for i = 0 to digits.size() - 1
             int d = digits.get(i)
-            string one = (d == 1 or d == 2 ? "BOS " : "CHoCH ") + (d == 1 or d == 3 ? "bullish" : "bearish")
+            string one = d == 5 ? "LS (bullish CHoCH failed)" : d == 6 ? "LS (bearish CHoCH failed)" : (d == 1 or d == 2 ? "BOS " : "CHoCH ") + (d == 1 or d == 3 ? "bullish" : "bearish")
             s := s + (s == "" ? "" : " + ") + one
     s
 
@@ -1133,9 +1278,13 @@ bool newBullBos = newStructure and str.contains(newCodeText, "1")
 bool newBearBos = newStructure and str.contains(newCodeText, "2")
 bool newBullChoch = newStructure and str.contains(newCodeText, "3")
 bool newBearChoch = newStructure and str.contains(newCodeText, "4")
+bool newBullLs = newStructure and str.contains(newCodeText, "5")
+bool newBearLs = newStructure and str.contains(newCodeText, "6")
 if enableAlerts and newStructure
     alert(syminfo.ticker + " " + tfName(htfTf) + " " + eventsText(newCode), alert.freq_once_per_bar)
 alertcondition(newBullBos, "Structure TF bullish BOS", "{{ticker}}: bullish BOS on the structure timeframe")
 alertcondition(newBearBos, "Structure TF bearish BOS", "{{ticker}}: bearish BOS on the structure timeframe")
 alertcondition(newBullChoch, "Structure TF bullish CHoCH", "{{ticker}}: bullish CHoCH on the structure timeframe")
 alertcondition(newBearChoch, "Structure TF bearish CHoCH", "{{ticker}}: bearish CHoCH on the structure timeframe")
+alertcondition(newBullLs, "Structure TF LS (bullish CHoCH failed)", "{{ticker}}: a bullish CHoCH failed (LS) on the structure timeframe")
+alertcondition(newBearLs, "Structure TF LS (bearish CHoCH failed)", "{{ticker}}: a bearish CHoCH failed (LS) on the structure timeframe")

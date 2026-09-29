@@ -286,11 +286,32 @@ label of the swing that is broken decides the event.
     - a BOS in the old direction happens before the HH (LL) is confirmed.
 
     A swing printed before the breaking close never cancels it.
+- **LS (liquidity sweep): a CHoCH that failed.** A CHoCH that reversed a
+  trend becomes an LS when the old trend carries on instead. For a bullish
+  CHoCH (bearish mirrors it):
+  - **Protected low:** the swing low the breaking rally started from (the
+    last low before the HH that confirmed the CHoCH).
+  - **Old LL:** the most recent identified LL before the CHoCH. It is the
+    protected low itself when that low is an LL.
+  - **Trigger:** a candle closes below the protected low.
+  - **Confirmation:** the old trend carries on below the old LL, by a close
+    (which is also a bearish BOS) or by a swing low. This must happen while
+    the CHoCH is still the latest event.
+  - **The CHoCH stands** when a bullish BOS or a bearish CHoCH prints first.
+    If the low after the trigger holds above the old LL, it is an ordinary
+    bearish CHoCH (chop), not an LS.
+
+  When it is confirmed, the CHoCH label and line become **LS** in deep yellow,
+  in the same place, and the trend returns to what it was before the CHoCH
+  (usually Bearish), as if the CHoCH had never printed. The break of the
+  protected low is then a pullback inside that trend, so no bearish CHoCH
+  prints for it.
 - **Pullbacks inside a trend.** A broken LH while the trend is already bullish
   (or a broken HL while it is bearish) prints nothing.
 - **Trend.** Bullish after a bullish BOS: the market is breaking HH
   structure to create new HHs. Bullish Transition after a bullish CHoCH,
-  until the next bullish BOS. Bearish and Bearish Transition mirror this.
+  until the next bullish BOS, or until the CHoCH fails as an LS, which
+  restores the previous trend. Bearish and Bearish Transition mirror this.
   Because the label decides the event, an HH broken while the trend is bearish
   (or an LL broken while it is bullish) is a BOS and turns the trend straight
   round. This happens when no LH (HL) formed after the last event. For
@@ -310,7 +331,8 @@ label of the swing that is broken decides the event.
      latest is within 4 ATR of an earlier one (the same price area). A BoS
      that confirms the latest CHoCH ends the trap.
 
-  It also applies before the first structure break of the replay.
+  It also applies before the first structure break of the replay. An LS is
+  not a break: it counts in neither condition.
 
 ## Reading the dashboard
 
@@ -368,10 +390,13 @@ The black text is made for a light chart background.
     0 to 3 LTF ATR.
   - Price Momentum compares the latest LTF true range with its 20-candle
     average (0.5x to 2x).
-- BOS/CHoCH alerts describe confirmed structure events on the latest closed
-  structure candle and are intentionally independent of the qualification
-  filters. A CHoCH confirmed by a second break alerts as
-  `CHoCH bullish + BOS bullish` (or bearish).
+- BOS/CHoCH/LS alerts describe confirmed structure events on the latest
+  closed structure candle and are intentionally independent of the
+  qualification filters.
+  - A CHoCH confirmed by a second break alerts as `CHoCH bullish + BOS bullish`
+    (or bearish).
+  - An LS alerts as `LS (bullish CHoCH failed)`, or together with the old
+    trend's BOS as `LS (bullish CHoCH failed) + BOS bearish` (or the mirror).
 
 ## Configuration notes
 
@@ -452,11 +477,11 @@ Differences from the EA:
   `Dashboard Position` chooses its corner.
 - **Alerts.**
   - One input replaces the EA's popup and push inputs. Enable
-    `Alert On Structure-Timeframe BOS / CHoCH`, then create an alert with
+    `Alert On Structure-Timeframe BOS / CHoCH / LS`, then create an alert with
     **Any alert() function call**. The message matches the EA, for example
     `EURUSD H4 CHoCH bullish + BOS bullish`.
-  - There are also four alert conditions: bullish and bearish BOS, and bullish
-    and bearish CHoCH.
+  - There are also six alert conditions: bullish and bearish BOS, bullish and
+    bearish CHoCH, and LS of a bullish or bearish CHoCH.
 - **Indicators.**
   - ADX is TradingView's Wilder ADX (`ta.dmi`), so its values can differ
     slightly from MT5's `iADX`.
