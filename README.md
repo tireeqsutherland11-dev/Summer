@@ -221,14 +221,18 @@ label of the swing that is broken decides the event.
   Swing lows mirror this. Swings alternate high, low, high, low: several
   highs confirmed before the next low are one leg, and only its highest high
   is kept (likewise the lowest low).
-- **Swing Sensitivity (0-100).** Base keeps two sets of these filters.
+- **Swing Sensitivity (0-100), one per timeframe.** Base keeps two sets of
+  these filters.
 
   | Set | Strength | Size | Finds |
   |---|---|---|---|
   | Sensitive | 2 candles | 1.0 ATR | quick, detailed swings |
   | Smooth | 4 candles | 3.0 ATR | only major swings |
 
-  The input blends the two sets:
+  `HTF_Swing_Sensitivity`, `MTF_Swing_Sensitivity` and
+  `LTF_Swing_Sensitivity` (default 50 each) blend the two sets for their
+  timeframe. The chart's own labels use the sensitivity of the timeframe the
+  chart is on, or the HTF sensitivity on any other chart period.
 
   | Value | Strength | Size | Meaning |
   |---|---|---|---|
@@ -264,12 +268,12 @@ label of the swing that is broken decides the event.
 - **BOS (bullish):** the most recent identified HH is broken, creating a new
   HH. **BOS (bearish):** the most recent identified LL is broken, creating a
   new LL.
-- **CHoCH (becoming bullish):** while the bias is not already bullish, the
+- **CHoCH (becoming bullish):** while the trend is not already bullish, the
   most recent identified LH is broken, subsequently forming an HH.
-  **CHoCH (becoming bearish):** while the bias is not already bearish, the
+  **CHoCH (becoming bearish):** while the trend is not already bearish, the
   most recent identified HL is broken, subsequently forming an LL. No HL
   (LH) is needed.
-  - The CHoCH is drawn on the candle that closed through the LH/HL. The bias
+  - The CHoCH is drawn on the candle that closed through the LH/HL. The trend
     and the alert change when it is confirmed, which happens when the HH (LL)
     swing is confirmed.
   - A wick may make the HH (LL) before a candle closes through the LH (HL).
@@ -282,19 +286,19 @@ label of the swing that is broken decides the event.
     - a BOS in the old direction happens before the HH (LL) is confirmed.
 
     A swing printed before the breaking close never cancels it.
-- **Pullbacks inside a trend.** A broken LH while the bias is already bullish
+- **Pullbacks inside a trend.** A broken LH while the trend is already bullish
   (or a broken HL while it is bearish) prints nothing.
-- **Trend / bias.** Bullish after a bullish BOS: the market is breaking HH
+- **Trend.** Bullish after a bullish BOS: the market is breaking HH
   structure to create new HHs. Bullish Transition after a bullish CHoCH,
   until the next bullish BOS. Bearish and Bearish Transition mirror this.
-  Because the label decides the event, an HH broken while the bias is bearish
-  (or an LL broken while it is bullish) is a BOS and turns the bias straight
+  Because the label decides the event, an HH broken while the trend is bearish
+  (or an LL broken while it is bullish) is a BOS and turns the trend straight
   round. This happens when no LH (HL) formed after the last event. For
   example: an LH broken, then an HH (CHoCH,
   Bullish Transition), then a close below the LL before that HH is "LL
-  broken, creating a new LL". That is a BOS, and the bias returns to Bearish.
+  broken, creating a new LL". That is a BOS, and the trend returns to Bearish.
 
-- **Consolidation / Undefined.** The bias is Consolidation / Undefined, with
+- **Consolidation / Undefined.** The trend is Consolidation / Undefined, with
   no direction, when either condition holds:
   1. **Sporadic 5-label sequence.** Look at the BOS/CHoCH breaks since the
      oldest of the last 5 HH/HL/LH/LL labels. It applies when they flip
@@ -310,41 +314,60 @@ label of the swing that is broken decides the event.
 
 ## Reading the dashboard
 
-- **HTF breakdown.** The first four rows describe the HTF (Structure)
-  bias:
-  - **Current Bias Classification:** Bullish, Bearish, Bullish Transition,
-    Bearish Transition, or Consolidation / Undefined.
+The dashboard has no background and no border. Component names are black,
+and the main components are bold. Only the outputs are coloured:
+
+| Output | Green | Red | Grey |
+|---|---|---|---|
+| Market Trend | Bullish, Bullish Transition | Bearish, Bearish Transition | Consolidation / Undefined |
+| Market Tradeability | Tradable | Not Tradable | |
+| Optimal Conditions and each condition | OPTIMAL, PASS | NOT OPTIMAL, BLOCKED | |
+
+The black text is made for a light chart background.
+
+- **HTF / MTF / LTF Market Trend.** One row for each timeframe selected in
+  **Trend Analysis Timeframes**. Each shows Bullish, Bearish, Bullish
+  Transition, Bearish Transition, or Consolidation / Undefined. Hover a row
+  for its breakdown:
+  - **Current Trend Classification:** the trend shown in the row.
   - **Trigger Condition Met:** Sporadic 5-label sequence, Multiple CHoCHs
     without BoS, or clear trending structure.
   - **Structural Evidence:** the last 5 labels, plus the alternating breaks or
     the CHoCHs of the trap. For a clear structure, the latest break.
-  - **Trading Recommendation:**
-    - Consolidation / Undefined: stay on the sidelines, or trade only the
-      range boundaries (the extremes of the last 5 labels), until a valid
-      BoS. The rows give the HH/LL closes that would be one.
-    - Transition: wait for the BoS that confirms it.
-    - Trend: trade with it, and watch the level whose break would start a
-      CHoCH.
-- **Market Bias (MTF / LTF)** shows each enabled timeframe's classification;
-  hover it for the same four-part breakdown. Each bias is replayed
-  independently, and new swings that break nothing never change it.
-- **Tradable** always requires an established Bullish or Bearish HTF bias
-  (latest break a BOS, not Consolidation / Undefined). Every timeframe
-  selected in **Tradeability Timeframes** must have a direction (a
-  Consolidation / Undefined bias has none) and they must agree; the MTF may be
-  transitional, but a selected LTF must itself be established. The reason row
-  names the first failed rule. It is an analytical state, not an instruction
-  to place a trade.
-- Hover **Market Tradeability** to see the entry filters (MA, HTF MA,
-  session, ADX, ATR) for the latest closed structure candle: whether a long or
-  short BOS/CHoCH setup would pass, and each filter's reading.
-- **Optimal Conditions** applies only the requirements enabled in the
-  **Optimal Conditions** input group and prints OPTIMAL when all of them pass.
-  By default it checks timeframe correlation (the Tradable rules above) and
-  relative tick volume. Healthy Extension measures from the latest LTF HL (in
-  a bullish HTF bias) or LH (in a bearish one) to the latest LTF close and
-  passes from 0 to 3 LTF ATR; Price Momentum compares the latest LTF true
-  range with its 20-candle average (0.5x to 2x).
+  - **Trade Recommendations:** that timeframe's recommendation (see below).
+
+  Each trend is replayed independently with its own Swing Sensitivity, and
+  new swings that break nothing never change it.
+- **Market Tradeability.** Tradable always requires an established Bullish or
+  Bearish HTF trend (latest break a BOS, not Consolidation / Undefined).
+  - Every timeframe selected in **Trend Analysis Timeframes** must have a
+    direction (a Consolidation / Undefined trend has none), and they must
+    agree.
+  - The MTF may be transitional, but a selected LTF must itself be
+    established.
+  - It is an analytical state, not an instruction to place a trade.
+  - Hover it to see the entry filters (MA, HTF MA, session, ADX, ATR) for the
+    latest closed structure candle: whether a long or short BOS/CHoCH setup
+    would pass, and each filter's reading.
+- **Tradeability Reason.** Which timeframes correlate, or the first failed
+  rule.
+- **Trade Recommendations.** For the HTF trend:
+  - Consolidation / Undefined: stay on the sidelines, or trade only the range
+    boundaries (the extremes of the last 5 labels), until a valid BoS. It
+    gives the HH/LL closes that would be one.
+  - Transition: wait for the BoS that confirms it.
+  - Trend: trade with it, and watch the level whose break would start a
+    CHoCH.
+- **Optimal Conditions.** OPTIMAL when every requirement enabled in the
+  **Optimal Conditions** input group passes. Below it, each enabled
+  requirement shows PASS or BLOCKED; hover any of these rows for the reason.
+  - By default it checks timeframe correlation (the Tradable rules above) and
+    relative tick volume.
+  - Healthy Extension measures from the latest LTF HL (in a bullish HTF
+    trend) or LH (in a bearish one) to the latest LTF close, and passes from
+    0 to 3 LTF ATR.
+  - Price Momentum compares the latest LTF true range with its 20-candle
+    average (0.5x to 2x).
 - BOS/CHoCH alerts describe confirmed structure events on the latest closed
   structure candle and are intentionally independent of the qualification
   filters. A CHoCH confirmed by a second break alerts as
@@ -355,16 +378,18 @@ label of the swing that is broken decides the event.
 - `Bars_To_Process` is the number of Structure_Timeframe candles drawn. Each
   replay runs over three times that many closed candles so the trend, its
   break levels and the first labels are settled before the first drawn
-  candle. The MTF and LTF biases, and the labels on any other chart period,
+  candle. The MTF and LTF trends, and the labels on any other chart period,
   cover the same elapsed time (100 H1 candles become 400 M15 candles). Start
   with the default 100 and raise it only when more context is needed.
 - The structure, setup, and LTF inputs are all monitored for new bars, so custom
   timeframe orders still refresh correctly.
-- `Use_HTF_For_Tradeability`, `Use_MTF_For_Tradeability`, and
-  `Use_LTF_For_Tradeability` independently control which market biases must
-  correlate. At least one must remain enabled. This supports HTF-only, HTF/MTF,
-  all-three, and other combinations. Disabled timeframe biases are hidden from
-  the dashboard, but the established HTF-bias prerequisite always applies.
+- **Trend Analysis Timeframes:** `Use HTF`, `Use MTF` and `Use LTF`
+  independently choose which Market Trends are shown and must correlate for
+  Market Tradeability.
+  - At least one must remain enabled. This supports HTF-only, HTF/MTF,
+    all-three, and other combinations.
+  - The established HTF trend prerequisite always applies, even when the HTF
+    row is hidden.
 - The four `Use_*_For_Optimal` inputs independently choose which requirements
   determine the Optimal Conditions result. At least one must remain enabled;
   disabled requirements are omitted from both the result and the dashboard.
@@ -388,11 +413,12 @@ outside the EA.
 
 ## Base for TradingView (`Base.pine`)
 
-`Base.pine` is a Pine Script v5 indicator with the same functionality as
+`Base.pine` is a Pine Script v6 indicator with the same functionality as
 `Base.mq5`. It uses the same structure engine: the two swing filter sets and
-Swing Sensitivity blend, HH/HL/LH/LL labels, close-only BOS/CHoCH, bias,
-Consolidation / Undefined, the four-row breakdown, Market Tradeability with
-the entry-filter tooltip, and Optimal Conditions. It has the same inputs,
+per-timeframe Swing Sensitivity blend, HH/HL/LH/LL labels, close-only
+BOS/CHoCH, trend, Consolidation / Undefined, and the same dashboard (Market
+Trends with their breakdowns, Market Tradeability with the entry-filter
+tooltip, the trade recommendation, and Optimal Conditions). It has the same inputs,
 groups and defaults, except for the session and alert inputs described below.
 Like the EA, it only analyses the chart and never places orders.
 
@@ -401,7 +427,7 @@ To install it, open the **Pine Editor** in TradingView, paste the contents of
 
 The engine was checked bar by bar against the EA's engine on generated data.
 The check covered Swing Sensitivity 0, 25, 50, 75 and 100, and both forex and
-gold price scales. The labels, BOS/CHoCH events, bias, Consolidation / Undefined
+gold price scales. The labels, BOS/CHoCH events, trend, Consolidation / Undefined
 flags and break levels were identical.
 
 Differences from the EA:
@@ -422,8 +448,8 @@ Differences from the EA:
 
   A custom session uses `Custom Session Timezone` (for example `UTC`, `GMT+2`
   or `America/New_York`), which replaces the EA's offset inputs.
-- **Dashboard.** The dashboard is a table. `Dashboard Position` chooses its
-  corner.
+- **Dashboard.** The dashboard is a two-column table with the same styling.
+  `Dashboard Position` chooses its corner.
 - **Alerts.**
   - One input replaces the EA's popup and push inputs. Enable
     `Alert On Structure-Timeframe BOS / CHoCH`, then create an alert with

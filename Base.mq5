@@ -1,5 +1,5 @@
 #property copyright "Market Trend Analyser conversion"
-#property version   "2.31"
+#property version   "2.32"
 #property strict
 #property description "BASE: MT5 port of the Market Trend Analyser Pine Script."
 #property description "Signal/visualisation EA only; the source indicator contains no trading rules."
@@ -16,16 +16,18 @@ input ENUM_TIMEFRAMES Structure_Timeframe=PERIOD_H4; // HTF
 input ENUM_TIMEFRAMES Setup_Entry_Timeframe=PERIOD_H1; // MTF
 input ENUM_TIMEFRAMES LTF_Timeframe=PERIOD_M15; //LTF
 
-input group "Tradeability Timeframes"
-input bool Use_HTF_For_Tradeability=true;
-input bool Use_MTF_For_Tradeability=true;
-input bool Use_LTF_For_Tradeability=false;
+input group "Trend Analysis Timeframes"
+input bool Use_HTF=true; // Use HTF
+input bool Use_MTF=true; // Use MTF
+input bool Use_LTF=false; // Use LTF
 
 input group "Structure Processing"
 input int Bars_To_Process=100;
 
 input group "Swing Detection"
-input int Swing_Sensitivity=50; // Swing Sensitivity (0 = Smoothest, 50 = Balanced, 100 = Most Sensitive)
+input int HTF_Swing_Sensitivity=50; // HTF Swing Sensitivity (0 = Smoothest, 50 = Balanced, 100 = Most Sensitive)
+input int MTF_Swing_Sensitivity=50; // MTF Swing Sensitivity (0 = Smoothest, 50 = Balanced, 100 = Most Sensitive)
+input int LTF_Swing_Sensitivity=50; // LTF Swing Sensitivity (0 = Smoothest, 50 = Balanced, 100 = Most Sensitive)
 input bool Show_Swing_Points=true;
 
 input group "BOS Display"
@@ -109,8 +111,8 @@ const double Momentum_Maximum_Ratio=2.00;
 //    swing, in ATR of the swing candle.  It removes small pullbacks (minor
 //    LH/HL swings); a swing beyond the previous high/low always counts.
 // The Sensitive set finds quick, detailed swings; the Smooth set keeps only
-// major ones.  Swing_Sensitivity blends the two: 0 uses the Smooth set, 100
-// the Sensitive set and 50 the exact average of both.
+// major ones.  Each timeframe's Swing Sensitivity blends the two: 0 uses the
+// Smooth set, 100 the Sensitive set and 50 the exact average of both.
 const int SENSITIVE_SWING_STRENGTH=2;
 const double SENSITIVE_SWING_SIZE_ATR=1.0;
 const int SMOOTH_SWING_STRENGTH=4;
@@ -222,16 +224,26 @@ struct BASE_SWING_FILTER
    double size_atr;         // minimum move from the previous opposite swing, in ATR
   };
 
-// The working filters: the Smooth and Sensitive sets blended by
-// Swing_Sensitivity (50 = the average of the two sets).
-BASE_SWING_FILTER SwingFilter()
+// The working filters: the Smooth and Sensitive sets blended by a timeframe's
+// Swing Sensitivity (50 = the average of the two sets).
+BASE_SWING_FILTER SwingFilter(const int sensitivity)
   {
-   double weight=MathMax(0,MathMin(100,Swing_Sensitivity))/100.0;
+   double weight=MathMax(0,MathMin(100,sensitivity))/100.0;
    BASE_SWING_FILTER filter;
    filter.strength=(int)MathRound(SMOOTH_SWING_STRENGTH+
                                   (SENSITIVE_SWING_STRENGTH-SMOOTH_SWING_STRENGTH)*weight);
    filter.size_atr=SMOOTH_SWING_SIZE_ATR+(SENSITIVE_SWING_SIZE_ATR-SMOOTH_SWING_SIZE_ATR)*weight;
    return filter;
+  }
+
+// The chart draws its own timeframe with the sensitivity of the matching
+// HTF, MTF or LTF input; any other chart period uses the HTF sensitivity.
+int ChartSensitivity(const ENUM_TIMEFRAMES timeframe)
+  {
+   if(timeframe==BASETimeframe()) return HTF_Swing_Sensitivity;
+   if(timeframe==SetupTimeframe()) return MTF_Swing_Sensitivity;
+   if(timeframe==LTFTimeframe()) return LTF_Swing_Sensitivity;
+   return HTF_Swing_Sensitivity;
   }
 
 int StructureBars()
@@ -248,7 +260,7 @@ int ChartStructureBars(const ENUM_TIMEFRAMES timeframe)
    int wanted=StructureBars();
    if(structure_seconds>0 && chart_seconds>0)
       wanted=(int)MathCeil((double)StructureBars()*structure_seconds/chart_seconds);
-   return MathMax(2*SwingFilter().strength+2,MathMin(wanted,100000));
+   return MathMax(2*MathMax(SMOOTH_SWING_STRENGTH,SENSITIVE_SWING_STRENGTH)+2,MathMin(wanted,100000));
   }
 
 int ReplayBars(const int displayed)
@@ -698,13 +710,13 @@ bool ReplayStructure(const MqlRates &rates[],const int total,const BASE_SWING_FI
 
 // Replays structure on any timeframe without drawing it.  This keeps the
 // structure, setup and LTF biases independent of each other.
-bool AnalyseStructure(const ENUM_TIMEFRAMES timeframe,const int wanted,
+bool AnalyseStructure(const ENUM_TIMEFRAMES timeframe,const int wanted,const int sensitivity,
                       BASE_STRUCTURE_STATE &state,MqlRates &rates[],
                       BASE_STRUCTURE_POINT &points[],BASE_STRUCTURE_EVENT &events[])
   {
    ArraySetAsSeries(rates,false);
    int total=CopyRates(_Symbol,timeframe,1,wanted,rates);
-   return total>0 && ReplayStructure(rates,total,SwingFilter(),state,points,events);
+   return total>0 && ReplayStructure(rates,total,SwingFilter(sensitivity),state,points,events);
   }
 
 // The bias direction used for trading: none while Consolidation / Undefined.
@@ -832,18 +844,18 @@ string RecommendationText(const BASE_STRUCTURE_STATE &state,const BASE_STRUCTURE
 string BreakdownText(const BASE_STRUCTURE_STATE &state,const BASE_STRUCTURE_POINT &points[],
                      const BASE_STRUCTURE_EVENT &events[])
   {
-   return "Current Bias Classification: "+BiasText(state)+
+   return "Current Trend Classification: "+BiasText(state)+
           "\nTrigger Condition Met: "+TriggerText(state)+
           "\nStructural Evidence: "+EvidenceText(state,points,events)+
-          "\nTrading Recommendation: "+RecommendationText(state,points);
+          "\nTrade Recommendations: "+RecommendationText(state,points);
   }
 
-string TradeabilityTimeframesText()
+string TrendTimeframesText()
   {
    string result="";
-   if(Use_HTF_For_Tradeability) result="HTF";
-   if(Use_MTF_For_Tradeability) result+=(result==""?"":" and ")+"MTF";
-   if(Use_LTF_For_Tradeability) result+=(result==""?"":" and ")+"LTF";
+   if(Use_HTF) result="HTF";
+   if(Use_MTF) result+=(result==""?"":" and ")+"MTF";
+   if(Use_LTF) result+=(result==""?"":" and ")+"LTF";
    return result;
   }
 
@@ -860,32 +872,32 @@ bool EvaluateTradeability(const BASE_STRUCTURE_STATE &htf,const BASE_STRUCTURE_S
    int htf_direction=BiasDirection(htf);
    int mtf_direction=BiasDirection(mtf);
    int ltf_direction=BiasDirection(ltf);
-   bool available=(!Use_HTF_For_Tradeability || htf_direction!=0) &&
-                  (!Use_MTF_For_Tradeability || mtf_direction!=0) &&
-                  (!Use_LTF_For_Tradeability || ltf_direction!=0);
-   bool match=(!Use_HTF_For_Tradeability || !Use_MTF_For_Tradeability ||
+   bool available=(!Use_HTF || htf_direction!=0) &&
+                  (!Use_MTF || mtf_direction!=0) &&
+                  (!Use_LTF || ltf_direction!=0);
+   bool match=(!Use_HTF || !Use_MTF ||
                htf_direction==mtf_direction) &&
-              (!Use_HTF_For_Tradeability || !Use_LTF_For_Tradeability ||
+              (!Use_HTF || !Use_LTF ||
                htf_direction==ltf_direction) &&
-              (!Use_MTF_For_Tradeability || !Use_LTF_For_Tradeability ||
+              (!Use_MTF || !Use_LTF ||
                mtf_direction==ltf_direction);
-   bool tradeable=htf_definite && available && match && (!Use_LTF_For_Tradeability || ltf_definite);
+   bool tradeable=htf_definite && available && match && (!Use_LTF || ltf_definite);
    if(tradeable)
      {
-      int selected=(Use_HTF_For_Tradeability?1:0)+(Use_MTF_For_Tradeability?1:0)+
-                   (Use_LTF_For_Tradeability?1:0);
-      reason=TradeabilityTimeframesText()+(selected>1?" correlate":" is directional")+
+      int selected=(Use_HTF?1:0)+(Use_MTF?1:0)+
+                   (Use_LTF?1:0);
+      reason=TrendTimeframesText()+(selected>1?" correlate":" is directional")+
              "; HTF is confirmed by HH/LL BOS";
-      if(Use_LTF_For_Tradeability) reason+="; LTF is confirmed by BOS";
+      if(Use_LTF) reason+="; LTF is confirmed by BOS";
      }
    else if(htf_direction==0) reason="HTF is Consolidation / Undefined ("+TriggerText(htf)+")";
-   else if(!htf_definite) reason="HTF bias is transitional (CHoCH has no subsequent BOS)";
-   else if(Use_MTF_For_Tradeability && mtf_direction==0)
+   else if(!htf_definite) reason="HTF trend is transitional (CHoCH has no subsequent BOS)";
+   else if(Use_MTF && mtf_direction==0)
       reason="MTF is Consolidation / Undefined ("+TriggerText(mtf)+")";
-   else if(Use_LTF_For_Tradeability && ltf_direction==0)
+   else if(Use_LTF && ltf_direction==0)
       reason="LTF is Consolidation / Undefined ("+TriggerText(ltf)+")";
-   else if(!match) reason=TradeabilityTimeframesText()+" biases conflict";
-   else reason="LTF bias is transitional (CHoCH has no subsequent BOS)";
+   else if(!match) reason=TrendTimeframesText()+" trends conflict";
+   else reason="LTF trend is transitional (CHoCH has no subsequent BOS)";
    return tradeable;
   }
 
@@ -922,8 +934,8 @@ bool EvaluateOptimal(const bool bias_ready,const bool healthy_extension,
      }
    reason="";
    if(Use_Timeframe_Correlation_For_Optimal && !bias_ready)
-      reason=TradeabilityTimeframesText()+
-             " tradeability biases do not meet the selected correlation requirements";
+      reason=TrendTimeframesText()+
+             " trends do not meet the selected correlation requirements";
    if(Use_Healthy_Extension_For_Optimal && !healthy_extension)
       reason+=(reason==""?"":"; ")+"price is overextended or lacks a valid corrective anchor";
    if(Use_Market_Volume_For_Optimal && !good_volume)
@@ -1193,65 +1205,154 @@ void SendBASEAlert(const string signal,const datetime bar_time)
    if(Enable_Push_Notifications) SendNotification(message);
   }
 
-void DrawDashboardLine(const int row,const string value,const string tooltip="")
+// Dashboard styling: component names are black, the main components in bold,
+// and only the outputs are coloured.  Trends are green (Bullish, Bullish
+// Transition), red (Bearish, Bearish Transition) or grey (Consolidation /
+// Undefined); tradeability and conditions are green when they pass and red
+// when they do not.  There is no background or border.
+const int DASHBOARD_FONT_SIZE=10;
+const int DASHBOARD_ROW_HEIGHT=18;
+const int DASHBOARD_INDENT=12;
+const color DASHBOARD_TEXT_COLOR=clrBlack;
+const color DASHBOARD_POSITIVE_COLOR=clrGreen;
+const color DASHBOARD_NEGATIVE_COLOR=clrRed;
+const color DASHBOARD_NEUTRAL_COLOR=clrGray;
+
+struct BASE_DASHBOARD_ROW
   {
-   string name=g_prefix+"DASHBOARD_"+(string)row;
+   string label;            // component name; empty for a spacer row
+   string value;            // output
+   color value_color;
+   string tooltip;
+   bool bold;
+   int indent;
+  };
+
+void AddDashboardRow(BASE_DASHBOARD_ROW &rows[],const string label,const string value,
+                     const color value_color,const string tooltip="",const bool bold=true,
+                     const int indent=0)
+  {
+   int index=ArraySize(rows);
+   ArrayResize(rows,index+1);
+   rows[index].label=label;
+   rows[index].value=value;
+   rows[index].value_color=value_color;
+   rows[index].tooltip=tooltip;
+   rows[index].bold=bold;
+   rows[index].indent=indent;
+  }
+
+string DashboardFont(const bool bold)
+  {
+   return bold?"Arial Bold":"Arial";
+  }
+
+int DashboardTextWidth(const string text,const bool bold)
+  {
+   uint width=0,height=0;
+   // A negative size is in tenths of a point, as OBJPROP_FONTSIZE is drawn.
+   if(!TextSetFont(DashboardFont(bold),-DASHBOARD_FONT_SIZE*10) || !TextGetSize(text,width,height))
+      return StringLen(text)*DASHBOARD_FONT_SIZE;
+   return (int)width;
+  }
+
+void DrawDashboardText(const string name,const int x,const int y,const string text,
+                       const color clr,const bool bold,const string tooltip)
+  {
    if(!ObjectCreate(0,name,OBJ_LABEL,0,0,0)) return;
    ObjectSetInteger(0,name,OBJPROP_CORNER,CORNER_LEFT_UPPER);
    ObjectSetInteger(0,name,OBJPROP_ANCHOR,ANCHOR_LEFT_UPPER);
-   ObjectSetInteger(0,name,OBJPROP_XDISTANCE,10);
-   ObjectSetInteger(0,name,OBJPROP_YDISTANCE,10+row*18);
-   color foreground=(color)ChartGetInteger(0,CHART_COLOR_FOREGROUND);
-   ObjectSetInteger(0,name,OBJPROP_COLOR,foreground);
-   ObjectSetInteger(0,name,OBJPROP_FONTSIZE,10);
+   ObjectSetInteger(0,name,OBJPROP_XDISTANCE,x);
+   ObjectSetInteger(0,name,OBJPROP_YDISTANCE,y);
+   ObjectSetInteger(0,name,OBJPROP_COLOR,clr);
+   ObjectSetInteger(0,name,OBJPROP_FONTSIZE,DASHBOARD_FONT_SIZE);
    ObjectSetInteger(0,name,OBJPROP_SELECTABLE,false);
    ObjectSetInteger(0,name,OBJPROP_HIDDEN,true);
-   ObjectSetString(0,name,OBJPROP_FONT,"Arial Bold");
-   ObjectSetString(0,name,OBJPROP_TEXT,value);
+   ObjectSetString(0,name,OBJPROP_FONT,DashboardFont(bold));
+   ObjectSetString(0,name,OBJPROP_TEXT,text);
    // "\n" suppresses MT5's default tooltip, which would show the object name.
    ObjectSetString(0,name,OBJPROP_TOOLTIP,tooltip==""?"\n":tooltip);
   }
 
-// The HTF bias is shown as the full breakdown; the MTF and LTF biases show
-// their classification with the same breakdown as the row's tooltip.
-void DrawDashboard(const BASE_STRUCTURE_STATE &structure_state,const BASE_STRUCTURE_POINT &points[],
-                   const BASE_STRUCTURE_EVENT &events[],const string setup_bias,
-                   const string setup_breakdown,const string ltf_bias,const string ltf_breakdown,
-                   const bool bias_ready,const bool tradeable,const string tradeability_reason,
-                   const string filter_tooltip,const bool optimal,const bool healthy_extension,
-                   const bool good_volume,const double volume_ratio,
-                   const bool good_momentum,const double momentum_ratio,
-                   const string optimal_reason)
+// Two aligned columns: the component names, then their outputs.
+void DrawDashboardRows(const BASE_DASHBOARD_ROW &rows[])
+  {
+   int count=ArraySize(rows);
+   int column=0;
+   for(int i=0;i<count;i++)
+      if(rows[i].label!="")
+         column=MathMax(column,rows[i].indent+DashboardTextWidth(rows[i].label,rows[i].bold));
+   column+=10+8;
+   for(int i=0;i<count;i++)
+     {
+      if(rows[i].label=="") continue;
+      int y=10+i*DASHBOARD_ROW_HEIGHT;
+      string name=g_prefix+"DASHBOARD_"+(string)i;
+      DrawDashboardText(name,10+rows[i].indent,y,rows[i].label,DASHBOARD_TEXT_COLOR,rows[i].bold,
+                        rows[i].tooltip);
+      DrawDashboardText(name+"_VALUE",column,y,rows[i].value,rows[i].value_color,false,
+                        rows[i].tooltip);
+     }
+  }
+
+color TrendColor(const BASE_STRUCTURE_STATE &state)
+  {
+   int direction=BiasDirection(state);
+   if(direction>0) return DASHBOARD_POSITIVE_COLOR;
+   if(direction<0) return DASHBOARD_NEGATIVE_COLOR;
+   return DASHBOARD_NEUTRAL_COLOR;
+  }
+
+color PassColor(const bool pass)
+  {
+   return pass?DASHBOARD_POSITIVE_COLOR:DASHBOARD_NEGATIVE_COLOR;
+  }
+
+// Each selected timeframe's Market Trend (its breakdown is the tooltip),
+// Market Tradeability (the entry filters are its tooltip), the reason, the
+// HTF trade recommendation, and Optimal Conditions with each selected
+// condition (the reason is the tooltip).
+void DrawDashboard(const BASE_STRUCTURE_STATE &htf,const string htf_breakdown,
+                   const string recommendation,const BASE_STRUCTURE_STATE &mtf,
+                   const string mtf_breakdown,const BASE_STRUCTURE_STATE &ltf,
+                   const string ltf_breakdown,const bool tradeable,
+                   const string tradeability_reason,const string filter_tooltip,
+                   const bool optimal,const string optimal_reason,const bool correlated,
+                   const bool healthy_extension,const bool good_volume,const double volume_ratio,
+                   const bool good_momentum,const double momentum_ratio)
   {
    Comment("");
-   int row=0;
-   string timeframe=TimeframeName(BASETimeframe());
-   DrawDashboardLine(row++,"Current Bias Classification (HTF "+timeframe+"): "+BiasText(structure_state));
-   DrawDashboardLine(row++,"Trigger Condition Met: "+TriggerText(structure_state));
-   DrawDashboardLine(row++,"Structural Evidence: "+EvidenceText(structure_state,points,events));
-   DrawDashboardLine(row++,"Trading Recommendation: "+RecommendationText(structure_state,points));
-   if(Use_MTF_For_Tradeability)
-      DrawDashboardLine(row++,"Market Bias (MTF "+TimeframeName(SetupTimeframe())+"): "+setup_bias,
-                        setup_breakdown);
-   if(Use_LTF_For_Tradeability)
-      DrawDashboardLine(row++,"Market Bias (LTF "+TimeframeName(LTFTimeframe())+"): "+ltf_bias,
-                        ltf_breakdown);
-   DrawDashboardLine(row++,"Market Tradeability: "+(tradeable?"Tradable":"Not Tradable"),
-                     filter_tooltip);
-   DrawDashboardLine(row++,"Tradeability Reason: "+tradeability_reason);
-   row++;
-   DrawDashboardLine(row++,"Optimal Conditions: "+(optimal?"OPTIMAL":"NOT OPTIMAL"));
+   BASE_DASHBOARD_ROW rows[];
+   if(Use_HTF)
+      AddDashboardRow(rows,"HTF Market Trend ("+TimeframeName(BASETimeframe())+"):",BiasText(htf),
+                      TrendColor(htf),htf_breakdown);
+   if(Use_MTF)
+      AddDashboardRow(rows,"MTF Market Trend ("+TimeframeName(SetupTimeframe())+"):",BiasText(mtf),
+                      TrendColor(mtf),mtf_breakdown);
+   if(Use_LTF)
+      AddDashboardRow(rows,"LTF Market Trend ("+TimeframeName(LTFTimeframe())+"):",BiasText(ltf),
+                      TrendColor(ltf),ltf_breakdown);
+   AddDashboardRow(rows,"Market Tradeability:",tradeable?"Tradable":"Not Tradable",
+                   PassColor(tradeable),filter_tooltip);
+   AddDashboardRow(rows,"Tradeability Reason:",tradeability_reason,DASHBOARD_TEXT_COLOR);
+   AddDashboardRow(rows,"Trade Recommendations:",recommendation,DASHBOARD_TEXT_COLOR);
+   AddDashboardRow(rows,"","",DASHBOARD_TEXT_COLOR);
+   AddDashboardRow(rows,"Optimal Conditions:",optimal?"OPTIMAL":"NOT OPTIMAL",PassColor(optimal),
+                   optimal_reason);
    if(Use_Timeframe_Correlation_For_Optimal)
-      DrawDashboardLine(row++,"Timeframe Correlation: "+PassText(bias_ready));
+      AddDashboardRow(rows,"Timeframe Correlation:",PassText(correlated),PassColor(correlated),
+                      optimal_reason,false,DASHBOARD_INDENT);
    if(Use_Healthy_Extension_For_Optimal)
-      DrawDashboardLine(row++,"Healthy Extension: "+PassText(healthy_extension));
+      AddDashboardRow(rows,"Healthy Extension:",PassText(healthy_extension),
+                      PassColor(healthy_extension),optimal_reason,false,DASHBOARD_INDENT);
    if(Use_Market_Volume_For_Optimal)
-      DrawDashboardLine(row++,"Market Volume: "+PassText(good_volume)+
-                              " ("+DoubleToString(volume_ratio,2)+"x average)");
+      AddDashboardRow(rows,"Market Volume:",PassText(good_volume)+" ("+DoubleToString(volume_ratio,2)+
+                      "x average)",PassColor(good_volume),optimal_reason,false,DASHBOARD_INDENT);
    if(Use_Price_Momentum_For_Optimal)
-      DrawDashboardLine(row++,"Price Momentum: "+PassText(good_momentum)+
-                               " ("+DoubleToString(momentum_ratio,2)+"x average range)");
-   DrawDashboardLine(row,"Reason: "+optimal_reason);
+      AddDashboardRow(rows,"Price Momentum:",PassText(good_momentum)+" ("+
+                      DoubleToString(momentum_ratio,2)+"x average range)",PassColor(good_momentum),
+                      optimal_reason,false,DASHBOARD_INDENT);
+   DrawDashboardRows(rows);
   }
 
 // Returns false while history or an indicator is still being synchronized.
@@ -1263,7 +1364,7 @@ bool Rebuild(const bool permit_alert)
   {
    ENUM_TIMEFRAMES timeframe=BASETimeframe();
    ENUM_TIMEFRAMES chart_timeframe=(ENUM_TIMEFRAMES)_Period;
-   BASE_SWING_FILTER filter=SwingFilter();
+   BASE_SWING_FILTER filter=SwingFilter(HTF_Swing_Sensitivity);
    int length=filter.strength;
    int displayed=StructureBars();
    MqlRates rates[];
@@ -1285,9 +1386,11 @@ bool Rebuild(const bool permit_alert)
    BASE_STRUCTURE_POINT setup_points[],ltf_points[];
    BASE_STRUCTURE_EVENT setup_events[],ltf_events[];
    if(!AnalyseStructure(SetupTimeframe(),ReplayBars(ChartStructureBars(SetupTimeframe())),
-                        setup_state,setup_rates,setup_points,setup_events)) return false;
+                        MTF_Swing_Sensitivity,setup_state,setup_rates,setup_points,setup_events))
+      return false;
    if(!AnalyseStructure(LTFTimeframe(),ReplayBars(ChartStructureBars(LTFTimeframe())),
-                        ltf_state,ltf_rates,ltf_points,ltf_events)) return false;
+                        LTF_Swing_Sensitivity,ltf_state,ltf_rates,ltf_points,ltf_events))
+      return false;
    int ltf_total=ArraySize(ltf_rates);
    double ltf_atr[];
    if(!CopyIndicator(g_ltf_atr_handle,0,1,ltf_atr)) return false;
@@ -1318,7 +1421,8 @@ bool Rebuild(const bool permit_alert)
       BASE_STRUCTURE_STATE chart_state;
       BASE_STRUCTURE_POINT chart_points[];
       BASE_STRUCTURE_EVENT chart_events[];
-      if(ReplayStructure(chart_rates,chart_total,filter,chart_state,chart_points,chart_events))
+      if(ReplayStructure(chart_rates,chart_total,SwingFilter(ChartSensitivity(chart_timeframe)),
+                         chart_state,chart_points,chart_events))
          DrawStructure(chart_rates,chart_total,
                        MathMax(0,chart_total-ChartStructureBars(chart_timeframe)),
                        chart_state,chart_points,chart_events);
@@ -1352,13 +1456,13 @@ bool Rebuild(const bool permit_alert)
    bool optimal=EvaluateOptimal(bias_ready,healthy_extension,good_volume,volume_ratio,
                                 good_momentum,momentum_ratio,optimal_reason);
 
-   DrawDashboard(structure_state,points,events,
-                 BiasText(setup_state),BreakdownText(setup_state,setup_points,setup_events),
-                 BiasText(ltf_state),BreakdownText(ltf_state,ltf_points,ltf_events),
-                 bias_ready,tradeable,tradeability_reason,
-                 EntryFilterTooltip(rates[total-1],ma,adx,atr),optimal,
-                 healthy_extension,good_volume,volume_ratio,good_momentum,
-                 momentum_ratio,optimal_reason);
+   DrawDashboard(structure_state,BreakdownText(structure_state,points,events),
+                 RecommendationText(structure_state,points),
+                 setup_state,BreakdownText(setup_state,setup_points,setup_events),
+                 ltf_state,BreakdownText(ltf_state,ltf_points,ltf_events),
+                 tradeable,tradeability_reason,EntryFilterTooltip(rates[total-1],ma,adx,atr),
+                 optimal,optimal_reason,bias_ready,healthy_extension,good_volume,volume_ratio,
+                 good_momentum,momentum_ratio);
    // Alert every event that became known on the newest closed candle (a CHoCH
    // confirmed by a second break arrives together with its BOS).
    string signal="";
@@ -1373,8 +1477,10 @@ bool Rebuild(const bool permit_alert)
 bool ValidInputs()
   {
    string problem="";
-   if(Swing_Sensitivity<0 || Swing_Sensitivity>100)
-      problem="Swing Sensitivity must be between 0 and 100";
+   if(HTF_Swing_Sensitivity<0 || HTF_Swing_Sensitivity>100 ||
+      MTF_Swing_Sensitivity<0 || MTF_Swing_Sensitivity>100 ||
+      LTF_Swing_Sensitivity<0 || LTF_Swing_Sensitivity>100)
+      problem="each Swing Sensitivity must be between 0 and 100";
    else if(Bars_To_Process<100)
       problem="Bars_To_Process must be at least 100";
    else if(MA_Length<1 || HTF_MA_Length<1 || ADX_Length<1 || ATR_Length<1)
@@ -1382,8 +1488,8 @@ bool ValidInputs()
    else if(!Use_Timeframe_Correlation_For_Optimal && !Use_Healthy_Extension_For_Optimal &&
            !Use_Market_Volume_For_Optimal && !Use_Price_Momentum_For_Optimal)
       problem="enable at least one Optimal Conditions requirement";
-   else if(!Use_HTF_For_Tradeability && !Use_MTF_For_Tradeability && !Use_LTF_For_Tradeability)
-      problem="enable at least one tradeability timeframe";
+   else if(!Use_HTF && !Use_MTF && !Use_LTF)
+      problem="enable at least one trend analysis timeframe";
    if(problem=="") return true;
    Print("BASE: invalid input - ",problem,".");
    return false;
