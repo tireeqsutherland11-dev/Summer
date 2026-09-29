@@ -546,7 +546,9 @@ Internal Structure with its dashed BOS/CHoCH, and the same dashboard (Market
 Trends with their breakdowns and Internal Structure, Market Tradability with
 the entry-filter tooltip, the trade recommendation, and Optimal Conditions). It has the same inputs,
 groups and defaults, except for the session and alert inputs described below.
-Like the EA, it only analyses the chart and never places orders.
+Every input has an info icon in the settings dialog whose tooltip says what
+it does, as in the Smart Money Engine. Like the EA, it only analyses the
+chart and never places orders.
 
 To install it, open the **Pine Editor** in TradingView, paste the contents of
 `Base.pine`, save the script, and click **Add to chart**.

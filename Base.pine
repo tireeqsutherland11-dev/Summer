@@ -41,96 +41,96 @@ indicator("Base - Market Structure", shorttitle = "Base", overlay = true, max_la
 
 // ---------------------------------------------------------------- inputs
 grpTf = "Timeframes"
-htfTf = input.timeframe("240", "HTF", group = grpTf)
-mtfTf = input.timeframe("60", "MTF", group = grpTf)
-ltfTf = input.timeframe("15", "LTF", group = grpTf)
+htfTf = input.timeframe("240", "HTF", group = grpTf, tooltip = "Higher timeframe (HTF). Its structure sets the main trend, Market Tradability, the HTF MA, ADX, ATR and session filters, and the alerts.")
+mtfTf = input.timeframe("60", "MTF", group = grpTf, tooltip = "Middle timeframe (MTF). Its trend is correlated with the HTF for Market Tradability, and it drives the MTF MA filter.")
+ltfTf = input.timeframe("15", "LTF", group = grpTf, tooltip = "Lower timeframe (LTF). Its trend can be correlated too, and its candles feed Healthy Extension, Market Volume and Price Momentum.")
 
 grpTrend = "Trend Analysis Timeframes"
-useHtf = input.bool(true, "Use HTF", group = grpTrend)
-useMtf = input.bool(true, "Use MTF", group = grpTrend)
-useLtf = input.bool(false, "Use LTF", group = grpTrend)
+useHtf = input.bool(true, "Use HTF", group = grpTrend, tooltip = "Show the HTF Market Trend and require it to agree with the other selected timeframes for Market Tradability. An established HTF trend is always required.")
+useMtf = input.bool(true, "Use MTF", group = grpTrend, tooltip = "Show the MTF Market Trend and require it to agree with the other selected timeframes for Market Tradability. It may be in transition.")
+useLtf = input.bool(false, "Use LTF", group = grpTrend, tooltip = "Show the LTF Market Trend and require it to agree for Market Tradability. A selected LTF trend must itself be established (latest break a BOS).")
 
 grpProc = "Structure Bar Processing"
-barsToProcess = input.int(100, "Bars To Process", minval = 100, maxval = 100000, group = grpProc)
+barsToProcess = input.int(100, "Bars To Process", minval = 100, maxval = 100000, group = grpProc, tooltip = "How many HTF candles back structure is drawn. Other chart timeframes cover the same span of time. Structure is always calculated on all loaded history.")
 
 grpSwing = "Swing Detection"
-htfSwingLength = input.int(10, "HTF Swing Detection Length", minval = 2, maxval = 50, group = grpSwing)
-mtfSwingLength = input.int(10, "MTF Swing Detection Length", minval = 2, maxval = 50, group = grpSwing)
-ltfSwingLength = input.int(10, "LTF Swing Detection Length", minval = 2, maxval = 50, group = grpSwing)
-showSwingPoints = input.bool(true, "Show Swing Points", group = grpSwing)
-showStrongWeak = input.bool(true, "Show Strong/Weak High/Low", group = grpSwing)
+htfSwingLength = input.int(10, "HTF Swing Detection Length", minval = 2, maxval = 50, group = grpSwing, tooltip = "Candles on each side of a pivot for HTF swings (Smart Money Engine swing detection). It is also how many candles a swing takes to confirm. Lower = more, faster swings; higher = fewer, cleaner swings.")
+mtfSwingLength = input.int(10, "MTF Swing Detection Length", minval = 2, maxval = 50, group = grpSwing, tooltip = "Candles on each side of a pivot for MTF swings. Lower = more, faster swings; higher = fewer, cleaner swings.")
+ltfSwingLength = input.int(10, "LTF Swing Detection Length", minval = 2, maxval = 50, group = grpSwing, tooltip = "Candles on each side of a pivot for LTF swings. Lower = more, faster swings; higher = fewer, cleaner swings.")
+showSwingPoints = input.bool(true, "Show Swing Points", group = grpSwing, tooltip = "Display the HH/HL/LH/LL (and EQH/EQL) swing labels and the dotted lines at the latest swing high and low.")
+showStrongWeak = input.bool(true, "Show Strong/Weak High/Low", group = grpSwing, tooltip = "Display Strong/Weak High/Low. Each break protects the latest swing on the other side (Strong); the trend's running extreme is Weak, the next target.")
 
 grpInternal = "Internal Structure"
-showInternal = input.bool(true, "Show Internal Structure", group = grpInternal)
-showInternalOnDashboard = input.bool(true, "Show Internal Structure On Dashboard", group = grpInternal)
-htfInternalLength = input.int(5, "HTF Internal Structure Length", minval = 2, maxval = 50, group = grpInternal)
-mtfInternalLength = input.int(5, "MTF Internal Structure Length", minval = 2, maxval = 50, group = grpInternal)
-ltfInternalLength = input.int(5, "LTF Internal Structure Length", minval = 2, maxval = 50, group = grpInternal)
-internalBullColor = input.color(#089981, "Internal Bullish Color", group = grpInternal)
-internalBearColor = input.color(#F23645, "Internal Bearish Color", group = grpInternal)
+showInternal = input.bool(true, "Show Internal Structure", group = grpInternal, tooltip = "Display the internal BOS/CHoCH: minor breaks inside the swings, drawn as dashed lines with faded captions.")
+showInternalOnDashboard = input.bool(true, "Show Internal Structure On Dashboard", group = grpInternal, tooltip = "Show each timeframe's internal trend under its Market Trend on the dashboard.")
+htfInternalLength = input.int(5, "HTF Internal Structure Length", minval = 2, maxval = 50, group = grpInternal, tooltip = "Candles on each side of a pivot for the HTF internal structure. Keep it below the Swing Detection Length.")
+mtfInternalLength = input.int(5, "MTF Internal Structure Length", minval = 2, maxval = 50, group = grpInternal, tooltip = "Candles on each side of a pivot for the MTF internal structure. Keep it below the Swing Detection Length.")
+ltfInternalLength = input.int(5, "LTF Internal Structure Length", minval = 2, maxval = 50, group = grpInternal, tooltip = "Candles on each side of a pivot for the LTF internal structure. Keep it below the Swing Detection Length.")
+internalBullColor = input.color(#089981, "Internal Bullish Color", group = grpInternal, tooltip = "Color of bullish internal BOS/CHoCH lines and captions.")
+internalBearColor = input.color(#F23645, "Internal Bearish Color", group = grpInternal, tooltip = "Color of bearish internal BOS/CHoCH lines and captions.")
 
 grpBos = "BOS Display"
-showBos = input.bool(true, "Show BOS Labels", group = grpBos)
-bullBosColor = input.color(color.blue, "Bullish BOS Color", group = grpBos)
-bearBosColor = input.color(color.blue, "Bearish BOS Color", group = grpBos)
+showBos = input.bool(true, "Show BOS Labels", group = grpBos, tooltip = "Display BOS (break of structure): a close through the latest HH (bullish) or LL (bearish) that continues the trend.")
+bullBosColor = input.color(color.blue, "Bullish BOS Color", group = grpBos, tooltip = "Caption color of bullish BOS.")
+bearBosColor = input.color(color.blue, "Bearish BOS Color", group = grpBos, tooltip = "Caption color of bearish BOS.")
 
 grpChoch = "CHoCH Display"
-showChoch = input.bool(true, "Show CHoCH Labels", group = grpChoch)
-bullChochColor = input.color(color.red, "Bullish CHoCH Color", group = grpChoch)
-bearChochColor = input.color(color.red, "Bearish CHoCH Color", group = grpChoch)
+showChoch = input.bool(true, "Show CHoCH Labels", group = grpChoch, tooltip = "Display CHoCH (change of character): a close through the latest LH (bullish) or HL (bearish), confirmed by the next HH (LL).")
+bullChochColor = input.color(color.red, "Bullish CHoCH Color", group = grpChoch, tooltip = "Caption color of bullish CHoCH.")
+bearChochColor = input.color(color.red, "Bearish CHoCH Color", group = grpChoch, tooltip = "Caption color of bearish CHoCH.")
 
 grpLs = "LS Display"
-showLs = input.bool(true, "Show LS Labels", group = grpLs)
-bullLsColor = input.color(#E5B800, "Bullish LS Color (a failed bullish CHoCH)", group = grpLs)
-bearLsColor = input.color(#E5B800, "Bearish LS Color (a failed bearish CHoCH)", group = grpLs)
+showLs = input.bool(true, "Show LS Labels", group = grpLs, tooltip = "Display LS (liquidity sweep): a CHoCH that failed because the old trend carried on beyond its extreme. It replaces the CHoCH, and the old trend is restored.")
+bullLsColor = input.color(#E5B800, "Bullish LS Color (a failed bullish CHoCH)", group = grpLs, tooltip = "Caption and line color of an LS that replaced a bullish CHoCH.")
+bearLsColor = input.color(#E5B800, "Bearish LS Color (a failed bearish CHoCH)", group = grpLs, tooltip = "Caption and line color of an LS that replaced a bearish CHoCH.")
 
 grpLines = "Labels and Lines"
-labelSizeInput = input.string("Small", "Label Size", options = ["Tiny", "Small", "Normal", "Large"], group = grpLines)
-showLines = input.bool(true, "Show Structure Lines", group = grpLines)
-lineStyleInput = input.string("Solid", "Line Style", options = ["Solid", "Dashed", "Dotted"], group = grpLines)
-lineWidth = input.int(2, "Line Width", minval = 1, maxval = 4, group = grpLines)
+labelSizeInput = input.string("Small", "Label Size", options = ["Tiny", "Small", "Normal", "Large"], group = grpLines, tooltip = "Text size of the swing, BOS, CHoCH, LS, internal and Strong/Weak labels.")
+showLines = input.bool(true, "Show Structure Lines", group = grpLines, tooltip = "Draw BOS/CHoCH/LS lines from the broken swing to the first candle that touches its level.")
+lineStyleInput = input.string("Solid", "Line Style", options = ["Solid", "Dashed", "Dotted"], group = grpLines, tooltip = "Style of the BOS/CHoCH/LS lines.")
+lineWidth = input.int(2, "Line Width", minval = 1, maxval = 4, group = grpLines, tooltip = "Width of the BOS/CHoCH/LS lines.")
 
 grpEqual = "EQH/EQL"
-showEqual = input.bool(true, "Show EQH/EQL", group = grpEqual)
-equalThreshold = input.float(0.1, "EQH/EQL Threshold (ATR, 0 = off)", minval = 0.0, maxval = 0.5, step = 0.05, group = grpEqual)
+showEqual = input.bool(true, "Show EQH/EQL", group = grpEqual, tooltip = "Label equal highs and lows as EQH/EQL and join each to the swing it equals with a dotted line. When off, they still act as one liquidity pool.")
+equalThreshold = input.float(0.1, "EQH/EQL Threshold (ATR, 0 = off)", minval = 0.0, maxval = 0.5, step = 0.05, group = grpEqual, tooltip = "A swing within this many ATR of the previous swing on its side is an equal high or low: it keeps that swing's role and breaks at the pool's outer edge. 0 turns it off.")
 
 grpHtfMa = "MA Filter (HTF)"
-useHtfMa = input.bool(true, "Use HTF MA Filter", group = grpHtfMa)
-htfMaLength = input.int(50, "HTF MA Length", minval = 1, group = grpHtfMa)
-htfMaType = input.string("EMA", "MA Type", options = ["EMA", "SMA"], group = grpHtfMa)
-showHtfMaLine = input.bool(false, "Show HTF MA Line", group = grpHtfMa)
-htfMaColor = input.color(color.blue, "HTF MA Color", group = grpHtfMa)
+useHtfMa = input.bool(true, "Use HTF MA Filter", group = grpHtfMa, tooltip = "Qualify setups with the latest closed HTF candle against the HTF MA (longs above, shorts below). Shown in the Market Tradability tooltip only.")
+htfMaLength = input.int(50, "HTF MA Length", minval = 1, group = grpHtfMa, tooltip = "Length of the HTF moving average.")
+htfMaType = input.string("EMA", "MA Type", options = ["EMA", "SMA"], group = grpHtfMa, tooltip = "Type of the HTF moving average.")
+showHtfMaLine = input.bool(false, "Show HTF MA Line", group = grpHtfMa, tooltip = "Plot the HTF moving average on the chart.")
+htfMaColor = input.color(color.blue, "HTF MA Color", group = grpHtfMa, tooltip = "Color of the HTF moving average line.")
 
 grpMtfMa = "MA Filter (MTF)"
-useMtfMa = input.bool(true, "Use MTF MA Filter", group = grpMtfMa)
-mtfMaLength = input.int(100, "MTF MA Length", minval = 1, group = grpMtfMa)
-mtfMaType = input.string("EMA", "MA Type", options = ["EMA", "SMA"], group = grpMtfMa)
-showMtfMaLine = input.bool(false, "Show MTF MA Line", group = grpMtfMa)
-mtfMaColor = input.color(color.orange, "MTF MA Color", group = grpMtfMa)
+useMtfMa = input.bool(true, "Use MTF MA Filter", group = grpMtfMa, tooltip = "Qualify setups with the latest closed MTF candle against the MTF MA (longs above, shorts below). Shown in the Market Tradability tooltip only.")
+mtfMaLength = input.int(100, "MTF MA Length", minval = 1, group = grpMtfMa, tooltip = "Length of the MTF moving average.")
+mtfMaType = input.string("EMA", "MA Type", options = ["EMA", "SMA"], group = grpMtfMa, tooltip = "Type of the MTF moving average.")
+showMtfMaLine = input.bool(false, "Show MTF MA Line", group = grpMtfMa, tooltip = "Plot the MTF moving average on the chart.")
+mtfMaColor = input.color(color.orange, "MTF MA Color", group = grpMtfMa, tooltip = "Color of the MTF moving average line.")
 
 grpSession = "Session Filter"
-useSession = input.bool(false, "Use Session Filter", group = grpSession)
-sessionPreset = input.string("New York", "Session Preset", options = ["New York", "London", "Tokyo", "Sydney", "Custom", "24x7"], group = grpSession)
-customSession = input.string("0930-1600", "Custom Session (HHMM-HHMM)", group = grpSession)
-customTimezone = input.string("UTC", "Custom Session Timezone (e.g. UTC, GMT+2, America/New_York)", group = grpSession)
+useSession = input.bool(false, "Use Session Filter", group = grpSession, tooltip = "Qualify setups only when the latest HTF candle opens inside the chosen session. Shown in the Market Tradability tooltip only.")
+sessionPreset = input.string("New York", "Session Preset", options = ["New York", "London", "Tokyo", "Sydney", "Custom", "24x7"], group = grpSession, tooltip = "Trading session. Presets use their market's time zone, so daylight saving time is handled. Custom uses the two inputs below.")
+customSession = input.string("0930-1600", "Custom Session (HHMM-HHMM)", group = grpSession, tooltip = "Custom session as HHMM-HHMM. Equal start and end means all day; 2200-0600 crosses midnight.")
+customTimezone = input.string("UTC", "Custom Session Timezone (e.g. UTC, GMT+2, America/New_York)", group = grpSession, tooltip = "Time zone of the custom session, for example UTC, GMT+2 or America/New_York.")
 
 grpAdx = "ADX Filter"
-useAdx = input.bool(true, "Use ADX Filter", group = grpAdx)
-adxLength = input.int(14, "ADX Length", minval = 1, group = grpAdx)
+useAdx = input.bool(true, "Use ADX Filter", group = grpAdx, tooltip = "Require the HTF ADX to be at least 25 (trend strength) for BOS setups. Shown in the Market Tradability tooltip only.")
+adxLength = input.int(14, "ADX Length", minval = 1, group = grpAdx, tooltip = "Length of the HTF ADX.")
 
 grpAtr = "ATR Filter"
-useAtr = input.bool(true, "Use ATR Filter", group = grpAtr)
-atrLength = input.int(14, "ATR Length", minval = 1, group = grpAtr)
+useAtr = input.bool(true, "Use ATR Filter", group = grpAtr, tooltip = "Require the HTF ATR to be at least 1.0 (in price units) for setups. Shown in the Market Tradability tooltip only.")
+atrLength = input.int(14, "ATR Length", minval = 1, group = grpAtr, tooltip = "Length of the HTF ATR.")
 
 grpOpt = "Optimal Conditions"
-useCorrOpt = input.bool(true, "Use Timeframe Correlation For Optimal", group = grpOpt)
-useExtOpt = input.bool(false, "Use Healthy Extension For Optimal", group = grpOpt)
-useVolOpt = input.bool(true, "Use Market Volume For Optimal", group = grpOpt)
-useMomOpt = input.bool(false, "Use Price Momentum For Optimal", group = grpOpt)
+useCorrOpt = input.bool(true, "Use Timeframe Correlation For Optimal", group = grpOpt, tooltip = "Optimal Conditions requires the selected timeframes to correlate (Market Tradability is Tradable).")
+useExtOpt = input.bool(false, "Use Healthy Extension For Optimal", group = grpOpt, tooltip = "Optimal Conditions requires price to be 0 to 3 LTF ATR from the latest LTF HL (bullish HTF trend) or LH (bearish).")
+useVolOpt = input.bool(true, "Use Market Volume For Optimal", group = grpOpt, tooltip = "Optimal Conditions requires the latest LTF volume to be 0.5x to 2x its 20-candle average.")
+useMomOpt = input.bool(false, "Use Price Momentum For Optimal", group = grpOpt, tooltip = "Optimal Conditions requires the latest LTF true range to be 0.5x to 2x its 20-candle average.")
 
 grpDash = "Dashboard and Alerts"
-dashPositionInput = input.string("Top Right", "Dashboard Position", options = ["Top Left", "Top Right", "Bottom Left", "Bottom Right"], group = grpDash)
-enableAlerts = input.bool(false, "Alert On Structure-Timeframe BOS / CHoCH / LS", group = grpDash)
+dashPositionInput = input.string("Top Right", "Dashboard Position", options = ["Top Left", "Top Right", "Bottom Left", "Bottom Right"], group = grpDash, tooltip = "Corner of the chart where the dashboard is shown.")
+enableAlerts = input.bool(false, "Alert On Structure-Timeframe BOS / CHoCH / LS", group = grpDash, tooltip = "Send an alert() when a BOS, CHoCH or LS is confirmed on the latest closed HTF candle. Create the alert with Any alert() function call.")
 
 // ------------------------------------------------------ internal tuning
 // Kept out of the inputs, as in Base.mq5.
