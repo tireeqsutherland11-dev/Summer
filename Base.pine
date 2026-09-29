@@ -1,21 +1,23 @@
-//@version=5
-// Base - Market Structure (TradingView port of Base.mq5 v2.31)
+//@version=6
+// Base - Market Structure (TradingView port of Base.mq5 v2.32)
 //
 // Reads market structure from closed candles only:
 //  * HH/HL/LH/LL swings from two sets of the same two filters (swing strength
-//    and swing size in ATR), blended by Swing Sensitivity (0-100).
+//    and swing size in ATR), blended by each timeframe's Swing Sensitivity
+//    (0-100).
 //  * Only identified swings are broken: a swing is identified once the
 //    opposite leg after it has begun, so it can no longer be replaced and
 //    stays marked on the chart.
 //  * BOS: the most recent identified HH (LL) is broken by a close, creating a
 //    new HH (LL).
-//  * CHoCH: while the bias is not already bullish, the most recent identified
+//  * CHoCH: while the trend is not already bullish, the most recent identified
 //    LH is broken by a close and the next swing high is an HH (bearish mirrors
 //    this).
-//  * Bias: Bullish / Bearish after a BOS, Bullish / Bearish Transition after a
-//    CHoCH, Consolidation / Undefined when the structure is sporadic or trapped.
-//  * Dashboard: the HTF breakdown (classification, trigger, evidence,
-//    recommendation), MTF/LTF biases, Market Tradeability and Optimal
+//  * Trend: Bullish / Bearish after a BOS, Bullish / Bearish Transition after
+//    a CHoCH, Consolidation / Undefined when the structure is sporadic or
+//    trapped.
+//  * Dashboard: the Market Trend of each selected timeframe, Market
+//    Tradeability and its reason, the trade recommendation and Optimal
 //    Conditions. It is an analysis tool and never places orders.
 indicator("Base - Market Structure", shorttitle = "Base", overlay = true, max_labels_count = 500, max_lines_count = 500)
 
@@ -25,16 +27,18 @@ htfTf = input.timeframe("240", "Structure Timeframe (HTF)", group = grpTf)
 mtfTf = input.timeframe("60", "Setup / Entry Timeframe (MTF)", group = grpTf)
 ltfTf = input.timeframe("15", "LTF Timeframe", group = grpTf)
 
-grpTrade = "Tradeability Timeframes"
-useHtfTrade = input.bool(true, "Use HTF For Tradeability", group = grpTrade)
-useMtfTrade = input.bool(true, "Use MTF For Tradeability", group = grpTrade)
-useLtfTrade = input.bool(false, "Use LTF For Tradeability", group = grpTrade)
+grpTrend = "Trend Analysis Timeframes"
+useHtf = input.bool(true, "Use HTF", group = grpTrend)
+useMtf = input.bool(true, "Use MTF", group = grpTrend)
+useLtf = input.bool(false, "Use LTF", group = grpTrend)
 
 grpProc = "Structure Processing"
 barsToProcess = input.int(100, "Bars To Process (structure candles drawn)", minval = 100, maxval = 100000, group = grpProc)
 
 grpSwing = "Swing Detection"
-swingSensitivity = input.int(50, "Swing Sensitivity (0 = Smoothest, 50 = Balanced, 100 = Most Sensitive)", minval = 0, maxval = 100, group = grpSwing)
+htfSensitivity = input.int(50, "HTF Swing Sensitivity (0 = Smoothest, 50 = Balanced, 100 = Most Sensitive)", minval = 0, maxval = 100, group = grpSwing)
+mtfSensitivity = input.int(50, "MTF Swing Sensitivity (0 = Smoothest, 50 = Balanced, 100 = Most Sensitive)", minval = 0, maxval = 100, group = grpSwing)
+ltfSensitivity = input.int(50, "LTF Swing Sensitivity (0 = Smoothest, 50 = Balanced, 100 = Most Sensitive)", minval = 0, maxval = 100, group = grpSwing)
 showSwingPoints = input.bool(true, "Show Swing Points", group = grpSwing)
 
 grpBos = "BOS Display"
@@ -138,12 +142,18 @@ MAX_TRAP = 50
 HIGH_LABEL_COLOR = #CD5C5C
 LOW_LABEL_COLOR = #008080
 
-swingWeight = math.max(0, math.min(100, swingSensitivity)) / 100.0
-swingStrength = int(math.round(SMOOTH_SWING_STRENGTH + (SENSITIVE_SWING_STRENGTH - SMOOTH_SWING_STRENGTH) * swingWeight))
-swingSizeAtr = SMOOTH_SWING_SIZE_ATR + (SENSITIVE_SWING_SIZE_ATR - SMOOTH_SWING_SIZE_ATR) * swingWeight
+// The working filters of a timeframe: the Smooth and Sensitive sets blended
+// by its Swing Sensitivity (50 = the average of the two sets).
+swingStrengthFor(int sensitivity) =>
+    float weight = math.max(0, math.min(100, sensitivity)) / 100.0
+    int(math.round(SMOOTH_SWING_STRENGTH + (SENSITIVE_SWING_STRENGTH - SMOOTH_SWING_STRENGTH) * weight))
 
-if not useHtfTrade and not useMtfTrade and not useLtfTrade
-    runtime.error("Enable at least one tradeability timeframe")
+swingSizeFor(int sensitivity) =>
+    float weight = math.max(0, math.min(100, sensitivity)) / 100.0
+    SMOOTH_SWING_SIZE_ATR + (SENSITIVE_SWING_SIZE_ATR - SMOOTH_SWING_SIZE_ATR) * weight
+
+if not useHtf and not useMtf and not useLtf
+    runtime.error("Enable at least one trend analysis timeframe")
 if not useCorrOpt and not useExtOpt and not useVolOpt and not useMomOpt
     runtime.error("Enable at least one Optimal Conditions requirement")
 
@@ -405,7 +415,7 @@ method onPivotLow(SEngine e, float v, int pivotBar, int pivotTime, float minSize
 
 // Only a candle close through an identified swing is a break; a wick is a
 // sweep.
-//  * The most recent identified LH broken while the bias is not bullish
+//  * The most recent identified LH broken while the trend is not bullish
 //    starts a bullish CHoCH (an LH broken with an HH is the CHoCH, not a BOS).
 //  * The most recent identified HH broken is a bullish BOS. Bearish mirrors
 //    both.
@@ -436,7 +446,7 @@ method onClose(SEngine e, float c, int curBar, int curTime) =>
             e.addEvent(curBar, curBar, curTime, -1, true, e.ll.swingTime, e.ll.price)
     e.dir
 
-// One closed candle: the swing confirmed on it (its pivot is swingStrength
+// One closed candle: the swing confirmed on it (its pivot is swing strength
 // candles back), then the candle's close.
 method step(SEngine e, bool isPh, bool isPl, float phV, float plV, int pivotBar, int pivotTime, float minSize, float c, int curBar, int curTime) =>
     e.newPoints.clear()
@@ -601,12 +611,12 @@ swingAtrSeries() =>
     na(avg) ? acc / (bar_index + 1) : avg
 
 // Structure of the timeframe this runs on (inside request.security).
-structureRequest() =>
+structureRequest(int strength, float sizeAtr) =>
     var SEngine e = newEngine()
     float atrS = swingAtrSeries()
-    bool ph = pivotHighFound(swingStrength)
-    bool pl = pivotLowFound(swingStrength)
-    e.step(ph, pl, high[swingStrength], low[swingStrength], bar_index - swingStrength, time[swingStrength], swingSizeAtr * nz(atrS[swingStrength]), close, bar_index, time)
+    bool ph = pivotHighFound(strength)
+    bool pl = pivotLowFound(strength)
+    e.step(ph, pl, high[strength], low[strength], bar_index - strength, time[strength], sizeAtr * nz(atrS[strength]), close, bar_index, time)
     e.classify(atrS)
     [labelsCode, rangeLo, rangeHi, breaksCode, breaksCount, trapCode, trapCount, trap1, trap2, trap3, trap4, latestCode, latestLevel, newCode, hhV, lhV, llV, hlV] = e.summary()
     // Flags cross request.security as 0/1 so a missing value is simply 0.
@@ -655,7 +665,7 @@ sessionOk() =>
 // Each request returns the state after the last closed candle of its
 // timeframe ([1] with lookahead on), so nothing repaints.
 htfRequest() =>
-    [d, b, cons, lc, rlo, rhi, bc, bn, tc, tn, t1, t2, t3, t4, lcd, llv, nc, vhh, vlh, vll, vhl, et, hp, hk, hv, lp, lk, lv] = structureRequest()
+    [d, b, cons, lc, rlo, rhi, bc, bn, tc, tn, t1, t2, t3, t4, lcd, llv, nc, vhh, vlh, vll, vhl, et, hp, hk, hv, lp, lk, lv] = structureRequest(swingStrengthFor(htfSensitivity), swingSizeFor(htfSensitivity))
     float maE = ta.ema(close, maLength)
     float maS = ta.sma(close, maLength)
     float maV = maType == "EMA" ? maE : maS
@@ -665,11 +675,11 @@ htfRequest() =>
     [d[1], b[1], cons[1], lc[1], rlo[1], rhi[1], bc[1], bn[1], tc[1], tn[1], t1[1], t2[1], t3[1], t4[1], lcd[1], llv[1], nc[1], vhh[1], vlh[1], vll[1], vhl[1], et[1], close[1], open[1], maV[1], adxV[1], atrV[1], sess[1]]
 
 mtfRequest() =>
-    [d, b, cons, lc, rlo, rhi, bc, bn, tc, tn, t1, t2, t3, t4, lcd, llv, nc, vhh, vlh, vll, vhl, et, hp, hk, hv, lp, lk, lv] = structureRequest()
+    [d, b, cons, lc, rlo, rhi, bc, bn, tc, tn, t1, t2, t3, t4, lcd, llv, nc, vhh, vlh, vll, vhl, et, hp, hk, hv, lp, lk, lv] = structureRequest(swingStrengthFor(mtfSensitivity), swingSizeFor(mtfSensitivity))
     [d[1], b[1], cons[1], lc[1], rlo[1], rhi[1], bc[1], bn[1], tc[1], tn[1], t1[1], t2[1], t3[1], t4[1], lcd[1], llv[1], vhh[1], vlh[1], vll[1], vhl[1]]
 
 ltfRequest() =>
-    [d, b, cons, lc, rlo, rhi, bc, bn, tc, tn, t1, t2, t3, t4, lcd, llv, nc, vhh, vlh, vll, vhl, et, hp, hk, hv, lp, lk, lv] = structureRequest()
+    [d, b, cons, lc, rlo, rhi, bc, bn, tc, tn, t1, t2, t3, t4, lcd, llv, nc, vhh, vlh, vll, vhl, et, hp, hk, hv, lp, lk, lv] = structureRequest(swingStrengthFor(ltfSensitivity), swingSizeFor(ltfSensitivity))
     float trL = ta.tr(true)
     float atrL = ta.sma(trL, atrLength)
     float volAvg = nz(ta.sma(volume, VOLUME_AVERAGE_LENGTH)[1])
@@ -691,19 +701,24 @@ htfMaRequest() =>
 
 // ---------------------------------------------------- chart structure
 // Labels and signals follow the chart timeframe, while the dashboard stays on
-// the structure timeframe. Only confirmed candles are processed.
+// the structure timeframe. Only confirmed candles are processed. The chart
+// uses the sensitivity of the matching HTF, MTF or LTF input; any other chart
+// timeframe uses the HTF sensitivity.
+chartSeconds = timeframe.in_seconds()
+chartSensitivity = chartSeconds == timeframe.in_seconds(htfTf) ? htfSensitivity : chartSeconds == timeframe.in_seconds(mtfTf) ? mtfSensitivity : chartSeconds == timeframe.in_seconds(ltfTf) ? ltfSensitivity : htfSensitivity
+chartStrength = swingStrengthFor(chartSensitivity)
+chartSizeAtr = swingSizeFor(chartSensitivity)
 float chartAtr = swingAtrSeries()
-bool chartPh = pivotHighFound(swingStrength)
-bool chartPl = pivotLowFound(swingStrength)
+bool chartPh = pivotHighFound(chartStrength)
+bool chartPl = pivotLowFound(chartStrength)
 var SEngine chartEngine = newEngine()
 
 labelSize = labelSizeInput == "Tiny" ? size.tiny : labelSizeInput == "Normal" ? size.normal : labelSizeInput == "Large" ? size.large : size.small
 lineStyle = lineStyleInput == "Solid" ? line.style_solid : lineStyleInput == "Dotted" ? line.style_dotted : line.style_dashed
 
 // The drawn history covers Bars To Process structure candles.
-chartSeconds = timeframe.in_seconds()
 htfSeconds = timeframe.in_seconds(htfTf)
-displayBars = math.max(2 * swingStrength + 2, int(math.ceil(float(barsToProcess) * htfSeconds / math.max(chartSeconds, 1))))
+displayBars = math.max(2 * math.max(SMOOTH_SWING_STRENGTH, SENSITIVE_SWING_STRENGTH) + 2, int(math.ceil(float(barsToProcess) * htfSeconds / math.max(chartSeconds, 1))))
 drawFrom = last_bar_index - displayBars
 var int drawFromTime = na
 if bar_index == math.max(drawFrom, 0)
@@ -720,7 +735,7 @@ var label lowSwingLabel = na
 var int lowSwingId = -1
 
 if barstate.isconfirmed
-    chartEngine.step(chartPh, chartPl, high[swingStrength], low[swingStrength], bar_index - swingStrength, time[swingStrength], swingSizeAtr * nz(chartAtr[swingStrength]), close, bar_index, time)
+    chartEngine.step(chartPh, chartPl, high[chartStrength], low[chartStrength], bar_index - chartStrength, time[chartStrength], chartSizeAtr * nz(chartAtr[chartStrength]), close, bar_index, time)
     int droppedCount = chartEngine.dropped.size()
     if droppedCount > 0
         for i = 0 to droppedCount - 1
@@ -769,7 +784,7 @@ if barstate.islast
 plot(useMa and showMaLine ? hMa : na, "Structure MA", color = maColor, linewidth = 2)
 plot(useHtfMa and showHtfMaLine ? htfMaValue : na, "HTF MA", color = htfMaColor, linewidth = 2)
 
-// -------------------------------------------------------- bias breakdown
+// ------------------------------------------------------- trend breakdown
 type TfView
     int dir
     bool lastBos
@@ -894,7 +909,7 @@ recommendationText(TfView v) =>
     s
 
 breakdownText(TfView v) =>
-    "Current Bias Classification: " + biasText(v) + "\nTrigger Condition Met: " + triggerText(v) + "\nStructural Evidence: " + evidenceText(v) + "\nTrading Recommendation: " + recommendationText(v)
+    "Current Trend Classification: " + biasText(v) + "\nTrigger Condition Met: " + triggerText(v) + "\nStructural Evidence: " + evidenceText(v) + "\nTrade Recommendations: " + recommendationText(v)
 
 tfName(string tf) =>
     int secs = timeframe.in_seconds(tf)
@@ -913,17 +928,17 @@ tfName(string tf) =>
         s := "MN" + str.tostring(int(math.round(secs / 2592000)))
     s
 
-tradeabilityTimeframesText() =>
+trendTimeframesText() =>
     string r = ""
-    if useHtfTrade
+    if useHtf
         r := "HTF"
-    if useMtfTrade
+    if useMtf
         r := r + (r == "" ? "" : " and ") + "MTF"
-    if useLtfTrade
+    if useLtf
         r := r + (r == "" ? "" : " and ") + "LTF"
     r
 
-// Market Tradeability: the HTF bias must be established (latest break a BOS,
+// Market Tradeability: the HTF trend must be established (latest break a BOS,
 // not Consolidation / Undefined); every selected timeframe must have a
 // direction and they must agree; a selected LTF must itself be established.
 evaluateTradeability(TfView htf, TfView mtf, TfView ltf) =>
@@ -932,30 +947,30 @@ evaluateTradeability(TfView htf, TfView mtf, TfView ltf) =>
     int hd = biasDirection(htf)
     int md = biasDirection(mtf)
     int ld = biasDirection(ltf)
-    bool available = (not useHtfTrade or hd != 0) and (not useMtfTrade or md != 0) and (not useLtfTrade or ld != 0)
-    bool agree = (not useHtfTrade or not useMtfTrade or hd == md) and (not useHtfTrade or not useLtfTrade or hd == ld) and (not useMtfTrade or not useLtfTrade or md == ld)
-    bool ok = htfDef and available and agree and (not useLtfTrade or ltfDef)
+    bool available = (not useHtf or hd != 0) and (not useMtf or md != 0) and (not useLtf or ld != 0)
+    bool agree = (not useHtf or not useMtf or hd == md) and (not useHtf or not useLtf or hd == ld) and (not useMtf or not useLtf or md == ld)
+    bool ok = htfDef and available and agree and (not useLtf or ltfDef)
     string reason = ""
     if ok
-        int selected = (useHtfTrade ? 1 : 0) + (useMtfTrade ? 1 : 0) + (useLtfTrade ? 1 : 0)
-        reason := tradeabilityTimeframesText() + (selected > 1 ? " correlate" : " is directional") + "; HTF is confirmed by HH/LL BOS"
-        if useLtfTrade
+        int selected = (useHtf ? 1 : 0) + (useMtf ? 1 : 0) + (useLtf ? 1 : 0)
+        reason := trendTimeframesText() + (selected > 1 ? " correlate" : " is directional") + "; HTF is confirmed by HH/LL BOS"
+        if useLtf
             reason := reason + "; LTF is confirmed by BOS"
     else if hd == 0
         reason := "HTF is Consolidation / Undefined (" + triggerText(htf) + ")"
     else if not htfDef
-        reason := "HTF bias is transitional (CHoCH has no subsequent BOS)"
-    else if useMtfTrade and md == 0
+        reason := "HTF trend is transitional (CHoCH has no subsequent BOS)"
+    else if useMtf and md == 0
         reason := "MTF is Consolidation / Undefined (" + triggerText(mtf) + ")"
-    else if useLtfTrade and ld == 0
+    else if useLtf and ld == 0
         reason := "LTF is Consolidation / Undefined (" + triggerText(ltf) + ")"
     else if not agree
-        reason := tradeabilityTimeframesText() + " biases conflict"
+        reason := trendTimeframesText() + " trends conflict"
     else
-        reason := "LTF bias is transitional (CHoCH has no subsequent BOS)"
+        reason := "LTF trend is transitional (CHoCH has no subsequent BOS)"
     [ok, reason]
 
-// Healthy Extension: in the HTF bias direction, from the latest LTF HL
+// Healthy Extension: in the HTF trend direction, from the latest LTF HL
 // (bullish) or LH (bearish) to the latest LTF close, 0 to 3 LTF ATR.
 healthyExtension(TfView htf, float ltfClose, float ltfAtr, float lastLow, int lastLowKind, bool haveLow, float lastHigh, int lastHighKind, bool haveHigh) =>
     bool ok = false
@@ -973,7 +988,7 @@ passText(bool pass) =>
     pass ? "PASS" : "BLOCKED"
 
 // Entry filters for the latest closed structure candle: the tooltip of the
-// Market Tradeability row. They never change structure, bias or alerts.
+// Market Tradeability row. They never change structure, trend or alerts.
 entryFilterTooltip() =>
     bool maLong = true
     bool maShort = true
@@ -1014,7 +1029,7 @@ evaluateOptimal(bool biasReady, bool healthy, bool goodVolume, float volumeRatio
         reason := "All selected requirements are met"
     else
         if useCorrOpt and not biasReady
-            reason := tradeabilityTimeframesText() + " tradeability biases do not meet the selected correlation requirements"
+            reason := trendTimeframesText() + " trends do not meet the selected correlation requirements"
         if useExtOpt and not healthy
             reason := reason + (reason == "" ? "" : "; ") + "price is overextended or lacks a valid corrective anchor"
         if useVolOpt and not goodVolume
@@ -1025,14 +1040,35 @@ evaluateOptimal(bool biasReady, bool healthy, bool goodVolume, float volumeRatio
 
 // ---------------------------------------------------------------- dashboard
 dashPosition = dashPositionInput == "Top Left" ? position.top_left : dashPositionInput == "Bottom Left" ? position.bottom_left : dashPositionInput == "Bottom Right" ? position.bottom_right : position.top_right
-var table dash = table.new(dashPosition, 1, 20, bgcolor = color.new(chart.bg_color, 10), frame_color = color.new(chart.fg_color, 70), frame_width = 1)
+// Component names are black (the main components bold) and only the outputs
+// are coloured: trends green (Bullish, Bullish Transition), red (Bearish,
+// Bearish Transition) or grey (Consolidation / Undefined); tradeability and
+// conditions green when they pass and red when they do not. No background
+// and no borders.
+DASH_TEXT_COLOR = color.black
+DASH_POSITIVE_COLOR = color.green
+DASH_NEGATIVE_COLOR = color.red
+DASH_NEUTRAL_COLOR = color.gray
+var table dash = table.new(dashPosition, 2, 24, bgcolor = color.new(color.white, 100), frame_width = 0, border_width = 0)
 
 // Timeframes below the chart's are sampled once per chart candle.
 lowestTf = timeframe.in_seconds(htfTf) <= timeframe.in_seconds(mtfTf) and timeframe.in_seconds(htfTf) <= timeframe.in_seconds(ltfTf) ? htfTf : timeframe.in_seconds(mtfTf) <= timeframe.in_seconds(ltfTf) ? mtfTf : ltfTf
 chartAboveTf = timeframe.in_seconds() > timeframe.in_seconds(lowestTf)
 
-dashRow(int row, string txt, string tip) =>
-    table.cell(dash, 0, row, txt, text_color = chart.fg_color, text_halign = text.align_left, text_size = size.small, tooltip = tip)
+trendColor(TfView v) =>
+    int d = biasDirection(v)
+    d > 0 ? DASH_POSITIVE_COLOR : d < 0 ? DASH_NEGATIVE_COLOR : DASH_NEUTRAL_COLOR
+
+passColor(bool pass) =>
+    pass ? DASH_POSITIVE_COLOR : DASH_NEGATIVE_COLOR
+
+// One row: the component name, then its coloured output.
+dashRow(int row, string component, string output, color outputColor, string tip, bool bold) =>
+    if bold
+        table.cell(dash, 0, row, component, text_color = DASH_TEXT_COLOR, text_halign = text.align_left, text_size = size.small, tooltip = tip, text_formatting = text.format_bold)
+    else
+        table.cell(dash, 0, row, component, text_color = DASH_TEXT_COLOR, text_halign = text.align_left, text_size = size.small, tooltip = tip)
+    table.cell(dash, 1, row, output, text_color = outputColor, text_halign = text.align_left, text_size = size.small, tooltip = tip)
 
 if barstate.islast
     [tradable, tradeReason] = evaluateTradeability(htfView, mtfView, ltfView)
@@ -1042,46 +1078,41 @@ if barstate.islast
     float momRatio = nz(lMomRatio)
     bool goodMomentum = nz(lTrAvg) > 0 and momRatio >= MOMENTUM_MIN_RATIO and momRatio <= MOMENTUM_MAX_RATIO
     [optimal, optimalReason] = evaluateOptimal(tradable, healthy, goodVolume, volRatio, goodMomentum, momRatio)
-    table.clear(dash, 0, 0, 0, 19)
+    table.clear(dash, 0, 0, 1, 23)
     int row = 0
-    dashRow(row, "Current Bias Classification (HTF " + tfName(htfTf) + "): " + biasText(htfView), "")
-    row += 1
-    dashRow(row, "Trigger Condition Met: " + triggerText(htfView), "")
-    row += 1
-    dashRow(row, "Structural Evidence: " + evidenceText(htfView), "")
-    row += 1
-    dashRow(row, "Trading Recommendation: " + recommendationText(htfView), "")
-    row += 1
-    if useMtfTrade
-        dashRow(row, "Market Bias (MTF " + tfName(mtfTf) + "): " + biasText(mtfView), breakdownText(mtfView))
+    if useHtf
+        dashRow(row, "HTF Market Trend (" + tfName(htfTf) + "):", biasText(htfView), trendColor(htfView), breakdownText(htfView), true)
         row += 1
-    if useLtfTrade
-        dashRow(row, "Market Bias (LTF " + tfName(ltfTf) + "): " + biasText(ltfView), breakdownText(ltfView))
+    if useMtf
+        dashRow(row, "MTF Market Trend (" + tfName(mtfTf) + "):", biasText(mtfView), trendColor(mtfView), breakdownText(mtfView), true)
         row += 1
-    dashRow(row, "Market Tradeability: " + (tradable ? "Tradable" : "Not Tradable"), entryFilterTooltip())
+    if useLtf
+        dashRow(row, "LTF Market Trend (" + tfName(ltfTf) + "):", biasText(ltfView), trendColor(ltfView), breakdownText(ltfView), true)
+        row += 1
+    dashRow(row, "Market Tradeability:", tradable ? "Tradable" : "Not Tradable", passColor(tradable), entryFilterTooltip(), true)
     row += 1
-    dashRow(row, "Tradeability Reason: " + tradeReason, "")
+    dashRow(row, "Tradeability Reason:", tradeReason, DASH_TEXT_COLOR, "", true)
     row += 1
-    dashRow(row, " ", "")
+    dashRow(row, "Trade Recommendations:", recommendationText(htfView), DASH_TEXT_COLOR, "", true)
     row += 1
-    dashRow(row, "Optimal Conditions: " + (optimal ? "OPTIMAL" : "NOT OPTIMAL"), "")
+    dashRow(row, " ", " ", DASH_TEXT_COLOR, "", false)
+    row += 1
+    dashRow(row, "Optimal Conditions:", optimal ? "OPTIMAL" : "NOT OPTIMAL", passColor(optimal), optimalReason, true)
     row += 1
     if useCorrOpt
-        dashRow(row, "Timeframe Correlation: " + passText(tradable), "")
+        dashRow(row, "Timeframe Correlation:", passText(tradable), passColor(tradable), optimalReason, false)
         row += 1
     if useExtOpt
-        dashRow(row, "Healthy Extension: " + passText(healthy), "")
+        dashRow(row, "Healthy Extension:", passText(healthy), passColor(healthy), optimalReason, false)
         row += 1
     if useVolOpt
-        dashRow(row, "Market Volume: " + passText(goodVolume) + " (" + str.tostring(volRatio, "#.00") + "x average)", "")
+        dashRow(row, "Market Volume:", passText(goodVolume) + " (" + str.tostring(volRatio, "#.00") + "x average)", passColor(goodVolume), optimalReason, false)
         row += 1
     if useMomOpt
-        dashRow(row, "Price Momentum: " + passText(goodMomentum) + " (" + str.tostring(momRatio, "#.00") + "x average range)", "")
+        dashRow(row, "Price Momentum:", passText(goodMomentum) + " (" + str.tostring(momRatio, "#.00") + "x average range)", passColor(goodMomentum), optimalReason, false)
         row += 1
-    dashRow(row, "Reason: " + optimalReason, "")
-    row += 1
     if chartAboveTf
-        dashRow(row, "Note: use a " + tfName(lowestTf) + " or lower chart for exact " + tfName(lowestTf) + " values", "")
+        dashRow(row, "Note:", "use a " + tfName(lowestTf) + " or lower chart for exact " + tfName(lowestTf) + " values", DASH_TEXT_COLOR, "", false)
 
 // ------------------------------------------------------------------- alerts
 // Structure-timeframe events that became known on its latest closed candle.
