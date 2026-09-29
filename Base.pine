@@ -1,5 +1,5 @@
 //@version=6
-// Base - Market Structure (TradingView port of Base.mq5 v2.35)
+// Base - Market Structure (TradingView port of Base.mq5 v2.36)
 //
 // Reads market structure from closed candles only:
 //  * HH/HL/LH/LL swings from two sets of the same two filters (swing strength
@@ -13,16 +13,24 @@
 //  * CHoCH: while the trend is not already bullish, the most recent identified
 //    LH is broken by a close and the next swing high is an HH (bearish mirrors
 //    this).
+//  * EQH/EQL: a swing within the EQH/EQL Threshold (ATR) of the previous
+//    swing on its side is an equal high/low. It keeps that swing's role, its
+//    break level is the pair's outer edge, and it neither confirms nor
+//    cancels a CHoCH.
 //  * LS (liquidity sweep): a CHoCH that reversed a trend fails when, before
 //    anything else prints, a close breaks its protected swing and the old
 //    trend carries on beyond its extreme. The CHoCH is relabelled LS (deep
 //    yellow) and the trend before it is restored.
+//  * BOS, CHoCH and LS captions are centred on their line: above a line
+//    broken upwards, below one broken downwards.
 //  * Trend: Bullish / Bearish after a BOS, Bullish / Bearish Transition after
 //    a CHoCH, Consolidation / Undefined when the structure is sporadic or
 //    trapped.
-//  * Dashboard: the Market Trend of each selected timeframe, Market
-//    Tradability and its reason, the trade recommendation and Optimal
-//    Conditions. It is an analysis tool and never places orders.
+//  * Real Time Swing Structure (LuxAlgo): a larger-scale swing trend per
+//    timeframe on the dashboard, and Strong/Weak High/Low on the chart.
+//  * Dashboard: the Market Trend and Swing Structure of each selected
+//    timeframe, Market Tradability and its reason, the trade recommendation
+//    and Optimal Conditions. It is an analysis tool and never places orders.
 indicator("Base - Market Structure", shorttitle = "Base", overlay = true, max_labels_count = 500, max_lines_count = 500)
 
 // ---------------------------------------------------------------- inputs
@@ -65,6 +73,15 @@ labelSizeInput = input.string("Small", "Label Size", options = ["Tiny", "Small",
 showLines = input.bool(true, "Show Structure Lines", group = grpLines)
 lineStyleInput = input.string("Dashed", "Line Style", options = ["Solid", "Dashed", "Dotted"], group = grpLines)
 lineWidth = input.int(1, "Line Width", minval = 1, maxval = 4, group = grpLines)
+
+grpEqual = "EQH/EQL"
+showEqual = input.bool(true, "Show EQH/EQL", group = grpEqual)
+equalThreshold = input.float(0.1, "EQH/EQL Threshold (ATR, 0 = off)", minval = 0.0, maxval = 0.5, step = 0.05, group = grpEqual)
+
+grpSwingStructure = "Real Time Swing Structure"
+showSwingStructure = input.bool(true, "Show Swing Structure On Dashboard", group = grpSwingStructure)
+swingLen = input.int(50, "Swing Structure Length", minval = 10, maxval = 1000, group = grpSwingStructure)
+showStrongWeak = input.bool(true, "Show Strong/Weak High/Low", group = grpSwingStructure)
 
 grpHtfMa = "MA Filter (HTF)"
 useHtfMa = input.bool(true, "Use HTF MA Filter", group = grpHtfMa)
@@ -166,6 +183,8 @@ if not useCorrOpt and not useExtOpt and not useVolOpt and not useMomOpt
     runtime.error("Enable at least one Optimal Conditions requirement")
 
 // ------------------------------------------------------ structure engine
+// An equal high or low (EQH/EQL, see markEqual) keeps the role of the swing
+// it equals, and its break level is the outer edge of the pair.
 type SPoint
     int id
     int pivotBar
@@ -174,6 +193,13 @@ type SPoint
     int side
     int kind
     bool superseded = false
+    int equalId = -1
+    float equalPrice = na
+    int equalTime = na
+    int equalBar = -1
+    float level = na
+    int levelTime = na
+    int levelBar = -1
 
 type SEvent
     int bar
@@ -186,12 +212,14 @@ type SEvent
     int seq = 0
     bool ls = false
     int lsBar = -1
+    int swingBar = -1
 
 type SLevel
     bool active = false
     float price = na
     int swingTime = na
     int point = -1
+    int swingBar = -1
 
 type SEngine
     array<SPoint> points
@@ -206,6 +234,10 @@ type SEngine
     SLevel hl
     SPoint highPt
     SPoint lowPt
+    // The previous leg's swing on each side: the one a new swing is labelled
+    // against, and the one it may equal (EQH/EQL).
+    SPoint highRefPt
+    SPoint lowRefPt
     int nextId = 0
     int lastSide = 0
     bool haveHighRef = false
@@ -228,6 +260,7 @@ type SEngine
     float chochLevel = na
     int chochLevelTime = na
     int chochLevelPoint = -1
+    int chochLevelBar = -1
     int eventTotal = 0
     int consolidation = 0
     int labelsFromIdx = -1
@@ -250,8 +283,9 @@ newEngine() =>
 
 method setLevel(SLevel lv, SPoint p) =>
     lv.active := true
-    lv.price := p.price
-    lv.swingTime := p.pivotTime
+    lv.price := p.level
+    lv.swingTime := p.levelTime
+    lv.swingBar := p.levelBar
     lv.point := p.id
 
 // A swing is identified once the opposite leg after it has begun: no later
@@ -285,7 +319,7 @@ method lowId(SEngine e) =>
 
 method addPoint(SEngine e, int pivotBar, int pivotTime, float price, int side, int kind) =>
     e.nextId += 1
-    SPoint p = SPoint.new(e.nextId, pivotBar, pivotTime, price, side, kind)
+    SPoint p = SPoint.new(e.nextId, pivotBar, pivotTime, price, side, kind, level = price, levelTime = pivotTime, levelBar = pivotBar)
     e.points.push(p)
     if e.points.size() > MAX_POINTS
         e.points.shift()
@@ -295,8 +329,28 @@ method addPoint(SEngine e, int pivotBar, int pivotTime, float price, int side, i
 // A BOS that follows an event in the same direction confirms that direction
 // and ends any CHoCH trap; every other CHoCH joins the trap window.
 // e.dir is the direction of the latest event that is not an LS.
-method addEvent(SEngine e, int bar, int breakBar, int breakTime, int dir, bool bos, int swingTime, float level) =>
-    SEvent ev = SEvent.new(bar, breakBar, breakTime, dir, bos, swingTime, level, e.eventTotal)
+// EQH / EQL: a swing within the EQH/EQL Threshold (ATR) of the previous swing
+// on its side (the swing its HH/LH or LL/HL label is judged against) is an
+// equal high or low. The two swings are one liquidity pool, so the new swing
+// keeps the role of the swing it equals instead of being called higher or
+// lower by a hair, and the pool's outer edge is the level a close must break.
+// An untyped first swing has no role to pass on.
+markEqual(SPoint p, SPoint ref, float tol) =>
+    if not na(ref) and tol > 0
+        if ref.kind != 0 and math.abs(p.price - ref.price) < tol
+            p.kind := ref.kind
+            p.equalId := ref.id
+            p.equalPrice := ref.price
+            p.equalTime := ref.pivotTime
+            p.equalBar := ref.pivotBar
+            if p.side > 0 ? ref.level > p.level : ref.level < p.level
+                p.level := ref.level
+                p.levelTime := ref.levelTime
+                p.levelBar := ref.levelBar
+    p
+
+method addEvent(SEngine e, int bar, int breakBar, int breakTime, int dir, bool bos, int swingTime, float level, int swingBar) =>
+    SEvent ev = SEvent.new(bar, breakBar, breakTime, dir, bos, swingTime, level, e.eventTotal, swingBar = swingBar)
     int prevDir = e.dir
     e.events.push(ev)
     if e.events.size() > MAX_EVENTS
@@ -319,19 +373,22 @@ method startChoch(SEngine e, int dir, int bar, int barTime, SLevel lv) =>
     e.chochLevel := lv.price
     e.chochLevelTime := lv.swingTime
     e.chochLevelPoint := lv.point
+    e.chochLevelBar := lv.swingBar
 
 // Drops a candidate. While the broken LH/HL is still the latest swing on its
 // side it stays the most recent LH/HL, so a later close through it is a
 // fresh break.
 method cancelChoch(SEngine e) =>
     if e.chochDir > 0 and e.highId() == e.chochLevelPoint
-        e.lh := SLevel.new(true, e.chochLevel, e.chochLevelTime, e.chochLevelPoint)
+        e.lh := SLevel.new(true, e.chochLevel, e.chochLevelTime, e.chochLevelPoint, e.chochLevelBar)
     if e.chochDir < 0 and e.lowId() == e.chochLevelPoint
-        e.hl := SLevel.new(true, e.chochLevel, e.chochLevelTime, e.chochLevelPoint)
+        e.hl := SLevel.new(true, e.chochLevel, e.chochLevelTime, e.chochLevelPoint, e.chochLevelBar)
     e.chochDir := 0
 
 // The swings after the broken LH have made an HH (bullish), or after the
-// broken HL an LL (bearish), and no LL (HH) has formed after it since.
+// broken HL an LL (bearish), and no LL (HH) has formed after it since. An
+// equal high or low (EQH/EQL) is neither: it did not go beyond the swing it
+// equals, so it neither confirms nor cancels a CHoCH.
 method chochComplete(SEngine e) =>
     SPoint ext = na
     SPoint opp = na
@@ -343,11 +400,11 @@ method chochComplete(SEngine e) =>
         opp := e.highPt
     bool done = false
     if not na(ext)
-        if ext.id > e.chochLevelPoint and ext.kind > 0
+        if ext.id > e.chochLevelPoint and ext.kind > 0 and ext.equalId < 0
             if na(opp)
                 done := true
             else
-                done := opp.id < ext.id or opp.kind < 0
+                done := opp.id < ext.id or opp.kind < 0 or opp.equalId >= 0
     done
 
 // A CHoCH that reversed a trend is watched while it is the latest event: if
@@ -366,7 +423,7 @@ method confirmChoch(SEngine e, int bar) =>
     int priorDir = e.dir
     bool priorBos = e.lastBos
     int direction = e.chochDir
-    e.addEvent(bar, e.chochBreakBar, e.chochBreakTime, direction, false, e.chochLevelTime, e.chochLevel)
+    e.addEvent(bar, e.chochBreakBar, e.chochBreakTime, direction, false, e.chochLevelTime, e.chochLevel, e.chochLevelBar)
     e.chochDir := 0
     e.lsSeq := -1
     SPoint origin = direction > 0 ? e.lowPt : e.highPt
@@ -428,7 +485,7 @@ method confirmLs(SEngine e, int bar) =>
 // A pivot high is accepted if it extends the current high leg, or starts a
 // new leg that either travels minSize from the last low or takes out the
 // previous high. It is labelled HH/LH against the previous high leg.
-method onPivotHigh(SEngine e, float v, int pivotBar, int pivotTime, float minSize, int curBar) =>
+method onPivotHigh(SEngine e, float v, int pivotBar, int pivotTime, float minSize, float equalTol, int curBar) =>
     int kind = 0
     bool sameLeg = e.lastSide == 1
     bool accepted = false
@@ -455,7 +512,10 @@ method onPivotHigh(SEngine e, float v, int pivotBar, int pivotTime, float minSiz
             e.dropped.push(e.highPt)
         else
             e.identifySwing(e.lowPt)
-        SPoint p = e.addPoint(pivotBar, pivotTime, v, 1, kind)
+            e.highRefPt := e.highPt
+        SPoint p = markEqual(e.addPoint(pivotBar, pivotTime, v, 1, kind), e.highRefPt, equalTol)
+        kind := p.kind
+        bool equal = p.equalId >= 0
         e.highPt := p
         e.lastHighKind := kind
         e.lastHighTime := pivotTime
@@ -463,16 +523,17 @@ method onPivotHigh(SEngine e, float v, int pivotBar, int pivotTime, float minSiz
         // confirms the LS; a pending CHoCH attempt ends with it.
         if e.lsSwing(1, v)
             e.confirmLs(curBar)
-        // Only swings formed after the breaking close can cancel a CHoCH.
-        else if e.chochDir > 0 and kind < 0 and pivotBar > e.chochBreakBar
+        // Only swings formed after the breaking close can cancel a CHoCH, and
+        // an equal high never does.
+        else if e.chochDir > 0 and kind < 0 and pivotBar > e.chochBreakBar and not equal
             e.cancelChoch()
-        else if e.chochDir < 0 and kind > 0 and pivotBar > e.chochBreakBar
+        else if e.chochDir < 0 and kind > 0 and pivotBar > e.chochBreakBar and not equal
             e.cancelChoch()
         else if e.chochDir != 0 and e.chochComplete()
             e.confirmChoch(curBar)
     accepted
 
-method onPivotLow(SEngine e, float v, int pivotBar, int pivotTime, float minSize, int curBar) =>
+method onPivotLow(SEngine e, float v, int pivotBar, int pivotTime, float minSize, float equalTol, int curBar) =>
     int kind = 0
     bool sameLeg = e.lastSide == -1
     bool accepted = false
@@ -497,15 +558,18 @@ method onPivotLow(SEngine e, float v, int pivotBar, int pivotTime, float minSize
             e.dropped.push(e.lowPt)
         else
             e.identifySwing(e.highPt)
-        SPoint p = e.addPoint(pivotBar, pivotTime, v, -1, kind)
+            e.lowRefPt := e.lowPt
+        SPoint p = markEqual(e.addPoint(pivotBar, pivotTime, v, -1, kind), e.lowRefPt, equalTol)
+        kind := p.kind
+        bool equal = p.equalId >= 0
         e.lowPt := p
         e.lastLowKind := kind
         e.lastLowTime := pivotTime
         if e.lsSwing(-1, v)
             e.confirmLs(curBar)
-        else if e.chochDir < 0 and kind < 0 and pivotBar > e.chochBreakBar
+        else if e.chochDir < 0 and kind < 0 and pivotBar > e.chochBreakBar and not equal
             e.cancelChoch()
-        else if e.chochDir > 0 and kind > 0 and pivotBar > e.chochBreakBar
+        else if e.chochDir > 0 and kind > 0 and pivotBar > e.chochBreakBar and not equal
             e.cancelChoch()
         else if e.chochDir != 0 and e.chochComplete()
             e.confirmChoch(curBar)
@@ -534,7 +598,7 @@ method onClose(SEngine e, float c, int curBar, int curTime) =>
         e.hh.active := false
         if e.chochDir <= 0
             e.cancelChoch()
-            e.addEvent(curBar, curBar, curTime, 1, true, e.hh.swingTime, e.hh.price)
+            e.addEvent(curBar, curBar, curTime, 1, true, e.hh.swingTime, e.hh.price, e.hh.swingBar)
     if e.hl.active and c < e.hl.price
         e.hl.active := false
         if e.dir >= 0 and e.chochDir >= 0
@@ -546,20 +610,20 @@ method onClose(SEngine e, float c, int curBar, int curTime) =>
         e.ll.active := false
         if e.chochDir >= 0
             e.cancelChoch()
-            e.addEvent(curBar, curBar, curTime, -1, true, e.ll.swingTime, e.ll.price)
+            e.addEvent(curBar, curBar, curTime, -1, true, e.ll.swingTime, e.ll.price, e.ll.swingBar)
     e.dir
 
 // One closed candle: the swing confirmed on it (its pivot is swing strength
 // candles back), then the candle's close.
-method step(SEngine e, bool isPh, bool isPl, float phV, float plV, int pivotBar, int pivotTime, float minSize, float c, int curBar, int curTime) =>
+method step(SEngine e, bool isPh, bool isPl, float phV, float plV, int pivotBar, int pivotTime, float minSize, float equalTol, float c, int curBar, int curTime) =>
     e.newPoints.clear()
     e.dropped.clear()
     e.newEvents.clear()
     e.newLs.clear()
     if isPh
-        e.onPivotHigh(phV, pivotBar, pivotTime, minSize, curBar)
+        e.onPivotHigh(phV, pivotBar, pivotTime, minSize, equalTol, curBar)
     if isPl
-        e.onPivotLow(plV, pivotBar, pivotTime, minSize, curBar)
+        e.onPivotLow(plV, pivotBar, pivotTime, minSize, equalTol, curBar)
     e.onClose(c, curBar, curTime)
 
 // Consolidation / Undefined, 1 = sporadic 5-label sequence, 2 = multiple
@@ -610,14 +674,14 @@ method classify(SEngine e, float atrNow) =>
     cons
 
 labelDigit(SPoint p) =>
-    p.side > 0 ? (p.kind > 0 ? 1 : 2) : (p.kind > 0 ? 3 : 4)
+    showEqual and p.equalId >= 0 ? (p.side > 0 ? 5 : 6) : p.side > 0 ? (p.kind > 0 ? 1 : 2) : (p.kind > 0 ? 3 : 4)
 
 eventDigit(SEvent ev) =>
     ev.bos ? (ev.dir > 0 ? 1 : 2) : (ev.dir > 0 ? 3 : 4)
 
 // Numeric evidence for the dashboard (strings are built on the chart):
-// label digits 1 HH, 2 LH, 3 LL, 4 HL; break digits 1 bull BoS, 2 bear BoS,
-// 3 bull CHoCH, 4 bear CHoCH.
+// label digits 1 HH, 2 LH, 3 LL, 4 HL, 5 EQH, 6 EQL; break digits 1 bull
+// BoS, 2 bear BoS, 3 bull CHoCH, 4 bear CHoCH.
 method summary(SEngine e) =>
     int labelsCode = 0
     float rangeLo = na
@@ -734,11 +798,81 @@ structureRequest(int strength, float sizeAtr) =>
     float atrS = swingAtrSeries()
     bool ph = pivotHighFound(strength)
     bool pl = pivotLowFound(strength)
-    e.step(ph, pl, high[strength], low[strength], bar_index - strength, time[strength], sizeAtr * nz(atrS[strength]), close, bar_index, time)
+    e.step(ph, pl, high[strength], low[strength], bar_index - strength, time[strength], sizeAtr * nz(atrS[strength]), equalThreshold * nz(atrS[strength]), close, bar_index, time)
     e.classify(atrS)
     [labelsCode, rangeLo, rangeHi, breaksCode, breaksCount, trapCode, trapCount, trap1, trap2, trap3, trap4, latestCode, latestLevel, newCode, hhV, lhV, llV, hlV] = e.summary()
     // Flags cross request.security as 0/1 so a missing value is simply 0.
     [e.dir, e.lastBos ? 1 : 0, e.consolidation, labelsCode, rangeLo, rangeHi, breaksCode, breaksCount, trapCode, trapCount, trap1, trap2, trap3, trap4, latestCode, latestLevel, newCode, hhV, lhV, llV, hlV, e.eventTotal + e.lsTotal, e.lastHigh, e.lastHighKind, e.haveHigh ? 1 : 0, e.lastLow, e.lastLowKind, e.haveLow ? 1 : 0]
+
+// ------------------------------------------- real time swing structure
+// The swing structure of LuxAlgo's Smart Money Concepts, a second,
+// larger-scale reading of a timeframe shown beside its Market Trend. It never
+// changes the Market Trend, Tradability, Optimal Conditions or alerts.
+//  * Legs: a candle higher than every one of the next Swing Structure Length
+//    candles starts a bearish leg, one lower than all of them a bullish leg.
+//    The candle that starts a new leg is a swing high (low).
+//  * Breaks: the first close above the latest swing high is a bullish BOS, or
+//    a bullish CHoCH when the swing trend was bearish; bearish mirrors this.
+//    Each swing is broken once, and the break sets the swing trend.
+//  * Strong/Weak High/Low: the highest high since the latest swing high and
+//    the lowest low since the latest swing low. With a bullish swing trend
+//    the low is Strong (it holds the trend) and the high Weak (the next
+//    target); a bearish swing trend reverses this.
+// Only closed candles are used.
+type SSwing
+    int trend = 0
+    bool lastChoch = false
+    float breakLevel = na
+    int leg = 0
+    float swingHigh = na
+    bool highCrossed = false
+    float swingLow = na
+    bool lowCrossed = false
+    float top = na
+    int topTime = na
+    float bottom = na
+    int bottomTime = na
+
+// One closed candle: the trailing extremes, then the legs, then the breaks.
+method update(SSwing s, bool newLegHigh, bool newLegLow, float pivotHigh, float pivotLow, int pivotTime) =>
+    if not na(s.top) and high >= s.top
+        s.top := high
+        s.topTime := time
+    if not na(s.bottom) and low <= s.bottom
+        s.bottom := low
+        s.bottomTime := time
+    int previous = s.leg
+    if newLegHigh
+        s.leg := 0
+    else if newLegLow
+        s.leg := 1
+    if s.leg != previous and s.leg == 1
+        s.swingLow := pivotLow
+        s.lowCrossed := false
+        s.bottom := pivotLow
+        s.bottomTime := pivotTime
+    if s.leg != previous and s.leg == 0
+        s.swingHigh := pivotHigh
+        s.highCrossed := false
+        s.top := pivotHigh
+        s.topTime := pivotTime
+    if not na(s.swingHigh) and not s.highCrossed and close > s.swingHigh
+        s.lastChoch := s.trend < 0
+        s.highCrossed := true
+        s.trend := 1
+        s.breakLevel := s.swingHigh
+    if not na(s.swingLow) and not s.lowCrossed and close < s.swingLow
+        s.lastChoch := s.trend > 0
+        s.lowCrossed := true
+        s.trend := -1
+        s.breakLevel := s.swingLow
+    s
+
+// The swing structure of the timeframe this runs on.
+swingRequest() =>
+    var SSwing sw = SSwing.new()
+    sw.update(high[swingLen] > ta.highest(high, swingLen), low[swingLen] < ta.lowest(low, swingLen), high[swingLen], low[swingLen], time[swingLen])
+    [sw.trend, sw.lastChoch ? 1 : 0, sw.breakLevel, sw.top, sw.bottom]
 
 validSession(string s) =>
     bool ok = str.length(s) == 9 and str.match(s, "^[0-9]{4}-[0-9]{4}$") != ""
@@ -790,11 +924,13 @@ htfRequest() =>
     [diPlus, diMinus, adxV] = ta.dmi(adxLength, adxLength)
     float atrV = ta.sma(ta.tr(true), atrLength)
     int sess = sessionOk() ? 1 : 0
-    [d[1], b[1], cons[1], lc[1], rlo[1], rhi[1], bc[1], bn[1], tc[1], tn[1], t1[1], t2[1], t3[1], t4[1], lcd[1], llv[1], nc[1], vhh[1], vlh[1], vll[1], vhl[1], et[1], close[1], open[1], maV[1], adxV[1], atrV[1], sess[1]]
+    [swT, swC, swL, swTop, swBottom] = swingRequest()
+    [d[1], b[1], cons[1], lc[1], rlo[1], rhi[1], bc[1], bn[1], tc[1], tn[1], t1[1], t2[1], t3[1], t4[1], lcd[1], llv[1], nc[1], vhh[1], vlh[1], vll[1], vhl[1], et[1], close[1], open[1], maV[1], adxV[1], atrV[1], sess[1], swT[1], swC[1], swL[1], swTop[1], swBottom[1]]
 
 mtfRequest() =>
     [d, b, cons, lc, rlo, rhi, bc, bn, tc, tn, t1, t2, t3, t4, lcd, llv, nc, vhh, vlh, vll, vhl, et, hp, hk, hv, lp, lk, lv] = structureRequest(swingStrengthFor(mtfSensitivity), swingSizeFor(mtfSensitivity))
-    [d[1], b[1], cons[1], lc[1], rlo[1], rhi[1], bc[1], bn[1], tc[1], tn[1], t1[1], t2[1], t3[1], t4[1], lcd[1], llv[1], vhh[1], vlh[1], vll[1], vhl[1]]
+    [swT, swC, swL, swTop, swBottom] = swingRequest()
+    [d[1], b[1], cons[1], lc[1], rlo[1], rhi[1], bc[1], bn[1], tc[1], tn[1], t1[1], t2[1], t3[1], t4[1], lcd[1], llv[1], vhh[1], vlh[1], vll[1], vhl[1], swT[1], swC[1], swL[1], swTop[1], swBottom[1]]
 
 ltfRequest() =>
     [d, b, cons, lc, rlo, rhi, bc, bn, tc, tn, t1, t2, t3, t4, lcd, llv, nc, vhh, vlh, vll, vhl, et, hp, hk, hv, lp, lk, lv] = structureRequest(swingStrengthFor(ltfSensitivity), swingSizeFor(ltfSensitivity))
@@ -804,7 +940,8 @@ ltfRequest() =>
     float volRatio = volAvg > 0 ? nz(volume) / volAvg : 0.0
     float trAvg = nz(ta.sma(trL, MOMENTUM_AVERAGE_LENGTH)[1])
     float momRatio = trAvg > 0 ? trL / trAvg : 0.0
-    [d[1], b[1], cons[1], lc[1], rlo[1], rhi[1], bc[1], bn[1], tc[1], tn[1], t1[1], t2[1], t3[1], t4[1], lcd[1], llv[1], vhh[1], vlh[1], vll[1], vhl[1], hp[1], hk[1], hv[1], lp[1], lk[1], lv[1], close[1], atrL[1], volAvg[1], volRatio[1], trAvg[1], momRatio[1]]
+    [swT, swC, swL, swTop, swBottom] = swingRequest()
+    [d[1], b[1], cons[1], lc[1], rlo[1], rhi[1], bc[1], bn[1], tc[1], tn[1], t1[1], t2[1], t3[1], t4[1], lcd[1], llv[1], vhh[1], vlh[1], vll[1], vhl[1], hp[1], hk[1], hv[1], lp[1], lk[1], lv[1], close[1], atrL[1], volAvg[1], volRatio[1], trAvg[1], momRatio[1], swT[1], swC[1], swL[1], swTop[1], swBottom[1]]
 
 mtfMaRequest() =>
     float e1 = ta.ema(close, mtfMaLength)
@@ -812,9 +949,9 @@ mtfMaRequest() =>
     float m = mtfMaType == "EMA" ? e1 : s1
     [m[1], open[1], close[1]]
 
-[hDir, hBos, hCons, hLabels, hRangeLo, hRangeHi, hBreaks, hBreaksN, hTrap, hTrapN, hT1, hT2, hT3, hT4, hLatest, hLatestLv, hNew, hHH, hLH, hLL, hHL, hEvents, hClose, hOpen, hMa, hAdx, hAtr, hSession] = request.security(syminfo.tickerid, htfTf, htfRequest(), lookahead = barmerge.lookahead_on)
-[mDir, mBos, mCons, mLabels, mRangeLo, mRangeHi, mBreaks, mBreaksN, mTrap, mTrapN, mT1, mT2, mT3, mT4, mLatest, mLatestLv, mHH, mLH, mLL, mHL] = request.security(syminfo.tickerid, mtfTf, mtfRequest(), lookahead = barmerge.lookahead_on)
-[lDir, lBos, lCons, lLabels, lRangeLo, lRangeHi, lBreaks, lBreaksN, lTrap, lTrapN, lT1, lT2, lT3, lT4, lLatest, lLatestLv, lHH, lLH, lLL, lHL, lLastHigh, lLastHighKind, lHaveHigh, lLastLow, lLastLowKind, lHaveLow, lClose, lAtr, lVolAvg, lVolRatio, lTrAvg, lMomRatio] = request.security(syminfo.tickerid, ltfTf, ltfRequest(), lookahead = barmerge.lookahead_on)
+[hDir, hBos, hCons, hLabels, hRangeLo, hRangeHi, hBreaks, hBreaksN, hTrap, hTrapN, hT1, hT2, hT3, hT4, hLatest, hLatestLv, hNew, hHH, hLH, hLL, hHL, hEvents, hClose, hOpen, hMa, hAdx, hAtr, hSession, hSwTrend, hSwChoch, hSwLevel, hSwTop, hSwBottom] = request.security(syminfo.tickerid, htfTf, htfRequest(), lookahead = barmerge.lookahead_on)
+[mDir, mBos, mCons, mLabels, mRangeLo, mRangeHi, mBreaks, mBreaksN, mTrap, mTrapN, mT1, mT2, mT3, mT4, mLatest, mLatestLv, mHH, mLH, mLL, mHL, mSwTrend, mSwChoch, mSwLevel, mSwTop, mSwBottom] = request.security(syminfo.tickerid, mtfTf, mtfRequest(), lookahead = barmerge.lookahead_on)
+[lDir, lBos, lCons, lLabels, lRangeLo, lRangeHi, lBreaks, lBreaksN, lTrap, lTrapN, lT1, lT2, lT3, lT4, lLatest, lLatestLv, lHH, lLH, lLL, lHL, lLastHigh, lLastHighKind, lHaveHigh, lLastLow, lLastLowKind, lHaveLow, lClose, lAtr, lVolAvg, lVolRatio, lTrAvg, lMomRatio, lSwTrend, lSwChoch, lSwLevel, lSwTop, lSwBottom] = request.security(syminfo.tickerid, ltfTf, ltfRequest(), lookahead = barmerge.lookahead_on)
 [mtfMaValue, mtfMaOpen, mtfMaClose] = request.security(syminfo.tickerid, mtfTf, mtfMaRequest(), lookahead = barmerge.lookahead_on)
 
 // ---------------------------------------------------- chart structure
@@ -830,6 +967,9 @@ float chartAtr = swingAtrSeries()
 bool chartPh = pivotHighFound(chartStrength)
 bool chartPl = pivotLowFound(chartStrength)
 var SEngine chartEngine = newEngine()
+var SSwing chartSwing = SSwing.new()
+bool chartNewLegHigh = high[swingLen] > ta.highest(high, swingLen)
+bool chartNewLegLow = low[swingLen] < ta.lowest(low, swingLen)
 
 labelSize = labelSizeInput == "Tiny" ? size.tiny : labelSizeInput == "Normal" ? size.normal : labelSizeInput == "Large" ? size.large : size.small
 lineStyle = lineStyleInput == "Solid" ? line.style_solid : lineStyleInput == "Dotted" ? line.style_dotted : line.style_dashed
@@ -843,42 +983,60 @@ if bar_index == math.max(drawFrom, 0)
     drawFromTime := time
 
 swingName(SPoint p) =>
-    p.side > 0 ? (p.kind > 0 ? "HH" : "LH") : (p.kind > 0 ? "LL" : "HL")
+    showEqual and p.equalId >= 0 ? (p.side > 0 ? "EQH" : "EQL") : p.side > 0 ? (p.kind > 0 ? "HH" : "LH") : (p.kind > 0 ? "LL" : "HL")
+
+// A BOS, CHoCH or LS caption, centred on its line (the candle midway between
+// the broken swing and the candle that closed through it): above a line broken
+// upwards, below one broken downwards.
+breakLabel(SEvent ev, string txt, color textColor) =>
+    label.new(int(math.round(0.5 * (ev.swingBar + ev.breakBar))), ev.level, txt, xloc = xloc.bar_index, yloc = yloc.price, color = color.new(color.white, 100), style = ev.dir > 0 ? label.style_label_down : label.style_label_up, textcolor = textColor, size = labelSize)
 
 // Only the newest swing on each side can be superseded, so the chart keeps
-// the label of the newest high and low to delete when that happens.
-// The drawing of the latest CHoCH, replaced if it becomes an LS.
+// the label (and EQH/EQL line) of the newest high and low to delete when that
+// happens. The drawing of the latest CHoCH, replaced if it becomes an LS.
 var int lastChochSeq = -1
 var label lastChochLabel = na
 var line lastChochLine = na
 var label highSwingLabel = na
+var line highEqualLine = na
 var int highSwingId = -1
 var label lowSwingLabel = na
+var line lowEqualLine = na
 var int lowSwingId = -1
 
 if barstate.isconfirmed
-    chartEngine.step(chartPh, chartPl, high[chartStrength], low[chartStrength], bar_index - chartStrength, time[chartStrength], chartSizeAtr * nz(chartAtr[chartStrength]), close, bar_index, time)
+    chartEngine.step(chartPh, chartPl, high[chartStrength], low[chartStrength], bar_index - chartStrength, time[chartStrength], chartSizeAtr * nz(chartAtr[chartStrength]), equalThreshold * nz(chartAtr[chartStrength]), close, bar_index, time)
+    chartSwing.update(chartNewLegHigh, chartNewLegLow, high[swingLen], low[swingLen], time[swingLen])
     int droppedCount = chartEngine.dropped.size()
     if droppedCount > 0
         for i = 0 to droppedCount - 1
             SPoint gone = chartEngine.dropped.get(i)
             if gone.side > 0 and gone.id == highSwingId
                 label.delete(highSwingLabel)
+                line.delete(highEqualLine)
                 highSwingId := -1
             if gone.side < 0 and gone.id == lowSwingId
                 label.delete(lowSwingLabel)
+                line.delete(lowEqualLine)
                 lowSwingId := -1
     int pointCount = chartEngine.newPoints.size()
     if pointCount > 0
         for i = 0 to pointCount - 1
             SPoint p = chartEngine.newPoints.get(i)
             if showSwingPoints and p.kind != 0 and p.pivotBar >= drawFrom
-                label lbl = label.new(p.pivotTime, p.price, swingName(p), xloc = xloc.bar_time, yloc = yloc.price, color = color.new(color.white, 100), style = p.side > 0 ? label.style_label_down : label.style_label_up, textcolor = p.side > 0 ? HIGH_LABEL_COLOR : LOW_LABEL_COLOR, size = labelSize)
+                color swingColor = p.side > 0 ? HIGH_LABEL_COLOR : LOW_LABEL_COLOR
+                label lbl = label.new(p.pivotTime, p.price, swingName(p), xloc = xloc.bar_time, yloc = yloc.price, color = color.new(color.white, 100), style = p.side > 0 ? label.style_label_down : label.style_label_up, textcolor = swingColor, size = labelSize)
+                // An equal high or low is joined to the swing it equals.
+                line eq = na
+                if showEqual and p.equalId >= 0 and p.equalBar >= drawFrom
+                    eq := line.new(p.equalTime, p.equalPrice, p.pivotTime, p.price, xloc = xloc.bar_time, color = swingColor, style = line.style_dotted, width = 1)
                 if p.side > 0
                     highSwingLabel := lbl
+                    highEqualLine := eq
                     highSwingId := p.id
                 else
                     lowSwingLabel := lbl
+                    lowEqualLine := eq
                     lowSwingId := p.id
     // An LS replaces the drawing of the CHoCH it reclassifies and keeps its
     // place, in its own colour. It is known before this candle's events.
@@ -892,7 +1050,7 @@ if barstate.isconfirmed
                 lastChochSeq := -1
             if showLs and ev.breakBar >= drawFrom and ev.swingTime >= drawFromTime
                 color lsColor = ev.dir > 0 ? bullLsColor : bearLsColor
-                label.new(ev.breakTime, ev.level, "LS", xloc = xloc.bar_time, yloc = yloc.price, color = color.new(color.white, 100), style = ev.dir > 0 ? label.style_label_up : label.style_label_down, textcolor = lsColor, size = labelSize)
+                breakLabel(ev, "LS", lsColor)
                 if showLines
                     line.new(ev.swingTime, ev.level, ev.breakTime, ev.level, xloc = xloc.bar_time, color = lsColor, style = lineStyle, width = lineWidth)
     int eventCount = chartEngine.newEvents.size()
@@ -906,7 +1064,7 @@ if barstate.isconfirmed
             // and LS starts from a marked swing.
             if shown and ev.breakBar >= drawFrom and ev.swingTime >= drawFromTime
                 color textColor = ev.dir > 0 ? (ev.bos ? bullBosColor : bullChochColor) : (ev.bos ? bearBosColor : bearChochColor)
-                lbl := label.new(ev.breakTime, ev.level, ev.bos ? "BOS" : "CHoCH", xloc = xloc.bar_time, yloc = yloc.price, color = color.new(color.white, 100), style = ev.dir > 0 ? label.style_label_up : label.style_label_down, textcolor = textColor, size = labelSize)
+                lbl := breakLabel(ev, ev.bos ? "BOS" : "CHoCH", textColor)
                 if showLines
                     ln := line.new(ev.swingTime, ev.level, ev.breakTime, ev.level, xloc = xloc.bar_time, color = ev.bos ? color.blue : color.red, style = lineStyle, width = lineWidth)
             // Only the latest CHoCH can still become an LS.
@@ -917,9 +1075,26 @@ if barstate.isconfirmed
 
 var line lastHighLine = na
 var line lastLowLine = na
+var line swingTopLine = na
+var line swingBottomLine = na
+var label swingTopLabel = na
+var label swingBottomLabel = na
 if barstate.islast
     line.delete(lastHighLine)
     line.delete(lastLowLine)
+    line.delete(swingTopLine)
+    line.delete(swingBottomLine)
+    label.delete(swingTopLabel)
+    label.delete(swingBottomLabel)
+    // Strong/Weak High/Low: the swing structure's trailing extremes, extended
+    // 20 candles to the right, where their names sit.
+    int rightTime = time + 20 * (time - time[1])
+    if showStrongWeak and not na(chartSwing.top)
+        swingTopLine := line.new(chartSwing.topTime, chartSwing.top, rightTime, chartSwing.top, xloc = xloc.bar_time, color = HIGH_LABEL_COLOR, width = 1)
+        swingTopLabel := label.new(rightTime, chartSwing.top, chartSwing.trend < 0 ? "Strong High" : "Weak High", xloc = xloc.bar_time, yloc = yloc.price, color = color.new(color.white, 100), style = label.style_label_down, textcolor = HIGH_LABEL_COLOR, size = labelSize)
+    if showStrongWeak and not na(chartSwing.bottom)
+        swingBottomLine := line.new(chartSwing.bottomTime, chartSwing.bottom, rightTime, chartSwing.bottom, xloc = xloc.bar_time, color = LOW_LABEL_COLOR, width = 1)
+        swingBottomLabel := label.new(rightTime, chartSwing.bottom, chartSwing.trend > 0 ? "Strong Low" : "Weak Low", xloc = xloc.bar_time, yloc = yloc.price, color = color.new(color.white, 100), style = label.style_label_up, textcolor = LOW_LABEL_COLOR, size = labelSize)
     if showSwingPoints and chartEngine.haveHigh
         lastHighLine := line.new(chartEngine.lastHighTime, chartEngine.lastHigh, time, chartEngine.lastHigh, xloc = xloc.bar_time, color = HIGH_LABEL_COLOR, style = line.style_dotted, width = 1)
     if showSwingPoints and chartEngine.haveLow
@@ -955,6 +1130,18 @@ htfView = TfView.new(nz(hDir), nz(hBos) == 1, nz(hCons), nz(hLabels), hRangeLo, 
 mtfView = TfView.new(nz(mDir), nz(mBos) == 1, nz(mCons), nz(mLabels), mRangeLo, mRangeHi, nz(mBreaks), nz(mBreaksN), nz(mTrap), nz(mTrapN), mT1, mT2, mT3, mT4, nz(mLatest), mLatestLv, mHH, mLH, mLL, mHL)
 ltfView = TfView.new(nz(lDir), nz(lBos) == 1, nz(lCons), nz(lLabels), lRangeLo, lRangeHi, nz(lBreaks), nz(lBreaksN), nz(lTrap), nz(lTrapN), lT1, lT2, lT3, lT4, nz(lLatest), lLatestLv, lHH, lLH, lLL, lHL)
 
+// The Real Time Swing Structure of a trend timeframe.
+type SwingView
+    int trend
+    bool lastChoch
+    float level
+    float top
+    float bottom
+
+htfSwing = SwingView.new(nz(hSwTrend), nz(hSwChoch) == 1, hSwLevel, hSwTop, hSwBottom)
+mtfSwing = SwingView.new(nz(mSwTrend), nz(mSwChoch) == 1, mSwLevel, mSwTop, mSwBottom)
+ltfSwing = SwingView.new(nz(lSwTrend), nz(lSwChoch) == 1, lSwLevel, lSwTop, lSwBottom)
+
 biasDirection(TfView v) =>
     v.cons != 0 ? 0 : v.dir
 
@@ -987,7 +1174,7 @@ priceText(float p) =>
     str.tostring(p, format.mintick)
 
 labelName(int d) =>
-    d == 1 ? "HH" : d == 2 ? "LH" : d == 3 ? "LL" : "HL"
+    d == 1 ? "HH" : d == 2 ? "LH" : d == 3 ? "LL" : d == 4 ? "HL" : d == 5 ? "EQH" : "EQL"
 
 breakName(int d) =>
     d == 1 ? "bull BoS" : d == 2 ? "bear BoS" : d == 3 ? "bull CHoCH" : "bear CHoCH"
@@ -1057,6 +1244,34 @@ recommendationText(TfView v) =>
         else
             s := not na(v.lh) ? "Look for sells on pullbacks while price holds below LH " + priceText(v.lh) + "." : "Look for sells on pullbacks."
     s
+
+// The swing structure's dashboard output: its trend and latest break.
+swingTrendText(SwingView sw) =>
+    sw.trend == 0 ? "Undefined" : (sw.trend > 0 ? "Bullish" : "Bearish") + (sw.lastChoch ? " (CHoCH)" : " (BOS)")
+
+strongWeakText(SwingView sw) =>
+    string hi = na(sw.top) ? "no swing high yet" : (sw.trend < 0 ? "Strong High " : "Weak High ") + priceText(sw.top)
+    string lo = na(sw.bottom) ? "no swing low yet" : (sw.trend > 0 ? "Strong Low " : "Weak Low ") + priceText(sw.bottom)
+    hi + " | " + lo
+
+// How the swing structure relates to the timeframe's Market Trend.
+swingAgreementText(SwingView sw, TfView v, string name) =>
+    int d = biasDirection(v)
+    string s = ""
+    if sw.trend == 0
+        s := "No swing break yet to compare with the " + name + " Market Trend."
+    else if d == 0
+        s := "The " + name + " Market Trend is ranging inside a " + trendWord(sw.trend) + " swing structure."
+    else if d == sw.trend
+        s := "Agrees with the " + name + " Market Trend."
+    else
+        s := "Opposes the " + name + " Market Trend: its " + trendWord(d) + " trend is a counter-move inside a " + trendWord(sw.trend) + " swing structure."
+    s
+
+swingTooltip(SwingView sw, TfView v, string name) =>
+    string t = "Real Time Swing Structure (" + str.tostring(swingLen) + "-candle swings)\nSwing trend: "
+    t := t + (sw.trend == 0 ? "no swing broken yet" : (sw.trend > 0 ? "Bullish" : "Bearish") + " since a " + trendWord(sw.trend) + " " + (sw.lastChoch ? "CHoCH" : "BOS") + " through " + priceText(sw.level))
+    t + "\n" + strongWeakText(sw) + "\n" + swingAgreementText(sw, v, name)
 
 breakdownText(TfView v) =>
     "Current Trend Classification: " + biasText(v) + "\nTrigger Condition Met: " + triggerText(v) + "\nStructural Evidence: " + evidenceText(v) + "\nTrade Recommendations: " + recommendationText(v)
@@ -1251,6 +1466,9 @@ trendColor(TfView v) =>
 passColor(bool pass) =>
     pass ? DASH_POSITIVE_COLOR : DASH_NEGATIVE_COLOR
 
+swingColor(SwingView sw) =>
+    sw.trend > 0 ? DASH_POSITIVE_COLOR : sw.trend < 0 ? DASH_NEGATIVE_COLOR : DASH_NEUTRAL_COLOR
+
 // One row: the component name in bold, then its coloured output.
 dashRow(int row, string component, string output, color outputColor, string tip) =>
     table.cell(dash, 0, row, component, text_color = DASH_TEXT_COLOR, text_halign = text.align_left, text_size = size.small, tooltip = tip, text_formatting = text.format_bold)
@@ -1266,15 +1484,25 @@ if barstate.islast
     [optimal, optimalReason] = evaluateOptimal(tradable, healthy, goodVolume, volRatio, goodMomentum, momRatio)
     table.clear(dash, 0, 0, 1, 23)
     int row = 0
+    // Each Market Trend with its Real Time Swing Structure below it.
     if useHtf
         dashRow(row, "HTF Market Trend (" + tfName(htfTf) + "):", biasText(htfView), trendColor(htfView), breakdownText(htfView))
         row += 1
+        if showSwingStructure
+            dashRow(row, "Swing Structure:", swingTrendText(htfSwing), swingColor(htfSwing), swingTooltip(htfSwing, htfView, tfName(htfTf)))
+            row += 1
     if useMtf
         dashRow(row, "MTF Market Trend (" + tfName(mtfTf) + "):", biasText(mtfView), trendColor(mtfView), breakdownText(mtfView))
         row += 1
+        if showSwingStructure
+            dashRow(row, "Swing Structure:", swingTrendText(mtfSwing), swingColor(mtfSwing), swingTooltip(mtfSwing, mtfView, tfName(mtfTf)))
+            row += 1
     if useLtf
         dashRow(row, "LTF Market Trend (" + tfName(ltfTf) + "):", biasText(ltfView), trendColor(ltfView), breakdownText(ltfView))
         row += 1
+        if showSwingStructure
+            dashRow(row, "Swing Structure:", swingTrendText(ltfSwing), swingColor(ltfSwing), swingTooltip(ltfSwing, ltfView, tfName(ltfTf)))
+            row += 1
     dashRow(row, "Market Tradability:", tradable ? "Tradable" : "Not Tradable", passColor(tradable), entryFilterTooltip())
     row += 1
     dashRow(row, "Tradability Reason:", tradeReason, DASH_TEXT_COLOR, "")

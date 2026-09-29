@@ -146,6 +146,37 @@ Swing classification
     same-side leg exists. The 3x warm-up puts them well before the drawn
     window, so every drawn swing carries a label.
 
+EQH / EQL (equal highs and lows)
+Equal_Highs_Lows_Threshold (default 0.1; valid 0..0.5; 0 = off)
+Show_Equal_Highs_Lows (default true)
+  Adapted from the EQH/EQL of LuxAlgo's Smart Money Concepts to Base's own
+  swings. A swing whose price is within Equal_Highs_Lows_Threshold x the
+  14-candle ATR of its swing candle of the previous-leg swing on its side
+  (the swing its HH/LH or LL/HL label is judged against) is an equal high or
+  low (MarkEqualSwing). The two swings are one liquidity pool:
+  * The new swing keeps the role of the swing it equals (HH, LH, LL or HL)
+    instead of being called higher or lower by a hair. An untyped first
+    swing has no role to pass on, so nothing equals it.
+  * Its break level is the pool's outer edge (the higher of two equal highs,
+    the lower of two equal lows), timed at the swing that holds it, so a
+    close inside the pool breaks nothing. Chains of equal swings keep the
+    outermost edge.
+  * It neither confirms nor cancels a CHoCH (CHoCHComplete and the
+    cancellation rules skip it): it did not go beyond the swing it equals.
+    A pending CHoCH waits for the next real HH (LL) or for an LL (HH) that
+    cancels it.
+  * Show_Equal_Highs_Lows labels it EQH/EQL and draws a dotted line from the
+    swing it equals. With it off, the swing shows its role label and still
+    acts as one pool; only the threshold changes the structure.
+  Effect: on 40 synthetic markets x 4,500 H1 candles 470 of 14,028 swings were
+  equal; on real data (EURUSD H1 2017-2018, GOOG, NVDA, ORCL, YHOO daily) 75
+  of 2,148. Measured against the same engine without EQH/EQL on the real
+  data: CHoCH follow-through (1 ATR beyond the level before a close back
+  through it) 60.2% -> 60.7%, BOS follow-through 63.7% -> 63.5%, CHoCHs
+  confirmed by a BOS 77.4% -> 77.4%, LS rate 20.1% -> 19.8%. These changes
+  are within noise: EQH/EQL mainly removes hair-thin HH/LH decisions and puts
+  break levels at the edge of the liquidity pool.
+
 Break levels
   Only a candle close through a swing is a break; a wick is a liquidity sweep.
   Only an identified swing can be broken. A swing is identified once the
@@ -157,7 +188,7 @@ Break levels
     HL. Each level can be broken once.
   * Every BOS and CHoCH therefore starts from a swing that stays marked:
     HH for a bullish BOS, LL for a bearish BOS, LH for a bullish CHoCH and
-    HL for a bearish CHoCH.
+    HL for a bearish CHoCH (or an EQH/EQL that holds that role).
   * A break is drawn only when its swing is inside the drawn window, so its
     swing label is always on the chart too.
 
@@ -178,15 +209,15 @@ Event rules (the label of the broken swing decides the event)
     level that changes character); likewise an HL broken with an LL.
 
 CHoCH confirmation
-  * The CHoCH is drawn on the candle that closed through the LH/HL. The trend
-    and the alert change when it is confirmed:
+  * The CHoCH line ends on the candle that closed through the LH/HL. The
+    trend and the alert change when it is confirmed:
       - normally when the HH (bullish) or LL (bearish) swing formed by the
         break is confirmed. An HH swing is always confirmed before any close
         above it, so the CHoCH always comes before the BOS that breaks it;
       - or by the breaking close itself, when a wick through the LH/HL had
         already made the HH/LL and no LL/HH has formed since. If that close
         also clears the HH/LL, the BOS is printed on the same candle.
-  * No CHoCH in these cases:
+  * No CHoCH in these cases (an EQH/EQL counts as none of these swings):
       - the swing made by the break is an LH (bullish) or HL (bearish);
       - an LL forms before the HH (an HH before the LL);
       - a BOS in the old direction happens before the HH/LL is confirmed.
@@ -276,7 +307,7 @@ Bullish_LS_Color / Bearish_LS_Color (default deep yellow, C'229,184,0')
 
 Label_Size (default BASE_SMALL)
   Font size enumeration: TINY=7, SMALL=9, NORMAL=11, LARGE=14. It affects
-  BOS/CHoCH and swing-point text.
+  BOS/CHoCH/LS, swing-point (including EQH/EQL) and Strong/Weak text.
 
 Show_Structure_Lines (default true)
   Draws a horizontal segment from the broken swing to the candle that closed
@@ -289,10 +320,14 @@ Line_Style (default STYLE_DASH) / Line_Width (default 1)
   changing either is visual only.
 
 Result
-  Signal text sits on the broken level at the breaking candle: below bullish
-  breaks and above bearish breaks. HL/LL labels are teal below the swing low;
-  HH/LH labels are red above the swing high. Object IDs include event type,
-  direction, and candle time to avoid duplicates within a rebuild.
+  Signal text is centred on its line, as in LuxAlgo's Smart Money Concepts:
+  at the candle midway between the broken swing and the candle that closed
+  through it (rounded), on the broken level, above a line broken upwards and
+  below one broken downwards. HL/LL/EQL labels are teal below the swing low;
+  HH/LH/EQH labels are red above the swing high, and a dotted line of the
+  same colour joins an EQH/EQL to the swing it equals. Object IDs include
+  event type, direction, and the time of the candle that closed through the
+  level to avoid duplicates within a rebuild.
 
 
 4. HTF MOVING-AVERAGE QUALIFICATION (input group "MA Filter (HTF)")
@@ -477,6 +512,39 @@ A broken LH/HL changes nothing until its CHoCH is confirmed. New swings that
 break nothing never change a trend, so an ordinary pullback cannot turn an
 established trend transitional.
 
+Real Time Swing Structure (input group "Real Time Swing Structure")
+Show_Swing_Structure (default true)
+Swing_Structure_Length (default 50; valid 10..1000)
+Show_Strong_Weak_High_Low (default true)
+  The swing structure of LuxAlgo's Smart Money Concepts, replayed on each
+  trend timeframe (ReplaySwingStructure) beside its Market Trend as a second,
+  larger-scale reading. It never changes the Market Trend, Tradability,
+  Optimal Conditions or alerts, and its BOS/CHoCH are not drawn, so the chart
+  keeps one set of BOS/CHoCH labels.
+  * Legs: a candle higher than every one of the next Swing_Structure_Length
+    candles starts a bearish leg, one lower than all of them a bullish leg
+    (the first leg counts as bearish). The candle that starts a new leg is a
+    swing high (low); a leg that is already bearish takes no new swing high.
+  * Breaks: the first close above the latest swing high is a bullish BOS, or a
+    bullish CHoCH when the swing trend was bearish; bearish mirrors this. Each
+    swing is broken once, and the break sets the swing trend.
+  * Strong/Weak High/Low: the highest high since the latest swing high and the
+    lowest low since the latest swing low (ties move to the later candle).
+    With a bullish swing trend the low is Strong and the high Weak; a bearish
+    swing trend makes the high Strong and the low Weak; before any break both
+    are Weak.
+  * Closed candles only. Each replay covers at least SwingStructureBars()
+    candles (max(1,000, 20 x Swing_Structure_Length)); a timeframe replayed
+    over fewer candles is copied again with that many.
+  * Show_Swing_Structure adds a Swing Structure row under each Market Trend
+    (section 10). Show_Strong_Weak_High_Low draws the chart timeframe's
+    Strong/Weak High/Low as solid lines from the extreme's candle to 20
+    candles right of the latest closed candle, with their names at the right
+    end.
+  It was checked against a literal simulation of LuxAlgo's Pine code (its
+  leg, crossover and trailing-extreme series) on 36 generated markets: the
+  swing trend, latest break and Strong/Weak High/Low were identical.
+
 Market Tradability prints Tradable when:
   * the HTF trend is established (Bullish or Bearish, latest break a BOS, not
     Consolidation / Undefined). This applies even when HTF is not selected for
@@ -512,6 +580,13 @@ coloured. Rows, top to bottom:
                                 Transition (red), or Consolidation / Undefined
                                 (grey). The row's tooltip is its breakdown
                                 (below).
+  Swing Structure               under each Market Trend when
+                                Show_Swing_Structure is on: Bullish (green),
+                                Bearish (red) or Undefined (grey), with the
+                                latest break, e.g. "Bullish (CHoCH)". The
+                                tooltip gives the break that set the swing
+                                trend, Strong/Weak High/Low and whether it
+                                agrees with the Market Trend (section 9).
   Market Tradability            Tradable (green) or Not Tradable (red). The
                                 tooltip holds the entry-filter diagnostics.
   Tradability Reason            one sentence: why the selected timeframes
@@ -647,9 +722,16 @@ Structure state (BASE_STRUCTURE_STATE, rebuilt by every replay)
   last_high_kind       +1 HH, -1 LH, 0 untyped.
   last_low_kind        +1 LL, -1 HL, 0 untyped.
 
+Swing structure (BASE_SWING_STRUCTURE, rebuilt by ReplaySwingStructure)
+  trend                +1 bullish, -1 bearish, 0 before the first swing break.
+  last_choch           The latest swing break was a CHoCH.
+  high/low             The latest swing high and low, each broken once.
+  top/bottom           Trailing extremes: Strong/Weak High/Low.
+
 Replay-local levels (ReplayStructure)
   hh / ll              Most recent unbroken HH / LL: a close through it is a
-                       BOS.
+                       BOS. For an EQH/EQL the level is the pool's outer
+                       edge.
   lh / hl              Most recent unbroken LH / HL: a close through it starts
                        a CHoCH unless the trend already points that way.
   choch                The CHoCH waiting for its HH->HL (LL->LH) swings.
@@ -673,6 +755,12 @@ only prefixed objects, and clears the chart comment.
   Change structure frequency:
     Structure_Timeframe, the three Swing Sensitivity inputs, Bars_To_Process.
 
+  Change which swings are equal (EQH/EQL) and therefore some break levels:
+    Equal_Highs_Lows_Threshold.
+
+  Change the Real Time Swing Structure (dashboard and Strong/Weak lines only):
+    Swing_Structure_Length.
+
   Change whether the latest directional setup qualifies:
     HTF MA and MTF MA settings, session settings, ADX settings, ATR settings.
 
@@ -685,7 +773,8 @@ only prefixed objects, and clears the chart comment.
     The Tradable result and the four Use_*_For_Optimal switches.
 
   Change visuals only:
-    Show toggles, colors, label size, line styles/widths.
+    Show toggles (including Show_Equal_Highs_Lows, Show_Swing_Structure and
+    Show_Strong_Weak_High_Low), colors, label size, line styles/widths.
 
   Change notifications only:
     Enable_Popup_Alerts and Enable_Push_Notifications.

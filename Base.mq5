@@ -1,5 +1,5 @@
 #property copyright "Market Trend Analyser conversion"
-#property version   "2.35"
+#property version   "2.36"
 #property strict
 #property description "BASE: MT5 port of the Market Trend Analyser Pine Script."
 #property description "Signal/visualisation EA only; the source indicator contains no trading rules."
@@ -50,6 +50,15 @@ input BASE_LABEL_SIZE Label_Size=BASE_SMALL;
 input bool Show_Structure_Lines=true;
 input ENUM_LINE_STYLE Line_Style=STYLE_DASH;
 input int Line_Width=1;
+
+input group "EQH/EQL"
+input bool Show_Equal_Highs_Lows=true; // Show EQH/EQL
+input double Equal_Highs_Lows_Threshold=0.1; // EQH/EQL Threshold (ATR, 0 = off)
+
+input group "Real Time Swing Structure"
+input bool Show_Swing_Structure=true; // Show Swing Structure On Dashboard
+input int Swing_Structure_Length=50; // Swing Structure Length
+input bool Show_Strong_Weak_High_Low=true; // Show Strong/Weak High/Low
 
 input group "MA Filter (HTF)"
 input bool Use_HTF_MA_Filter=true;
@@ -179,6 +188,8 @@ struct BASE_STRUCTURE_STATE
 
 // One accepted structure point.  A point is superseded when a more extreme
 // pivot is confirmed before the opposite leg begins (see AcceptStructureHigh).
+// An equal high or low (EQH/EQL, see MarkEqualSwing) keeps the role of the
+// swing it equals, and its break level is the outer edge of the pair.
 struct BASE_STRUCTURE_POINT
   {
    int pivot;               // bar index of the swing candle
@@ -188,6 +199,10 @@ struct BASE_STRUCTURE_POINT
    int side;                // 1 high, -1 low
    int kind;                // 1 HH/LL, -1 LH/HL, 0 untyped
    bool superseded;
+   int equal;               // points index of the swing it equals (EQH/EQL), -1 if none
+   double level;            // break level: the price, or the outer edge of an EQH/EQL pair
+   datetime level_time;     // the swing that holds the level
+   int level_pivot;
   };
 
 // One close-confirmed structure break.
@@ -198,6 +213,7 @@ struct BASE_STRUCTURE_EVENT
    int direction;           // 1 bullish, -1 bearish
    bool bos;                // true BOS (continuation), false CHoCH
    datetime swing_time;     // pivot time of the broken level
+   int swing_bar;           // bar index of that swing
    double level;
    bool ls;                 // a CHoCH reclassified as a liquidity sweep (LS)
    int ls_bar;              // candle on which the LS became known, -1 if none
@@ -372,12 +388,37 @@ int AddStructurePoint(BASE_STRUCTURE_POINT &points[],const int pivot,const int c
    points[index].side=side;
    points[index].kind=kind;
    points[index].superseded=false;
+   points[index].equal=-1;
+   points[index].level=points[index].price;
+   points[index].level_time=bar.time;
+   points[index].level_pivot=pivot;
    return index;
+  }
+
+// EQH / EQL: a swing within Equal_Highs_Lows_Threshold ATR of the previous
+// swing on its side (the swing its HH/LH or LL/HL label is judged against)
+// is an equal high or low.  The two swings are one liquidity pool, so the
+// new swing keeps the role of the swing it equals instead of being called
+// higher or lower by a hair, and the pool's outer edge is the level a close
+// must break.  An untyped first swing has no role to pass on.
+void MarkEqualSwing(BASE_STRUCTURE_POINT &points[],const int index,const int reference,
+                    const double atr)
+  {
+   if(reference<0 || points[reference].kind==0 || Equal_Highs_Lows_Threshold<=0.0) return;
+   if(MathAbs(points[index].price-points[reference].price)>=Equal_Highs_Lows_Threshold*atr) return;
+   points[index].kind=points[reference].kind;
+   points[index].equal=reference;
+   bool outer=points[index].side>0?points[reference].level>points[index].level:
+                                   points[reference].level<points[index].level;
+   if(!outer) return;
+   points[index].level=points[reference].level;
+   points[index].level_time=points[reference].level_time;
+   points[index].level_pivot=points[reference].level_pivot;
   }
 
 void AddStructureEvent(BASE_STRUCTURE_EVENT &events[],BASE_STRUCTURE_STATE &state,
                        const int bar,const int break_bar,const int direction,const bool bos,
-                       const datetime swing_time,const double level)
+                       const datetime swing_time,const int swing_bar,const double level)
   {
    int index=ArraySize(events);
    ArrayResize(events,index+1,64);
@@ -386,6 +427,7 @@ void AddStructureEvent(BASE_STRUCTURE_EVENT &events[],BASE_STRUCTURE_STATE &stat
    events[index].direction=direction;
    events[index].bos=bos;
    events[index].swing_time=swing_time;
+   events[index].swing_bar=swing_bar;
    events[index].level=level;
    events[index].ls=false;
    events[index].ls_bar=-1;
@@ -410,6 +452,7 @@ struct BASE_LEVEL
    bool active;
    double price;
    datetime time;
+   int bar;                 // bar index of the swing that holds the level
    int point;
   };
 
@@ -422,14 +465,16 @@ struct BASE_CHOCH_CANDIDATE
    int break_bar;           // candle that closed through the LH/HL
    double level;            // the broken LH/HL
    datetime level_time;
+   int level_bar;
    int level_point;
   };
 
 void SetLevel(BASE_LEVEL &level,const BASE_STRUCTURE_POINT &points[],const int index)
   {
    level.active=true;
-   level.price=points[index].price;
-   level.time=points[index].time;
+   level.price=points[index].level;
+   level.time=points[index].level_time;
+   level.bar=points[index].level_pivot;
    level.point=index;
   }
 
@@ -451,6 +496,7 @@ void StartCHoCH(BASE_CHOCH_CANDIDATE &choch,const int direction,const int bar,
    choch.break_bar=bar;
    choch.level=level.price;
    choch.level_time=level.time;
+   choch.level_bar=level.bar;
    choch.level_point=level.point;
   }
 
@@ -464,6 +510,7 @@ void CancelCHoCH(BASE_CHOCH_CANDIDATE &choch,BASE_LEVEL &lh,BASE_LEVEL &hl,
    restored.active=true;
    restored.price=choch.level;
    restored.time=choch.level_time;
+   restored.bar=choch.level_bar;
    restored.point=choch.level_point;
    if(choch.direction>0 && high_point==choch.level_point) lh=restored;
    if(choch.direction<0 && low_point==choch.level_point) hl=restored;
@@ -471,14 +518,16 @@ void CancelCHoCH(BASE_CHOCH_CANDIDATE &choch,BASE_LEVEL &lh,BASE_LEVEL &hl,
   }
 
 // The swings after the broken LH have made an HH (bullish), or after the
-// broken HL an LL (bearish), and no LL (HH) has formed after it since.
+// broken HL an LL (bearish), and no LL (HH) has formed after it since.  An
+// equal high or low (EQH/EQL) is neither: it did not go beyond the swing it
+// equals, so it neither confirms nor cancels a CHoCH.
 bool CHoCHComplete(const BASE_CHOCH_CANDIDATE &choch,const BASE_STRUCTURE_POINT &points[],
                    const int high_point,const int low_point)
   {
    int extreme=choch.direction>0?high_point:low_point;
    int opposite=choch.direction>0?low_point:high_point;
-   return extreme>choch.level_point && points[extreme].kind>0 &&
-          (opposite<extreme || points[opposite].kind<0);
+   return extreme>choch.level_point && points[extreme].kind>0 && points[extreme].equal<0 &&
+          (opposite<extreme || points[opposite].kind<0 || points[opposite].equal>=0);
   }
 
 // A CHoCH that reversed a trend is watched while it is the latest event: if
@@ -551,7 +600,7 @@ void ConfirmCHoCH(BASE_STRUCTURE_EVENT &events[],BASE_STRUCTURE_STATE &state,
    bool prior_bos=state.last_break_was_bos;
    int direction=choch.direction;
    AddStructureEvent(events,state,bar,choch.break_bar,direction,false,
-                     choch.level_time,choch.level);
+                     choch.level_time,choch.level_bar,choch.level);
    choch.direction=0;
    watch.event=-1;
    int origin=direction>0?low_point:high_point;
@@ -655,7 +704,9 @@ void SwingATR(const MqlRates &rates[],const int total,double &atr[])
 // Swings: a pivot of filter.strength candles (see PivotHigh) that has moved
 // at least filter.size_atr ATR from the previous opposite swing, accepted by
 // the alternating-leg rules and labelled HH/LH or LL/HL against the previous
-// leg's extreme.
+// leg's extreme, or EQH/EQL when within Equal_Highs_Lows_Threshold ATR of it
+// (see MarkEqualSwing): an equal swing keeps that swing's role, breaks at the
+// pool's outer edge, and neither confirms nor cancels a CHoCH.
 //
 // Only an identified swing can be broken: one whose leg has ended because
 // the opposite leg after it has begun.  Until then a more extreme pivot can
@@ -703,6 +754,9 @@ bool ReplayStructure(const MqlRates &rates[],const int total,const BASE_SWING_FI
    bool have_high_reference=false,have_low_reference=false;
    double high_reference=0.0,low_reference=0.0;
    int high_point=-1,low_point=-1;
+   // The previous leg's swing on each side: the one a new swing is labelled
+   // against, and the one it may equal (EQH/EQL).
+   int high_reference_point=-1,low_reference_point=-1;
    // The most recent identified and unbroken HH, LH, LL and HL.
    BASE_LEVEL hh,lh,ll,hl;
    ZeroMemory(hh);
@@ -728,8 +782,15 @@ bool ReplayStructure(const MqlRates &rates[],const int total,const BASE_SWING_FI
             // A higher pivot in the same leg replaces the leg's high; the
             // first high of a new leg ends the low leg, identifying its low.
             if(same_leg) points[high_point].superseded=true;
-            else IdentifySwing(ll,hl,points,low_point);
+            else
+              {
+               IdentifySwing(ll,hl,points,low_point);
+               high_reference_point=high_point;
+              }
             high_point=AddStructurePoint(points,pivot,i,rates[pivot],1,kind);
+            MarkEqualSwing(points,high_point,high_reference_point,atr[pivot]);
+            kind=points[high_point].kind;
+            bool equal=points[high_point].equal>=0;
             state.last_high_kind=kind;
             state.last_high_time=rates[pivot].time;
             // An HH beyond the old uptrend's extreme after a failed bearish
@@ -739,10 +800,11 @@ bool ReplayStructure(const MqlRates &rates[],const int total,const BASE_SWING_FI
                ConfirmLS(events,state,watch,i);
                choch.direction=0;
               }
-            // Only swings formed after the breaking close can cancel a CHoCH.
-            else if(choch.direction>0 && kind<0 && pivot>choch.break_bar)
+            // Only swings formed after the breaking close can cancel a CHoCH,
+            // and an equal high never does.
+            else if(choch.direction>0 && kind<0 && pivot>choch.break_bar && !equal)
                CancelCHoCH(choch,lh,hl,high_point,low_point);   // the break made only an LH
-            else if(choch.direction<0 && kind>0 && pivot>choch.break_bar)
+            else if(choch.direction<0 && kind>0 && pivot>choch.break_bar && !equal)
                CancelCHoCH(choch,lh,hl,high_point,low_point);   // an HH before the LL
             else if(choch.direction!=0 && CHoCHComplete(choch,points,high_point,low_point))
                ConfirmCHoCH(events,state,i,choch,watch,points,high_point,low_point,hh,ll);             // LH broken, then an HH
@@ -757,8 +819,15 @@ bool ReplayStructure(const MqlRates &rates[],const int total,const BASE_SWING_FI
                                state.last_high,filter.size_atr*atr[pivot]))
            {
             if(same_leg) points[low_point].superseded=true;
-            else IdentifySwing(hh,lh,points,high_point);
+            else
+              {
+               IdentifySwing(hh,lh,points,high_point);
+               low_reference_point=low_point;
+              }
             low_point=AddStructurePoint(points,pivot,i,rates[pivot],-1,kind);
+            MarkEqualSwing(points,low_point,low_reference_point,atr[pivot]);
+            kind=points[low_point].kind;
+            bool equal=points[low_point].equal>=0;
             state.last_low_kind=kind;
             state.last_low_time=rates[pivot].time;
             if(LSSwing(watch,events,-1,rates[pivot].low))
@@ -766,9 +835,9 @@ bool ReplayStructure(const MqlRates &rates[],const int total,const BASE_SWING_FI
                ConfirmLS(events,state,watch,i);
                choch.direction=0;
               }
-            else if(choch.direction<0 && kind<0 && pivot>choch.break_bar)
+            else if(choch.direction<0 && kind<0 && pivot>choch.break_bar && !equal)
                CancelCHoCH(choch,lh,hl,high_point,low_point);   // the break made only an HL
-            else if(choch.direction>0 && kind>0 && pivot>choch.break_bar)
+            else if(choch.direction>0 && kind>0 && pivot>choch.break_bar && !equal)
                CancelCHoCH(choch,lh,hl,high_point,low_point);   // an LL before the HH
             else if(choch.direction!=0 && CHoCHComplete(choch,points,high_point,low_point))
                ConfirmCHoCH(events,state,i,choch,watch,points,high_point,low_point,hh,ll);             // HL broken, then an LL
@@ -804,7 +873,7 @@ bool ReplayStructure(const MqlRates &rates[],const int total,const BASE_SWING_FI
          if(choch.direction<=0)
            {
             CancelCHoCH(choch,lh,hl,high_point,low_point);
-            AddStructureEvent(events,state,i,i,1,true,hh.time,hh.price);
+            AddStructureEvent(events,state,i,i,1,true,hh.time,hh.bar,hh.price);
            }
         }
       if(hl.active && close<hl.price)
@@ -823,7 +892,7 @@ bool ReplayStructure(const MqlRates &rates[],const int total,const BASE_SWING_FI
          if(choch.direction>=0)
            {
             CancelCHoCH(choch,lh,hl,high_point,low_point);
-            AddStructureEvent(events,state,i,i,-1,true,ll.time,ll.price);
+            AddStructureEvent(events,state,i,i,-1,true,ll.time,ll.bar,ll.price);
            }
         }
      }
@@ -848,6 +917,137 @@ bool AnalyseStructure(const ENUM_TIMEFRAMES timeframe,const int wanted,const int
    ArraySetAsSeries(rates,false);
    int total=CopyRates(_Symbol,timeframe,1,wanted,rates);
    return total>0 && ReplayStructure(rates,total,SwingFilter(sensitivity),state,points,events);
+  }
+
+// Real Time Swing Structure: the swing structure of LuxAlgo's Smart Money
+// Concepts, a second, larger-scale reading of a timeframe shown beside its
+// Market Trend.  It never changes the Market Trend, Tradability, Optimal
+// Conditions or alerts.
+//  * Legs: a candle higher than every one of the next Swing_Structure_Length
+//    candles starts a bearish leg, one lower than all of them a bullish leg.
+//    The candle that starts a new leg is a swing high (low).
+//  * Breaks: the first close above the latest swing high is a bullish BOS,
+//    or a bullish CHoCH when the swing trend was bearish; bearish mirrors
+//    this.  Each swing is broken once, and the break sets the swing trend.
+//  * Strong/Weak High/Low: the highest high since the latest swing high and
+//    the lowest low since the latest swing low.  With a bullish swing trend
+//    the low is Strong (it holds the trend) and the high Weak (the next
+//    target); a bearish swing trend reverses this.
+// As everywhere in Base, only closed candles are used.
+struct BASE_SWING_STRUCTURE
+  {
+   int trend;               // 1 bullish, -1 bearish, 0 no break yet
+   bool last_choch;         // the latest break was a CHoCH
+   double break_level;      // the swing the latest break closed through
+   bool have_high;
+   bool have_low;
+   double high;             // the latest swing high and low
+   double low;
+   bool high_crossed;
+   bool low_crossed;
+   bool have_top;
+   bool have_bottom;
+   double top;              // trailing extremes (Strong/Weak High/Low)
+   double bottom;
+   datetime top_time;
+   datetime bottom_time;
+  };
+
+// Enough candles for the 50-candle legs to settle: at least 1,000.
+int SwingStructureBars()
+  {
+   return MathMin(100000,MathMax(1000,20*Swing_Structure_Length));
+  }
+
+bool ReplaySwingStructure(const MqlRates &rates[],const int total,BASE_SWING_STRUCTURE &swing)
+  {
+   ZeroMemory(swing);
+   int size=Swing_Structure_Length;
+   if(total<=size) return false;
+   int leg=0;               // 0 bearish leg, 1 bullish leg; it starts bearish
+   for(int t=0;t<total;t++)
+     {
+      // The trailing extremes, then the legs, then the breaks.
+      if(swing.have_top && rates[t].high>=swing.top)
+        {
+         swing.top=rates[t].high;
+         swing.top_time=rates[t].time;
+        }
+      if(swing.have_bottom && rates[t].low<=swing.bottom)
+        {
+         swing.bottom=rates[t].low;
+         swing.bottom_time=rates[t].time;
+        }
+      if(t>=size)
+        {
+         int pivot=t-size;
+         bool new_high=true,new_low=true;
+         for(int k=pivot+1;k<=t && (new_high || new_low);k++)
+           {
+            if(rates[k].high>=rates[pivot].high) new_high=false;
+            if(rates[k].low<=rates[pivot].low) new_low=false;
+           }
+         int previous=leg;
+         if(new_high) leg=0;
+         else if(new_low) leg=1;
+         if(leg!=previous && leg==1)
+           {
+            swing.have_low=true;
+            swing.low=rates[pivot].low;
+            swing.low_crossed=false;
+            swing.have_bottom=true;
+            swing.bottom=swing.low;
+            swing.bottom_time=rates[pivot].time;
+           }
+         if(leg!=previous && leg==0)
+           {
+            swing.have_high=true;
+            swing.high=rates[pivot].high;
+            swing.high_crossed=false;
+            swing.have_top=true;
+            swing.top=swing.high;
+            swing.top_time=rates[pivot].time;
+           }
+        }
+      double close=rates[t].close;
+      if(swing.have_high && !swing.high_crossed && close>swing.high)
+        {
+         swing.last_choch=swing.trend<0;
+         swing.high_crossed=true;
+         swing.trend=1;
+         swing.break_level=swing.high;
+        }
+      if(swing.have_low && !swing.low_crossed && close<swing.low)
+        {
+         swing.last_choch=swing.trend>0;
+         swing.low_crossed=true;
+         swing.trend=-1;
+         swing.break_level=swing.low;
+        }
+     }
+   return true;
+  }
+
+// The swing structure of a timeframe, from its replayed candles or, when they
+// are fewer than SwingStructureBars(), from a longer copy.  False only while
+// the longer copy is still being synchronised.
+bool AnalyseSwingStructure(const ENUM_TIMEFRAMES timeframe,const MqlRates &rates[],const int total,
+                           BASE_SWING_STRUCTURE &swing)
+  {
+   ZeroMemory(swing);
+   int wanted=SwingStructureBars();
+   if(total>=wanted)
+     {
+      ReplaySwingStructure(rates,total,swing);
+      return true;
+     }
+   MqlRates more[];
+   ArraySetAsSeries(more,false);
+   int copied=CopyRates(_Symbol,timeframe,1,wanted,more);
+   if(copied<=0) return false;
+   if(copied>total) ReplaySwingStructure(more,copied,swing);
+   else ReplaySwingStructure(rates,total,swing);
+   return true;
   }
 
 // The bias direction used for trading: none while Consolidation / Undefined.
@@ -892,8 +1092,11 @@ string BreakText(const BASE_STRUCTURE_EVENT &event)
    return (event.direction>0?"bull ":"bear ")+(event.bos?"BoS":"CHoCH");
   }
 
+// A swing's label: HH/LH/LL/HL, or EQH/EQL for an equal high or low (which
+// keeps the role of the swing it equals).
 string LabelText(const BASE_STRUCTURE_POINT &point)
   {
+   if(Show_Equal_Highs_Lows && point.equal>=0) return point.side>0?"EQH":"EQL";
    if(point.side>0) return point.kind>0?"HH":"LH";
    return point.kind>0?"LL":"HL";
   }
@@ -1003,6 +1206,45 @@ string TradeRecommendation(const BASE_STRUCTURE_STATE &htf,const BASE_STRUCTURE_
          return lead+LTFName()+" to confirm with a "+TrendWord(direction)+" BOS before "+action+".";
      }
    return RecommendationText(htf,points);
+  }
+
+// The swing structure's dashboard output: its trend and latest break.
+string SwingTrendText(const BASE_SWING_STRUCTURE &swing)
+  {
+   if(swing.trend==0) return "Undefined";
+   return (swing.trend>0?"Bullish":"Bearish")+(swing.last_choch?" (CHoCH)":" (BOS)");
+  }
+
+string StrongWeakText(const BASE_SWING_STRUCTURE &swing)
+  {
+   string high=swing.have_top?(swing.trend<0?"Strong High ":"Weak High ")+PriceText(swing.top):
+               "no swing high yet";
+   string low=swing.have_bottom?(swing.trend>0?"Strong Low ":"Weak Low ")+PriceText(swing.bottom):
+              "no swing low yet";
+   return high+" | "+low;
+  }
+
+// How the swing structure relates to the timeframe's Market Trend.
+string SwingAgreementText(const BASE_SWING_STRUCTURE &swing,const BASE_STRUCTURE_STATE &state,
+                          const string name)
+  {
+   int trend=BiasDirection(state);
+   if(swing.trend==0) return "No swing break yet to compare with the "+name+" Market Trend.";
+   if(trend==0)
+      return "The "+name+" Market Trend is ranging inside a "+TrendWord(swing.trend)+" swing structure.";
+   if(trend==swing.trend) return "Agrees with the "+name+" Market Trend.";
+   return "Opposes the "+name+" Market Trend: its "+TrendWord(trend)+" trend is a counter-move inside a "+
+          TrendWord(swing.trend)+" swing structure.";
+  }
+
+string SwingStructureTooltip(const BASE_SWING_STRUCTURE &swing,const BASE_STRUCTURE_STATE &state,
+                             const string name)
+  {
+   string text="Real Time Swing Structure ("+(string)Swing_Structure_Length+"-candle swings)\nSwing trend: ";
+   if(swing.trend==0) text+="no swing broken yet";
+   else text+=(swing.trend>0?"Bullish":"Bearish")+" since a "+TrendWord(swing.trend)+" "+
+              (swing.last_choch?"CHoCH":"BOS")+" through "+PriceText(swing.break_level);
+   return text+"\n"+StrongWeakText(swing)+"\n"+SwingAgreementText(swing,state,name);
   }
 
 // The four-line breakdown, joined for a tooltip.
@@ -1297,11 +1539,13 @@ void DrawSegment(const string id,const datetime from,const double from_price,
    ObjectSetInteger(0,name,OBJPROP_SELECTABLE,false);
   }
 
-// BOS, CHoCH and LS share one drawing: the caption on the broken level at
-// the breaking candle and a line from the broken swing.  An LS keeps the
-// place of the CHoCH it replaced, in its own colour.
+// BOS, CHoCH and LS share one drawing: a line from the broken swing to the
+// candle that closed through it, and the caption centred on that line (the
+// candle midway between the two), above a line broken upwards and below one
+// broken downwards.  An LS keeps the place of the CHoCH it replaced, in its
+// own colour.
 void DrawSignal(const string kind,const int direction,const datetime swing_time,
-                const double level,const MqlRates &bar)
+                const double level,const datetime break_time,const datetime label_time)
   {
    bool bos=kind=="BOS",ls=kind=="LS";
    if((bos && !Show_BOS_Labels) || (ls && !Show_LS_Labels) || (!bos && !ls && !Show_CHoCH_Labels))
@@ -1309,55 +1553,84 @@ void DrawSignal(const string kind,const int direction,const datetime swing_time,
    color clr=ls?(direction>0?Bullish_LS_Color:Bearish_LS_Color):
              direction>0?(bos?Bullish_BOS_Color:Bullish_CHoCH_Color)
                         :(bos?Bearish_BOS_Color:Bearish_CHoCH_Color);
-   string key=kind+(direction>0?"_UP_":"_DOWN_")+(string)bar.time;
-   // Keep the caption on the broken level.  ANCHOR_UPPER places bullish text
-   // immediately below it; ANCHOR_LOWER places bearish text immediately above.
-   DrawText(key,bar.time,level,kind,clr,direction>0,(int)Label_Size);
+   string key=kind+(direction>0?"_UP_":"_DOWN_")+(string)break_time;
+   DrawText(key,label_time,level,kind,clr,direction<0,(int)Label_Size);
    if(Show_Structure_Lines)
-      DrawSegment(key+"_LINE",swing_time,level,bar.time,level,
+      DrawSegment(key+"_LINE",swing_time,level,break_time,level,
                   ls?clr:(bos?clrBlue:clrRed),Line_Style,Line_Width);
   }
 
 string StructureLabel(const BASE_STRUCTURE_POINT &point)
   {
-   if(point.side>0) return point.kind>0?"HH":"LH";
-   return point.kind>0?"LL":"HL";
+   return LabelText(point);
   }
 
-void DrawStructurePoint(const string kind,const datetime time,const double price)
+void DrawStructurePoint(const string kind,const int side,const datetime time,const double price)
   {
    if(!Show_Swing_Points) return;
-   bool low=kind=="HL" || kind=="LL";
+   bool low=side<0;
    color clr=low?clrTeal:clrIndianRed;
    DrawText("STRUCTURE_"+kind+"_"+(string)time,time,price,kind,clr,low,(int)Label_Size);
   }
 
 // Draws one replay from candle `first` onwards (earlier candles are warm-up):
-// HH/HL/LH/LL labels (superseded and untyped points are skipped), BOS/CHoCH
-// signals and the dotted current swing levels.  A CHoCH may be confirmed
-// several candles after its break; it is drawn on the candle that actually
-// closed through the level.
+// HH/HL/LH/LL/EQH/EQL labels (superseded and untyped points are skipped), a
+// dotted line joining each equal high or low to the swing it equals,
+// BOS/CHoCH/LS signals and the dotted current swing levels.  A CHoCH may be
+// confirmed several candles after its break; its line ends on the candle
+// that actually closed through the level.
 void DrawStructure(const MqlRates &rates[],const int total,const int first,
                    const BASE_STRUCTURE_STATE &state,const BASE_STRUCTURE_POINT &points[],
                    const BASE_STRUCTURE_EVENT &events[])
   {
    int point_count=ArraySize(points);
    for(int i=0;i<point_count;i++)
-      if(!points[i].superseded && points[i].kind!=0 && points[i].pivot>=first)
-         DrawStructurePoint(StructureLabel(points[i]),points[i].time,points[i].price);
-   // A break is drawn only with its broken swing, so every BOS and CHoCH
+     {
+      if(points[i].superseded || points[i].kind==0 || points[i].pivot<first) continue;
+      DrawStructurePoint(StructureLabel(points[i]),points[i].side,points[i].time,points[i].price);
+      int equal=points[i].equal;
+      if(Show_Swing_Points && Show_Equal_Highs_Lows && equal>=0 && points[equal].pivot>=first)
+         DrawSegment("EQUAL_"+(string)points[i].time,points[equal].time,points[equal].price,
+                     points[i].time,points[i].price,points[i].side>0?clrIndianRed:clrTeal,STYLE_DOT,1);
+     }
+   // A break is drawn only with its broken swing, so every BOS, CHoCH and LS
    // starts from a marked swing.
    int event_count=ArraySize(events);
    for(int i=0;i<event_count;i++)
       if(events[i].break_bar>=first && events[i].swing_time>=rates[first].time)
-         DrawSignal(events[i].ls?"LS":(events[i].bos?"BOS":"CHoCH"),events[i].direction,events[i].swing_time,
-                    events[i].level,rates[events[i].break_bar]);
+        {
+         int middle=(int)MathRound(0.5*(events[i].swing_bar+events[i].break_bar));
+         DrawSignal(events[i].ls?"LS":(events[i].bos?"BOS":"CHoCH"),events[i].direction,
+                    events[i].swing_time,events[i].level,rates[events[i].break_bar].time,
+                    rates[middle].time);
+        }
    if(Show_Swing_Points && state.have_high)
       DrawSegment("LAST_HIGH",state.last_high_time,state.last_high,rates[total-1].time,
                   state.last_high,clrIndianRed,STYLE_DOT,1);
    if(Show_Swing_Points && state.have_low)
       DrawSegment("LAST_LOW",state.last_low_time,state.last_low,rates[total-1].time,
                   state.last_low,clrTeal,STYLE_DOT,1);
+  }
+
+// Strong/Weak High/Low: the swing structure's trailing extremes, extended 20
+// candles to the right of the latest closed candle, where their names sit.
+void DrawStrongWeak(const BASE_SWING_STRUCTURE &swing,const datetime last_time,
+                    const ENUM_TIMEFRAMES timeframe)
+  {
+   if(!Show_Strong_Weak_High_Low) return;
+   datetime right=last_time+20*PeriodSeconds(timeframe);
+   if(swing.have_top)
+     {
+      DrawSegment("SWING_HIGH",swing.top_time,swing.top,right,swing.top,clrIndianRed,STYLE_SOLID,1);
+      DrawText("SWING_HIGH_TEXT",right,swing.top,swing.trend<0?"Strong High":"Weak High",clrIndianRed,
+               false,(int)Label_Size);
+     }
+   if(swing.have_bottom)
+     {
+      DrawSegment("SWING_LOW",swing.bottom_time,swing.bottom,right,swing.bottom,clrTeal,STYLE_SOLID,1);
+      DrawText("SWING_LOW_TEXT",right,swing.bottom,swing.trend>0?"Strong Low":"Weak Low",clrTeal,
+               true,(int)Label_Size);
+     }
   }
 
 int FirstMABar(const int total,const int displayed)
@@ -1493,6 +1766,19 @@ color PassColor(const bool pass)
    return pass?DASHBOARD_POSITIVE_COLOR:DASHBOARD_NEGATIVE_COLOR;
   }
 
+// The swing structure under its timeframe's Market Trend, indented; the
+// tooltip gives its latest break, Strong/Weak High/Low and how it relates to
+// the Market Trend.
+void AddSwingStructureRow(BASE_DASHBOARD_ROW &rows[],const BASE_SWING_STRUCTURE &swing,
+                          const BASE_STRUCTURE_STATE &state,const string name)
+  {
+   if(!Show_Swing_Structure) return;
+   color clr=swing.trend>0?DASHBOARD_POSITIVE_COLOR:swing.trend<0?DASHBOARD_NEGATIVE_COLOR:
+             DASHBOARD_NEUTRAL_COLOR;
+   AddDashboardRow(rows,"Swing Structure:",SwingTrendText(swing),clr,
+                   SwingStructureTooltip(swing,state,name),true,DASHBOARD_INDENT);
+  }
+
 // Each selected timeframe's Market Trend (its breakdown is the tooltip),
 // Market Tradability (the entry filters are its tooltip), the reason, the
 // HTF trade recommendation, and Optimal Conditions with each selected
@@ -1500,7 +1786,9 @@ color PassColor(const bool pass)
 void DrawDashboard(const BASE_STRUCTURE_STATE &htf,const string htf_breakdown,
                    const string recommendation,const BASE_STRUCTURE_STATE &mtf,
                    const string mtf_breakdown,const BASE_STRUCTURE_STATE &ltf,
-                   const string ltf_breakdown,const bool tradable,
+                   const string ltf_breakdown,const BASE_SWING_STRUCTURE &htf_swing,
+                   const BASE_SWING_STRUCTURE &mtf_swing,const BASE_SWING_STRUCTURE &ltf_swing,
+                   const bool tradable,
                    const string tradability_reason,const string filter_tooltip,
                    const bool optimal,const string optimal_reason,const bool correlated,
                    const bool healthy_extension,const bool good_volume,const double volume_ratio,
@@ -1509,14 +1797,23 @@ void DrawDashboard(const BASE_STRUCTURE_STATE &htf,const string htf_breakdown,
    Comment("");
    BASE_DASHBOARD_ROW rows[];
    if(Use_HTF)
-      AddDashboardRow(rows,"HTF Market Trend ("+TimeframeName(BASETimeframe())+"):",BiasText(htf),
-                      TrendColor(htf),htf_breakdown);
+     {
+      AddDashboardRow(rows,"HTF Market Trend ("+HTFName()+"):",BiasText(htf),TrendColor(htf),
+                      htf_breakdown);
+      AddSwingStructureRow(rows,htf_swing,htf,HTFName());
+     }
    if(Use_MTF)
-      AddDashboardRow(rows,"MTF Market Trend ("+TimeframeName(SetupTimeframe())+"):",BiasText(mtf),
-                      TrendColor(mtf),mtf_breakdown);
+     {
+      AddDashboardRow(rows,"MTF Market Trend ("+MTFName()+"):",BiasText(mtf),TrendColor(mtf),
+                      mtf_breakdown);
+      AddSwingStructureRow(rows,mtf_swing,mtf,MTFName());
+     }
    if(Use_LTF)
-      AddDashboardRow(rows,"LTF Market Trend ("+TimeframeName(LTFTimeframe())+"):",BiasText(ltf),
-                      TrendColor(ltf),ltf_breakdown);
+     {
+      AddDashboardRow(rows,"LTF Market Trend ("+LTFName()+"):",BiasText(ltf),TrendColor(ltf),
+                      ltf_breakdown);
+      AddSwingStructureRow(rows,ltf_swing,ltf,LTFName());
+     }
    AddDashboardRow(rows,"Market Tradability:",tradable?"Tradable":"Not Tradable",
                    PassColor(tradable),filter_tooltip);
    AddDashboardRow(rows,"Tradability Reason:",tradability_reason,DASHBOARD_TEXT_COLOR);
@@ -1598,6 +1895,26 @@ bool Rebuild(const bool permit_alert)
    BASE_STRUCTURE_EVENT events[];
    ReplayStructure(rates,total,filter,structure_state,points,events);
 
+   // The Real Time Swing Structure of each trend timeframe (dashboard) and of
+   // the chart (Strong/Weak High/Low).
+   BASE_SWING_STRUCTURE htf_swing,mtf_swing,ltf_swing,chart_swing;
+   ZeroMemory(htf_swing);
+   ZeroMemory(mtf_swing);
+   ZeroMemory(ltf_swing);
+   ZeroMemory(chart_swing);
+   if(Show_Swing_Structure || (anchored && Show_Strong_Weak_High_Low))
+      if(!AnalyseSwingStructure(timeframe,rates,total,htf_swing)) return false;
+   if(Show_Swing_Structure && Use_MTF &&
+      !AnalyseSwingStructure(SetupTimeframe(),setup_rates,ArraySize(setup_rates),mtf_swing))
+      return false;
+   if(Show_Swing_Structure && Use_LTF &&
+      !AnalyseSwingStructure(LTFTimeframe(),ltf_rates,ltf_total,ltf_swing))
+      return false;
+   if(anchored) chart_swing=htf_swing;
+   else if(Show_Strong_Weak_High_Low &&
+           !AnalyseSwingStructure(chart_timeframe,chart_rates,chart_total,chart_swing))
+      return false;
+
    // The MTF MA line, if shown, over the drawn MTF candles.
    MqlRates mtf_rates[];
    double mtf_ma[];
@@ -1625,6 +1942,8 @@ bool Rebuild(const bool permit_alert)
                        MathMax(0,chart_total-ChartStructureBars(chart_timeframe)),
                        chart_state,chart_points,chart_events);
      }
+   DrawStrongWeak(chart_swing,anchored?rates[total-1].time:chart_rates[chart_total-1].time,
+                  chart_timeframe);
    DrawAverageLines(rates,total,displayed,ma,mtf_rates,mtf_ma,mtf_count);
 
    string tradability_reason="";
@@ -1658,7 +1977,7 @@ bool Rebuild(const bool permit_alert)
                  TradeRecommendation(structure_state,points,setup_state,ltf_state,tradable),
                  setup_state,BreakdownText(setup_state,setup_points,setup_events),
                  ltf_state,BreakdownText(ltf_state,ltf_points,ltf_events),
-                 tradable,tradability_reason,EntryFilterTooltip(rates[total-1],ma,adx,atr),
+                 htf_swing,mtf_swing,ltf_swing,tradable,tradability_reason,EntryFilterTooltip(rates[total-1],ma,adx,atr),
                  optimal,optimal_reason,bias_ready,healthy_extension,good_volume,volume_ratio,
                  good_momentum,momentum_ratio);
    // Alert every event that became known on the newest closed candle (a CHoCH
@@ -1691,6 +2010,10 @@ bool ValidInputs()
       problem="Bars_To_Process must be at least 100";
    else if(HTF_MA_Length<1 || MTF_MA_Length<1 || ADX_Length<1 || ATR_Length<1)
       problem="HTF MA, MTF MA, ADX and ATR lengths must be positive";
+   else if(Equal_Highs_Lows_Threshold<0.0 || Equal_Highs_Lows_Threshold>0.5)
+      problem="the EQH/EQL Threshold must be between 0 and 0.5";
+   else if(Swing_Structure_Length<10 || Swing_Structure_Length>1000)
+      problem="the Swing Structure Length must be between 10 and 1000";
    else if(!Use_Timeframe_Correlation_For_Optimal && !Use_Healthy_Extension_For_Optimal &&
            !Use_Market_Volume_For_Optimal && !Use_Price_Momentum_For_Optimal)
       problem="enable at least one Optimal Conditions requirement";
