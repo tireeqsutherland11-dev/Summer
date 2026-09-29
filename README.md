@@ -285,9 +285,9 @@ label of the swing that is broken decides the event.
   **CHoCH (becoming bearish):** while the trend is not already bearish, the
   most recent identified HL is broken, subsequently forming an LL. No HL
   (LH) is needed.
-  - The CHoCH line ends on the candle that closed through the LH/HL. The
-    trend and the alert change when it is confirmed, which happens when the
-    HH (LL) swing is confirmed.
+  - The CHoCH line ends no later than the candle that closed through the
+    LH/HL (see **Captions and lines**). The trend and the alert change when
+    it is confirmed, which happens when the HH (LL) swing is confirmed.
   - A wick may make the HH (LL) before a candle closes through the LH (HL).
     If no LL (HH) has formed since, the CHoCH is confirmed by that close; a
     close that is also beyond the HH (LL) prints the BOS on the same candle.
@@ -318,12 +318,15 @@ label of the swing that is broken decides the event.
   (usually Bearish), as if the CHoCH had never printed. The break of the
   protected low is then a pullback inside that trend, so no bearish CHoCH
   prints for it.
-- **Captions and lines.** Each BOS, CHoCH and LS caption is centred on its
-  line, on the candle midway between the broken swing and the candle that
-  closed through it: above a line broken upwards, below one broken downwards.
-  The lines are solid and 2 pixels wide by default (`Line_Style`,
-  `Line_Width`), as in SME, so they stand out from the dashed, thinner
-  Internal Structure.
+- **Captions and lines.** A BOS, CHoCH or LS line runs from the broken swing
+  to the first later candle whose wick or body touches its level, so it
+  never clips through a candle. That is the candle that closed through the
+  level, unless an earlier wick already swept it; then the line stops at
+  that wick. The caption is centred on the line, on the candle midway
+  between its two ends: above a line broken upwards, below one broken
+  downwards. The lines are solid and 2 pixels wide by default
+  (`Line_Style`, `Line_Width`), as in SME, so they stand out from the
+  dashed, thinner Internal Structure.
 - **Pullbacks inside a trend.** A broken LH while the trend is already bullish
   (or a broken HL while it is bearish) prints nothing.
 - **Trend.** Bullish after a bullish BOS: the market is breaking HH
@@ -379,8 +382,9 @@ Tradability, Optimal Conditions or alerts.
   internal bullish CHoCH when the internal trend was bearish; bearish mirrors
   this. Each level is broken once, and the break sets the internal trend.
 - On the chart its breaks are dashed 1-pixel lines with faded captions
-  (`Internal_Bullish_Color`, `Internal_Bearish_Color`), centred like the
-  main ones. Where the internal pivot is also a swing of the main structure,
+  (`Internal_Bullish_Color`, `Internal_Bearish_Color`). Like the main ones,
+  each line ends on the first candle that touches its level and its caption
+  is centred on it. Where the internal pivot is also a swing of the main structure,
   only the main structure draws that level, so the chart does not double up.
 - Keep it shorter than the Swing Detection Length. At or above it, almost
   every internal pivot is also a main swing, so almost nothing is drawn.
@@ -552,8 +556,12 @@ markets. The check covered Swing Detection Lengths 2, 3, 5, 10, 15 and 20,
 Internal Structure Lengths 2, 3, 5, 8 and 15, and both forex and gold price
 scales. The labels (including EQH/EQL), BOS/CHoCH/LS events, trend,
 Consolidation / Undefined flags, break levels, Strong/Weak High/Low, the
-internal trend, and the drawn internal BOS/CHoCH (including which are left to
-the main structure) were identical.
+internal trend, where every BOS/CHoCH/LS line ends, and the drawn internal
+BOS/CHoCH (including where each line ends and which are left to the main
+structure) were identical. The EA searches the candles for each line's end;
+the Pine engine records each level's first touch as candles close, since
+Pine cannot look back an unlimited number of candles. Both give the same
+ends.
 
 Differences from the EA:
 
