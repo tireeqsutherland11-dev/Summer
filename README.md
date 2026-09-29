@@ -179,7 +179,7 @@ and then tune its thresholds for the symbol and timeframe.
 market structure from closed candles, draws HH/HL/LH/LL, BOS and CHoCH, and
 reports multi-timeframe tradability and market conditions. It also marks
 equal highs and lows (EQH/EQL) and shows a larger-scale Real Time Swing
-Structure with Strong/Weak High/Low. It never places, modifies, or closes
+Structure with its own BOS/CHoCH and Strong/Weak High/Low. It never places, modifies, or closes
 trades.
 
 ## Install and start
@@ -370,13 +370,27 @@ Conditions or alerts.
 - **Breaks.** The first close above the latest swing high is a bullish BOS,
   or a bullish CHoCH when the swing trend was bearish; bearish mirrors this.
   Each swing is broken once, and the break sets the swing trend.
+- **Swing BOS / CHoCH on the chart.** These are the larger breaks, drawn as
+  in LuxAlgo's indicator:
+  - a solid line from the broken swing to the candle that closed through it;
+  - a caption (`Swing_Label_Size`, default one size larger than Base's
+    labels) centred on the line, above a line broken upwards and below one
+    broken downwards;
+  - green for bullish, red for bearish (`Swing_Bullish_Color`,
+    `Swing_Bearish_Color`).
+
+  Base's own BOS/CHoCH/LS keep their dashed lines and smaller captions, so
+  the two scales are easy to tell apart. A swing break is drawn when the
+  candle that closed through the swing is inside the drawn window
+  (`Bars_To_Process`); its line may start further back.
+  `Show_Swing_Structure_Breaks` hides them.
 - **Strong / Weak High / Low.** The highest high since the latest swing high
   and the lowest low since the latest swing low, drawn as solid lines that
   extend 20 candles to the right, where their names sit. With a bullish swing
   trend the low is **Strong** (it holds the trend) and the high **Weak** (the
   next target); a bearish swing trend reverses this.
-- Only closed candles are used, as everywhere in Base. Its own BOS/CHoCH are
-  not drawn, so the chart keeps one set of BOS/CHoCH labels.
+- Only closed candles are used, as everywhere in Base, so a swing break is
+  drawn once the candle that closed through the swing has closed.
 - Each replay uses at least 1,000 candles (20 x the length) so the 50-candle
   legs have settled.
 
@@ -505,8 +519,9 @@ The black text is made for a light chart background.
   CHoCH-to-BOS confirmation and the LS rate stayed within noise of the
   version without EQH/EQL (see `Roadmap.txt`).
 - **Real Time Swing Structure.** `Swing_Structure_Length` (10 to 1000,
-  default 50) sets its swing size; `Show_Strong_Weak_High_Low` hides the
-  chart lines.
+  default 50) sets its swing size. `Show_Swing_Structure_Breaks` and
+  `Show_Strong_Weak_High_Low` hide its chart drawings, and
+  `Show_Swing_Structure` its dashboard rows.
 - **MA filters.** `MA Filter (HTF)` compares the latest closed HTF candle
   with an MA of the HTF (default EMA 50). `MA Filter (MTF)` compares the latest
   closed MTF candle with an MA of the MTF (default EMA 100). Each can draw its
@@ -530,7 +545,8 @@ outside the EA.
 `Base.mq5`. It uses the same structure engine: the two swing filter sets and
 per-timeframe Swing Sensitivity blend, HH/HL/LH/LL and EQH/EQL labels,
 close-only BOS/CHoCH/LS with centred captions, trend, Consolidation /
-Undefined, the Real Time Swing Structure with Strong/Weak High/Low, and the
+Undefined, the Real Time Swing Structure with its larger BOS/CHoCH and
+Strong/Weak High/Low, and the
 same dashboard (Market Trends with their breakdowns and Swing Structure,
 Market Tradability with the entry-filter tooltip, the trade recommendation,
 and Optimal Conditions). It has the same inputs,
@@ -544,8 +560,9 @@ The engine was checked bar by bar against the EA's engine on 36 generated
 markets. The check covered Swing Sensitivity 0, 25, 50, 75 and 100, and both
 forex and gold price scales. The labels (including EQH/EQL), BOS/CHoCH/LS
 events, trend, Consolidation / Undefined flags, break levels and the Real Time
-Swing Structure were identical. The swing structure was also identical to a
-literal simulation of LuxAlgo's own Pine code.
+Swing Structure (including every drawn swing BOS/CHoCH) were identical. The
+swing structure was also identical to a literal simulation of LuxAlgo's own
+Pine code.
 
 Differences from the EA:
 
