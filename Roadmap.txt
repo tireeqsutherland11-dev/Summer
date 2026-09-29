@@ -214,8 +214,9 @@ Event rules (the label of the broken swing decides the event)
     level that changes character); likewise an HL broken with an LL.
 
 CHoCH confirmation
-  * The CHoCH line ends on the candle that closed through the LH/HL. The
-    trend and the alert change when it is confirmed:
+  * The CHoCH line ends no later than the candle that closed through the
+    LH/HL (see Show_Structure_Lines). The trend and the alert change when it
+    is confirmed:
       - normally when the HH (bullish) or LL (bearish) swing formed by the
         break is confirmed. An HH swing is always confirmed before any close
         above it, so the CHoCH always comes before the BOS that breaks it;
@@ -315,9 +316,13 @@ Label_Size (default BASE_SMALL)
   BOS/CHoCH/LS, swing-point (including EQH/EQL) and Strong/Weak text.
 
 Show_Structure_Lines (default true)
-  Draws a horizontal segment from the broken swing to the candle that closed
-  through it. A CHoCH confirmed several candles later is still drawn at the
-  candle that closed through the LH/HL. It has no analytical effect
+  Draws a horizontal segment from the broken swing to the first later candle
+  whose wick or body touches the level (high at or above a level broken
+  upwards, low at or below one broken downwards; FirstTouchBar), so a line
+  never clips through a candle. The candle that closed through the level
+  always touches it, so the line ends there at the latest; when an earlier
+  wick swept the level, the line stops at that wick. A CHoCH confirmed
+  several candles later is drawn the same way. It has no analytical effect
   and only applies when that event's label display is also enabled.
 
 Line_Style (default STYLE_SOLID) / Line_Width (default 2)
@@ -327,8 +332,8 @@ Line_Style (default STYLE_SOLID) / Line_Width (default 2)
 
 Result
   Signal text is centred on its line, as in LuxAlgo's Smart Money Concepts:
-  at the candle midway between the broken swing and the candle that closed
-  through it (rounded), on the broken level, above a line broken upwards and
+  at the candle midway between the broken swing and the line's end (the first
+  candle touching the level; rounded), on the broken level, above a line broken upwards and
   below one broken downwards. HL/LL/EQL labels are teal below the swing low;
   HH/LH/EQH labels are red above the swing high, and a dotted line of the
   same colour joins an EQH/EQL to the swing it equals. Object IDs include
@@ -552,7 +557,9 @@ Internal_Bullish_Color (default C'8,153,129') / Internal_Bearish_Color
     mirrors this. Each level is broken once, and the break sets the internal
     trend.
   * On the chart (DrawInternalBreaks): a dashed width-1 line from the
-    internal pivot to the candle that closed through it, and a caption in
+    internal pivot to the first candle that touches its level (the candle
+    that closed through it at the latest, as for Show_Structure_Lines), and
+    a caption in
     the same colour faded 30% towards the chart background, centred on the
     line like the main captions. A break is drawn when its closing candle is
     inside the drawn window. An internal pivot that is also a swing of the

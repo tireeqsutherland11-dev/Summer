@@ -1,5 +1,5 @@
 //@version=6
-// Base - Market Structure (TradingView port of Base.mq5 v2.38)
+// Base - Market Structure (TradingView port of Base.mq5 v2.39)
 //
 // Reads market structure from closed candles only:
 //  * HH/HL/LH/LL swings: pivots of each timeframe's Swing Detection Length
@@ -21,8 +21,10 @@
 //    anything else prints, a close breaks its protected swing and the old
 //    trend carries on beyond its extreme. The CHoCH is relabelled LS (deep
 //    yellow) and the trend before it is restored.
-//  * BOS, CHoCH and LS captions are centred on their line: above a line
-//    broken upwards, below one broken downwards.
+//  * BOS, CHoCH and LS lines end on the first candle whose wick or body
+//    touches their level, so they never clip through a candle. Captions are
+//    centred on the line: above a line broken upwards, below one broken
+//    downwards.
 //  * Trend: Bullish / Bearish after a BOS, Bullish / Bearish Transition after
 //    a CHoCH, Consolidation / Undefined when the structure is sporadic or
 //    trapped.
@@ -194,6 +196,10 @@ type SPoint
     float level = na
     int levelTime = na
     int levelBar = -1
+    // The first candle after levelBar whose wick or body reached the level
+    // (-1 until one does), tracked while the swing can still become a level.
+    int levelTouchBar = -1
+    int levelTouchTime = na
 
 type SEvent
     int bar
@@ -207,6 +213,9 @@ type SEvent
     bool ls = false
     int lsBar = -1
     int swingBar = -1
+    // Where its line ends: the first candle that touched the level.
+    int endBar = -1
+    int endTime = na
 
 type SLevel
     bool active = false
@@ -214,6 +223,8 @@ type SLevel
     int swingTime = na
     int point = -1
     int swingBar = -1
+    int touchBar = -1
+    int touchTime = na
 
 type SEngine
     array<SPoint> points
@@ -255,6 +266,8 @@ type SEngine
     int chochLevelTime = na
     int chochLevelPoint = -1
     int chochLevelBar = -1
+    int chochTouchBar = -1
+    int chochTouchTime = na
     int eventTotal = 0
     int consolidation = 0
     int labelsFromIdx = -1
@@ -286,6 +299,8 @@ method setLevel(SLevel lv, SPoint p) =>
     lv.swingTime := p.levelTime
     lv.swingBar := p.levelBar
     lv.point := p.id
+    lv.touchBar := p.levelTouchBar
+    lv.touchTime := p.levelTouchTime
 
 // A swing is identified once the opposite leg after it has begun: no later
 // pivot can replace it, so it stays marked on the chart. Only then does it
@@ -346,10 +361,12 @@ markEqual(SPoint p, SPoint ref, float tol) =>
                 p.level := ref.level
                 p.levelTime := ref.levelTime
                 p.levelBar := ref.levelBar
+                p.levelTouchBar := ref.levelTouchBar
+                p.levelTouchTime := ref.levelTouchTime
     p
 
-method addEvent(SEngine e, int bar, int breakBar, int breakTime, int dir, bool bos, int swingTime, float level, int swingBar) =>
-    SEvent ev = SEvent.new(bar, breakBar, breakTime, dir, bos, swingTime, level, e.eventTotal, swingBar = swingBar)
+method addEvent(SEngine e, int bar, int breakBar, int breakTime, int dir, bool bos, int swingTime, float level, int swingBar, int endBar, int endTime) =>
+    SEvent ev = SEvent.new(bar, breakBar, breakTime, dir, bos, swingTime, level, e.eventTotal, swingBar = swingBar, endBar = endBar, endTime = endTime)
     int prevDir = e.dir
     e.events.push(ev)
     if e.events.size() > MAX_EVENTS
@@ -373,15 +390,17 @@ method startChoch(SEngine e, int dir, int bar, int barTime, SLevel lv) =>
     e.chochLevelTime := lv.swingTime
     e.chochLevelPoint := lv.point
     e.chochLevelBar := lv.swingBar
+    e.chochTouchBar := lv.touchBar
+    e.chochTouchTime := lv.touchTime
 
 // Drops a candidate. While the broken LH/HL is still the latest swing on its
 // side it stays the most recent LH/HL, so a later close through it is a
 // fresh break.
 method cancelChoch(SEngine e) =>
     if e.chochDir > 0 and e.highId() == e.chochLevelPoint
-        e.lh := SLevel.new(true, e.chochLevel, e.chochLevelTime, e.chochLevelPoint, e.chochLevelBar)
+        e.lh := SLevel.new(true, e.chochLevel, e.chochLevelTime, e.chochLevelPoint, e.chochLevelBar, e.chochTouchBar, e.chochTouchTime)
     if e.chochDir < 0 and e.lowId() == e.chochLevelPoint
-        e.hl := SLevel.new(true, e.chochLevel, e.chochLevelTime, e.chochLevelPoint, e.chochLevelBar)
+        e.hl := SLevel.new(true, e.chochLevel, e.chochLevelTime, e.chochLevelPoint, e.chochLevelBar, e.chochTouchBar, e.chochTouchTime)
     e.chochDir := 0
 
 // The swings after the broken LH have made an HH (bullish), or after the
@@ -422,7 +441,7 @@ method confirmChoch(SEngine e, int bar) =>
     int priorDir = e.dir
     bool priorBos = e.lastBos
     int direction = e.chochDir
-    e.addEvent(bar, e.chochBreakBar, e.chochBreakTime, direction, false, e.chochLevelTime, e.chochLevel, e.chochLevelBar)
+    e.addEvent(bar, e.chochBreakBar, e.chochBreakTime, direction, false, e.chochLevelTime, e.chochLevel, e.chochLevelBar, e.chochTouchBar, e.chochTouchTime)
     e.chochDir := 0
     e.lsSeq := -1
     SPoint origin = direction > 0 ? e.lowPt : e.highPt
@@ -569,13 +588,38 @@ method onPivotLow(SEngine e, float v, int pivotBar, int pivotTime, float equalTo
             e.confirmChoch(curBar)
     accepted
 
+// A structure line never clips through a candle: it ends on the first candle
+// after its swing whose wick or body reaches the level (high at or above a
+// swing high, low at or below a swing low). The candle that closes through
+// the level always touches it, so a break's line ends there at the latest.
+// The swings that can still become levels (the latest swing and the previous
+// leg's swing on each side) and the four levels record their first touch as
+// candles close; the candles between a pivot and its confirmation never
+// reach it.
+method touchLevel(SLevel lv, int side, float h, float l, int curBar, int curTime) =>
+    if lv.active and lv.touchBar < 0 and (side > 0 ? h >= lv.price : l <= lv.price)
+        lv.touchBar := curBar
+        lv.touchTime := curTime
+    lv.touchBar
+
+touchPoint(SPoint p, float h, float l, int curBar, int curTime) =>
+    if not na(p)
+        if p.levelTouchBar < 0 and (p.side > 0 ? h >= p.level : l <= p.level)
+            p.levelTouchBar := curBar
+            p.levelTouchTime := curTime
+    p
+
 // Only a candle close through an identified swing is a break; a wick is a
 // sweep.
 //  * The most recent identified LH broken while the trend is not bullish
 //    starts a bullish CHoCH (an LH broken with an HH is the CHoCH, not a BOS).
 //  * The most recent identified HH broken is a bullish BOS. Bearish mirrors
 //    both.
-method onClose(SEngine e, float c, int curBar, int curTime) =>
+method onClose(SEngine e, float c, float h, float l, int curBar, int curTime) =>
+    e.hh.touchLevel(1, h, l, curBar, curTime)
+    e.lh.touchLevel(1, h, l, curBar, curTime)
+    e.ll.touchLevel(-1, h, l, curBar, curTime)
+    e.hl.touchLevel(-1, h, l, curBar, curTime)
     // LS first: the restored trend then decides the breaks below, so the
     // protected swing's break is a pullback and a close beyond the old extreme
     // is that trend's BOS.
@@ -592,7 +636,7 @@ method onClose(SEngine e, float c, int curBar, int curTime) =>
         e.hh.active := false
         if e.chochDir <= 0
             e.cancelChoch()
-            e.addEvent(curBar, curBar, curTime, 1, true, e.hh.swingTime, e.hh.price, e.hh.swingBar)
+            e.addEvent(curBar, curBar, curTime, 1, true, e.hh.swingTime, e.hh.price, e.hh.swingBar, e.hh.touchBar, e.hh.touchTime)
     if e.hl.active and c < e.hl.price
         e.hl.active := false
         if e.dir >= 0 and e.chochDir >= 0
@@ -604,7 +648,7 @@ method onClose(SEngine e, float c, int curBar, int curTime) =>
         e.ll.active := false
         if e.chochDir >= 0
             e.cancelChoch()
-            e.addEvent(curBar, curBar, curTime, -1, true, e.ll.swingTime, e.ll.price, e.ll.swingBar)
+            e.addEvent(curBar, curBar, curTime, -1, true, e.ll.swingTime, e.ll.price, e.ll.swingBar, e.ll.touchBar, e.ll.touchTime)
     e.dir
 
 // Strong/Weak High/Low after one candle (Smart Money Engine): a break on this
@@ -630,7 +674,8 @@ method trailExtremes(SEngine e, float h, float l, int curTime) =>
     e.dir
 
 // One closed candle: the swing confirmed on it (its pivot is Swing Detection
-// Length candles back), then the candle's close, then the trailing extremes.
+// Length candles back), then the candle's close, then the trailing extremes
+// and the touches of the swings that can still become levels.
 method step(SEngine e, bool isPh, bool isPl, float phV, float plV, int pivotBar, int pivotTime, float equalTol, float c, float h, float l, int curBar, int curTime) =>
     e.newPoints.clear()
     e.dropped.clear()
@@ -640,8 +685,12 @@ method step(SEngine e, bool isPh, bool isPl, float phV, float plV, int pivotBar,
         e.onPivotHigh(phV, pivotBar, pivotTime, equalTol, curBar)
     if isPl
         e.onPivotLow(plV, pivotBar, pivotTime, equalTol, curBar)
-    e.onClose(c, curBar, curTime)
+    e.onClose(c, h, l, curBar, curTime)
     e.trailExtremes(h, l, curTime)
+    touchPoint(e.highPt, h, l, curBar, curTime)
+    touchPoint(e.lowPt, h, l, curBar, curTime)
+    touchPoint(e.highRefPt, h, l, curBar, curTime)
+    touchPoint(e.lowRefPt, h, l, curBar, curTime)
 
 // Consolidation / Undefined, 1 = sporadic 5-label sequence, 2 = multiple
 // CHoCHs without a BoS, 3 = both.
@@ -849,14 +898,21 @@ type SInternal
     int lowBar = na
     int lowTime = na
     bool lowBroken = false
+    // The first candle after each pivot that touched its level (-1 until
+    // one does): where a break's line ends.
+    int highTouchBar = -1
+    int highTouchTime = na
+    int lowTouchBar = -1
+    int lowTouchTime = na
     // Breaks made on this candle, and whether each was a CHoCH.
     bool bullBreak = false
     bool bullChoch = false
     bool bearBreak = false
     bool bearChoch = false
 
-// One closed candle: the internal pivots confirmed on it, then its close.
-method update(SInternal s, bool ph, bool pl, float phV, float plV, int pivotBar, int pivotTime, float c) =>
+// One closed candle: the internal pivots confirmed on it, the touches of
+// their levels, then its close.
+method update(SInternal s, bool ph, bool pl, float phV, float plV, int pivotBar, int pivotTime, float c, float h, float l, int curBar, int curTime) =>
     s.bullBreak := false
     s.bearBreak := false
     if ph
@@ -864,11 +920,19 @@ method update(SInternal s, bool ph, bool pl, float phV, float plV, int pivotBar,
         s.highBar := pivotBar
         s.highTime := pivotTime
         s.highBroken := false
+        s.highTouchBar := -1
     if pl
         s.lowLevel := plV
         s.lowBar := pivotBar
         s.lowTime := pivotTime
         s.lowBroken := false
+        s.lowTouchBar := -1
+    if not na(s.highLevel) and s.highTouchBar < 0 and h >= s.highLevel
+        s.highTouchBar := curBar
+        s.highTouchTime := curTime
+    if not na(s.lowLevel) and s.lowTouchBar < 0 and l <= s.lowLevel
+        s.lowTouchBar := curBar
+        s.lowTouchTime := curTime
     if not na(s.highLevel) and not s.highBroken and c > s.highLevel
         s.highBroken := true
         s.lastChoch := s.trend < 0
@@ -888,7 +952,7 @@ method update(SInternal s, bool ph, bool pl, float phV, float plV, int pivotBar,
 // The internal structure of the timeframe this runs on.
 internalRequest(int length) =>
     var SInternal s = SInternal.new()
-    s.update(pivotHighFound(length), pivotLowFound(length), high[length], low[length], bar_index - length, time[length], close)
+    s.update(pivotHighFound(length), pivotLowFound(length), high[length], low[length], bar_index - length, time[length], close, high, low, bar_index, time)
     [s.trend, s.lastChoch ? 1 : 0, s.breakLevel]
 
 validSession(string s) =>
@@ -1003,10 +1067,10 @@ swingName(SPoint p) =>
     showEqual and p.equalId >= 0 ? (p.side > 0 ? "EQH" : "EQL") : p.side > 0 ? (p.kind > 0 ? "HH" : "LH") : (p.kind > 0 ? "LL" : "HL")
 
 // A BOS, CHoCH or LS caption, centred on its line (the candle midway between
-// the broken swing and the candle that closed through it): above a line broken
-// upwards, below one broken downwards.
+// the broken swing and the first candle that touched its level, where the
+// line ends): above a line broken upwards, below one broken downwards.
 breakLabel(SEvent ev, string txt, color textColor) =>
-    label.new(int(math.round(0.5 * (ev.swingBar + ev.breakBar))), ev.level, txt, xloc = xloc.bar_index, yloc = yloc.price, color = color.new(color.white, 100), style = ev.dir > 0 ? label.style_label_down : label.style_label_up, textcolor = textColor, size = labelSize)
+    label.new(int(math.round(0.5 * (ev.swingBar + ev.endBar))), ev.level, txt, xloc = xloc.bar_index, yloc = yloc.price, color = color.new(color.white, 100), style = ev.dir > 0 ? label.style_label_down : label.style_label_up, textcolor = textColor, size = labelSize)
 
 // Only the newest swing on each side can be superseded, so the chart keeps
 // the label (and EQH/EQL line) of the newest high and low to delete when that
@@ -1034,13 +1098,13 @@ mainSwingAt(SEngine e, int side, int pivotTime) =>
     found
 
 // The internal structure's BOS/CHoCH (Smart Money Engine): a dashed width-1
-// line from the internal pivot to the candle that closed through it and a
-// faded caption centred on it, above a line broken upwards and below one
-// broken downwards.
-internalBreak(int dir, bool choch, float level, int swingTime, int swingBar) =>
+// line from the internal pivot to the first candle that touched its level
+// (the candle that closed through it at the latest) and a faded caption
+// centred on it, above a line broken upwards and below one broken downwards.
+internalBreak(int dir, bool choch, float level, int swingTime, int swingBar, int endBar, int endTime) =>
     color clr = dir > 0 ? internalBullColor : internalBearColor
-    line ln = line.new(swingTime, level, time, level, xloc = xloc.bar_time, color = clr, style = line.style_dashed, width = 1)
-    label lbl = label.new(int(math.round(0.5 * (swingBar + bar_index))), level, choch ? "CHoCH" : "BOS", xloc = xloc.bar_index, yloc = yloc.price, color = color.new(color.white, 100), style = dir > 0 ? label.style_label_down : label.style_label_up, textcolor = color.new(clr, 30), size = labelSize)
+    line ln = line.new(swingTime, level, endTime, level, xloc = xloc.bar_time, color = clr, style = line.style_dashed, width = 1)
+    label lbl = label.new(int(math.round(0.5 * (swingBar + endBar))), level, choch ? "CHoCH" : "BOS", xloc = xloc.bar_index, yloc = yloc.price, color = color.new(color.white, 100), style = dir > 0 ? label.style_label_down : label.style_label_up, textcolor = color.new(clr, 30), size = labelSize)
     [ln, lbl]
 
 // An internal pivot that is also a swing of the main structure is left to
@@ -1106,20 +1170,20 @@ if barstate.isconfirmed
                         internalLabels.remove(k)
                         internalSides.remove(k)
                         internalSwingTimes.remove(k)
-    chartInternal.update(chartInternalPh, chartInternalPl, high[chartInternalLength], low[chartInternalLength], bar_index - chartInternalLength, time[chartInternalLength], close)
+    chartInternal.update(chartInternalPh, chartInternalPl, high[chartInternalLength], low[chartInternalLength], bar_index - chartInternalLength, time[chartInternalLength], close, high, low, bar_index, time)
     if chartInternalPh
         internalHighMain := mainSwingAt(chartEngine, 1, chartInternal.highTime)
     if chartInternalPl
         internalLowMain := mainSwingAt(chartEngine, -1, chartInternal.lowTime)
     if showInternal and bar_index >= drawFrom
         if chartInternal.bullBreak and not internalHighMain
-            [ln, lbl] = internalBreak(1, chartInternal.bullChoch, chartInternal.highLevel, chartInternal.highTime, chartInternal.highBar)
+            [ln, lbl] = internalBreak(1, chartInternal.bullChoch, chartInternal.highLevel, chartInternal.highTime, chartInternal.highBar, chartInternal.highTouchBar, chartInternal.highTouchTime)
             internalLines.push(ln)
             internalLabels.push(lbl)
             internalSides.push(1)
             internalSwingTimes.push(chartInternal.highTime)
         if chartInternal.bearBreak and not internalLowMain
-            [ln, lbl] = internalBreak(-1, chartInternal.bearChoch, chartInternal.lowLevel, chartInternal.lowTime, chartInternal.lowBar)
+            [ln, lbl] = internalBreak(-1, chartInternal.bearChoch, chartInternal.lowLevel, chartInternal.lowTime, chartInternal.lowBar, chartInternal.lowTouchBar, chartInternal.lowTouchTime)
             internalLines.push(ln)
             internalLabels.push(lbl)
             internalSides.push(-1)
@@ -1143,7 +1207,7 @@ if barstate.isconfirmed
                 color lsColor = ev.dir > 0 ? bullLsColor : bearLsColor
                 breakLabel(ev, "LS", lsColor)
                 if showLines
-                    line.new(ev.swingTime, ev.level, ev.breakTime, ev.level, xloc = xloc.bar_time, color = lsColor, style = lineStyle, width = lineWidth)
+                    line.new(ev.swingTime, ev.level, ev.endTime, ev.level, xloc = xloc.bar_time, color = lsColor, style = lineStyle, width = lineWidth)
     int eventCount = chartEngine.newEvents.size()
     if eventCount > 0
         for i = 0 to eventCount - 1
@@ -1157,7 +1221,7 @@ if barstate.isconfirmed
                 color textColor = ev.dir > 0 ? (ev.bos ? bullBosColor : bullChochColor) : (ev.bos ? bearBosColor : bearChochColor)
                 lbl := breakLabel(ev, ev.bos ? "BOS" : "CHoCH", textColor)
                 if showLines
-                    ln := line.new(ev.swingTime, ev.level, ev.breakTime, ev.level, xloc = xloc.bar_time, color = ev.bos ? color.blue : color.red, style = lineStyle, width = lineWidth)
+                    ln := line.new(ev.swingTime, ev.level, ev.endTime, ev.level, xloc = xloc.bar_time, color = ev.bos ? color.blue : color.red, style = lineStyle, width = lineWidth)
             // Only the latest CHoCH can still become an LS.
             if not ev.bos
                 lastChochSeq := ev.seq

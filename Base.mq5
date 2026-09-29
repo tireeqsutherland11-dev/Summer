@@ -1,5 +1,5 @@
 #property copyright "Market Trend Analyser conversion"
-#property version   "2.38"
+#property version   "2.39"
 #property strict
 #property description "BASE: MT5 port of the Market Trend Analyser Pine Script."
 #property description "Signal/visualisation EA only; the source indicator contains no trading rules."
@@ -321,6 +321,19 @@ bool PivotLow(const MqlRates &rates[],const int total,const int index,const int 
    for(int i=index+1;i<=index+length;i++)
       if(rates[i].low<=value) return false;
    return true;
+  }
+
+// A structure line never clips through a candle: it ends on the first
+// candle after the swing whose wick or body reaches the level (high at or
+// above a level broken upwards, low at or below one broken downwards).  That
+// is the candle that closed through the level unless an earlier wick swept
+// it.
+int FirstTouchBar(const MqlRates &rates[],const int swing_bar,const int break_bar,
+                  const int direction,const double level)
+  {
+   for(int b=swing_bar+1;b<break_bar;b++)
+      if(direction>0?rates[b].high>=level:rates[b].low<=level) return b;
+   return break_bar;
   }
 
 // Structure must alternate between a high leg and a low leg.  When several
@@ -983,8 +996,10 @@ struct BASE_INTERNAL_STRUCTURE
    bool low_broken;
   };
 
-// One internal break: the pivot it closed through, the candle that did, and
-// the candle midway between them where its caption is centred.
+// One internal break: the pivot it closed through, the candle that did, the
+// first candle that touched the level (where its line ends, see
+// FirstTouchBar), and the candle midway between the pivot and that one where
+// its caption is centred.
 struct BASE_BREAK_MARK
   {
    int direction;           // 1 bullish, -1 bearish
@@ -992,6 +1007,7 @@ struct BASE_BREAK_MARK
    double level;
    datetime swing_time;
    datetime break_time;
+   datetime end_time;
    datetime label_time;
   };
 
@@ -1005,7 +1021,9 @@ void AddBreakMark(BASE_BREAK_MARK &breaks[],const int direction,const bool choch
    breaks[index].level=level;
    breaks[index].swing_time=rates[swing_bar].time;
    breaks[index].break_time=rates[break_bar].time;
-   breaks[index].label_time=rates[(int)MathRound(0.5*(swing_bar+break_bar))].time;
+   int end=FirstTouchBar(rates,swing_bar,break_bar,direction,level);
+   breaks[index].end_time=rates[end].time;
+   breaks[index].label_time=rates[(int)MathRound(0.5*(swing_bar+end))].time;
   }
 
 void ReplayInternalStructure(const MqlRates &rates[],const int total,const int length,
@@ -1550,12 +1568,14 @@ void DrawSegment(const string id,const datetime from,const double from_price,
   }
 
 // BOS, CHoCH and LS share one drawing: a line from the broken swing to the
-// candle that closed through it, and the caption centred on that line (the
-// candle midway between the two), above a line broken upwards and below one
-// broken downwards.  An LS keeps the place of the CHoCH it replaced, in its
-// own colour.
+// first candle that touches its level (see FirstTouchBar), and the caption
+// centred on that line (the candle midway between the two), above a line
+// broken upwards and below one broken downwards.  An LS keeps the place of
+// the CHoCH it replaced, in its own colour.  Object names use the candle that
+// closed through the level.
 void DrawSignal(const string kind,const int direction,const datetime swing_time,
-                const double level,const datetime break_time,const datetime label_time)
+                const double level,const datetime break_time,const datetime end_time,
+                const datetime label_time)
   {
    bool bos=kind=="BOS",ls=kind=="LS";
    if((bos && !Show_BOS_Labels) || (ls && !Show_LS_Labels) || (!bos && !ls && !Show_CHoCH_Labels))
@@ -1566,7 +1586,7 @@ void DrawSignal(const string kind,const int direction,const datetime swing_time,
    string key=kind+(direction>0?"_UP_":"_DOWN_")+(string)break_time;
    DrawText(key,label_time,level,kind,clr,direction<0,(int)Label_Size);
    if(Show_Structure_Lines)
-      DrawSegment(key+"_LINE",swing_time,level,break_time,level,
+      DrawSegment(key+"_LINE",swing_time,level,end_time,level,
                   ls?clr:(bos?clrBlue:clrRed),Line_Style,Line_Width);
   }
 
@@ -1587,8 +1607,8 @@ void DrawStructurePoint(const string kind,const int side,const datetime time,con
 // HH/HL/LH/LL/EQH/EQL labels (superseded and untyped points are skipped), a
 // dotted line joining each equal high or low to the swing it equals,
 // BOS/CHoCH/LS signals and the dotted current swing levels.  A CHoCH may be
-// confirmed several candles after its break; its line ends on the candle
-// that actually closed through the level.
+// confirmed several candles after its break; its line still ends no later
+// than the candle that closed through the level.
 void DrawStructure(const MqlRates &rates[],const int total,const int first,
                    const BASE_STRUCTURE_STATE &state,const BASE_STRUCTURE_POINT &points[],
                    const BASE_STRUCTURE_EVENT &events[])
@@ -1609,10 +1629,12 @@ void DrawStructure(const MqlRates &rates[],const int total,const int first,
    for(int i=0;i<event_count;i++)
       if(events[i].break_bar>=first && events[i].swing_time>=rates[first].time)
         {
-         int middle=(int)MathRound(0.5*(events[i].swing_bar+events[i].break_bar));
+         int end=FirstTouchBar(rates,events[i].swing_bar,events[i].break_bar,events[i].direction,
+                               events[i].level);
+         int middle=(int)MathRound(0.5*(events[i].swing_bar+end));
          DrawSignal(events[i].ls?"LS":(events[i].bos?"BOS":"CHoCH"),events[i].direction,
                     events[i].swing_time,events[i].level,rates[events[i].break_bar].time,
-                    rates[middle].time);
+                    rates[end].time,rates[middle].time);
         }
    if(Show_Swing_Points && state.have_high)
       DrawSegment("LAST_HIGH",state.last_high_time,state.last_high,rates[total-1].time,
@@ -1653,7 +1675,7 @@ void DrawInternalBreaks(const BASE_BREAK_MARK &breaks[],const BASE_STRUCTURE_POI
       if(swing) continue;
       color clr=breaks[i].direction>0?Internal_Bullish_Color:Internal_Bearish_Color;
       string key="INTERNAL_"+(breaks[i].direction>0?"BULL_":"BEAR_")+(string)breaks[i].break_time;
-      DrawSegment(key+"_SEGMENT",breaks[i].swing_time,breaks[i].level,breaks[i].break_time,
+      DrawSegment(key+"_SEGMENT",breaks[i].swing_time,breaks[i].level,breaks[i].end_time,
                   breaks[i].level,clr,STYLE_DASH,1);
       DrawText(key,breaks[i].label_time,breaks[i].level,breaks[i].choch?"CHoCH":"BOS",FadeColor(clr,0.3),
                breaks[i].direction<0,(int)Label_Size);
