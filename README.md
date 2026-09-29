@@ -81,7 +81,7 @@ candles earlier and all of the following hold:
 
 - The HTF bias is established in the trade direction: its latest break is a
   BOS, not a transitional CHoCH, and not consolidating.
-- The dashboard's Market Tradeability is **Tradable**.
+- The dashboard's Market Tradability is **Tradable**.
 - Every enabled Optimal Conditions requirement passes. Technical space is
   checked at the actual entry price rather than the price at the last candle
   close.
@@ -177,7 +177,7 @@ and then tune its thresholds for the symbol and timeframe.
 `Base.mq5` (formerly Road) is a **chart-analysis and alerting Expert Advisor
 (EA)**. It reconstructs
 market structure from closed candles, draws HH/HL/LH/LL, BOS and CHoCH, and
-reports multi-timeframe tradeability and market conditions. It never
+reports multi-timeframe tradability and market conditions. It never
 places, modifies, or closes trades.
 
 ## Install and start
@@ -334,15 +334,35 @@ label of the swing that is broken decides the event.
   It also applies before the first structure break of the replay. An LS is
   not a break: it counts in neither condition.
 
+## Chart labels
+
+Each BOS, CHoCH and LS caption sits at the middle of its line, on the side
+price did not come from: above a line broken upwards, below one broken
+downwards. It then moves away from the line only as far as it must to clear
+everything under it: candles, HH/HL/LH/LL labels, structure lines, the dotted
+swing levels, the MA lines and earlier captions. If a tall candle sits at the
+middle, a nearby spot along the line that lets the caption sit closer is used
+instead.
+
+- The layout is measured in screen pixels from the chart's zoom, height and
+  font, with a 3-pixel gap. Zooming in or out lays the captions out again;
+  scrolling does not need to.
+- Base draws its objects in front of the candles. It turns off MT5's **Chart
+  on foreground** setting while attached and restores it when removed.
+- On 32 generated charts (H4, H1 and M15, every zoom level, with and without
+  MA lines), no caption touched a candle, label, line or another caption.
+- The dashboard is fixed in the top-left corner of the window, so a caption
+  scrolled into that corner can sit under its text.
+
 ## Reading the dashboard
 
-The dashboard has no background and no border. Component names are black,
-and the main components are bold. Only the outputs are coloured:
+The dashboard has no background and no border. Every component name is black
+and bold, for example **Market Trend (H4):**. Only the outputs are coloured:
 
 | Output | Green | Red | Grey |
 |---|---|---|---|
 | Market Trend | Bullish, Bullish Transition | Bearish, Bearish Transition | Consolidation / Undefined |
-| Market Tradeability | Tradable | Not Tradable | |
+| Market Tradability | Tradable | Not Tradable | |
 | Optimal Conditions and each condition | OPTIMAL, PASS | NOT OPTIMAL, BLOCKED | |
 
 The black text is made for a light chart background.
@@ -360,7 +380,7 @@ The black text is made for a light chart background.
 
   Each trend is replayed independently with its own Swing Sensitivity, and
   new swings that break nothing never change it.
-- **Market Tradeability.** Tradable always requires an established Bullish or
+- **Market Tradability.** Tradable always requires an established Bullish or
   Bearish HTF trend (latest break a BOS, not Consolidation / Undefined).
   - Every timeframe selected in **Trend Analysis Timeframes** must have a
     direction (a Consolidation / Undefined trend has none), and they must
@@ -368,18 +388,31 @@ The black text is made for a light chart background.
   - The MTF may be transitional, but a selected LTF must itself be
     established.
   - It is an analytical state, not an instruction to place a trade.
-  - Hover it to see the entry filters (MA, HTF MA, session, ADX, ATR) for the
-    latest closed structure candle: whether a long or short BOS/CHoCH setup
-    would pass, and each filter's reading.
-- **Tradeability Reason.** Which timeframes correlate, or the first failed
-  rule.
-- **Trade Recommendations.** For the HTF trend:
-  - Consolidation / Undefined: stay on the sidelines, or trade only the range
-    boundaries (the extremes of the last 5 labels), until a valid BoS. It
-    gives the HH/LL closes that would be one.
-  - Transition: wait for the BoS that confirms it.
-  - Trend: trade with it, and watch the level whose break would start a
-    CHoCH.
+  - Hover it to see the entry filters (HTF MA, MTF MA, session, ADX, ATR)
+    for the latest closed structure candle: whether a long or short
+    BOS/CHoCH setup would pass, and each filter's reading.
+- **Tradability Reason.** One sentence that names the timeframes. It says
+  why the market is tradable, or gives the first rule that fails:
+  - `H4 and H1 are both bullish, and the H4 trend is confirmed by a BOS.`
+  - `H4 is bullish but H1 is bearish.`
+  - `H4 is only in a bullish transition (a CHoCH not yet confirmed by a BOS).`
+  - `H1 is ranging (repeated CHoCHs in one area with no BOS).`
+  - `H4 has no structure break yet.`
+- **Trade Recommendations.** One action for the HTF trend, with the price that
+  decides it:
+  - Bullish: `Look for buys on pullbacks while price holds above HL 1.08450.`
+    A close below that HL would start a bearish CHoCH.
+  - Bullish Transition: `Wait for a close above HH 1.09120 (bullish BOS)
+    before buying.`
+  - Consolidation / Undefined: `Stand aside or trade only the range edges
+    (1.08010 to 1.09350); a close above HH 1.09350 or below LL 1.08010 starts
+    a new trend.` The range edges are the extremes of the last 5 labels.
+  - No break yet: `Stand aside until a BOS sets the trend.`
+  - Bearish mirrors Bullish.
+
+  When the HTF trend is established but a selected lower timeframe holds
+  Tradable back, it names that timeframe instead, for example `H4 is bullish,
+  but wait for H1 to turn bullish before buying.`
 - **Optimal Conditions.** OPTIMAL when every requirement enabled in the
   **Optimal Conditions** input group passes. Below it, each enabled
   requirement shows PASS or BLOCKED; hover any of these rows for the reason.
@@ -410,7 +443,7 @@ The black text is made for a light chart background.
   timeframe orders still refresh correctly.
 - **Trend Analysis Timeframes:** `Use HTF`, `Use MTF` and `Use LTF`
   independently choose which Market Trends are shown and must correlate for
-  Market Tradeability.
+  Market Tradability.
   - At least one must remain enabled. This supports HTF-only, HTF/MTF,
     all-three, and other combinations.
   - The established HTF trend prerequisite always applies, even when the HTF
@@ -424,6 +457,11 @@ The black text is made for a light chart background.
 - A custom session must use exactly `HHMM-HHMM` with numeric digits. Equal start
   and end means all day; ranges such as `2200-0600` cross midnight.
 - ATR thresholds use raw symbol price units, not points or pips.
+- **MA filters.** `MA Filter (HTF)` compares the latest closed HTF candle
+  with an MA of the HTF (default EMA 50). `MA Filter (MTF)` compares the latest
+  closed MTF candle with an MA of the MTF (default EMA 100). Each can draw its
+  line on the chart. They only qualify setups in the Market Tradability
+  tooltip and never change structure, trend or alerts.
 
 See [`Roadmap.txt`](Roadmap.txt) for the complete processing model and input
 reference.
@@ -442,7 +480,7 @@ outside the EA.
 `Base.mq5`. It uses the same structure engine: the two swing filter sets and
 per-timeframe Swing Sensitivity blend, HH/HL/LH/LL labels, close-only
 BOS/CHoCH, trend, Consolidation / Undefined, and the same dashboard (Market
-Trends with their breakdowns, Market Tradeability with the entry-filter
+Trends with their breakdowns, Market Tradability with the entry-filter
 tooltip, the trade recommendation, and Optimal Conditions). It has the same inputs,
 groups and defaults, except for the session and alert inputs described below.
 Like the EA, it only analyses the chart and never places orders.
@@ -462,8 +500,14 @@ Differences from the EA:
   are drawn.
 - **Timeframes.** Each timeframe is read with `request.security` from its
   latest closed candle, so nothing repaints. Use a chart timeframe at or below
-  the lowest of the three structure timeframes. If the chart is higher, the
-  dashboard shows a note.
+  the lowest of the three structure timeframes.
+- **Chart labels.** Captions follow the same rules as the EA. Pine cannot
+  read the chart's zoom or pane height, so the layout assumes a dense chart:
+  5-pixel candles in a 450-pixel pane, with the font height of the chosen
+  label size. At that zoom or closer, captions keep clear of candles, labels,
+  lines, MA lines and each other. When zoomed further out, neighbouring
+  candles can come closer than that. A candle, swing label or line drawn later
+  under a caption moves it clear.
 - **Sessions.** The session presets use named time zones, so daylight saving
   time is handled:
   - New York `America/New_York`
@@ -487,4 +531,5 @@ Differences from the EA:
     slightly from MT5's `iADX`.
   - Market Volume uses the symbol's volume, which is tick volume on most forex
     feeds.
-  - The HTF MA filter reads the latest closed candle of its timeframe.
+  - The HTF and MTF MA filters each read the latest closed candle of their
+    timeframe.
