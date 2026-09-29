@@ -1,5 +1,5 @@
 #property copyright "Market Trend Analyser conversion"
-#property version   "2.32"
+#property version   "2.33"
 #property strict
 #property description "BASE: MT5 port of the Market Trend Analyser Pine Script."
 #property description "Signal/visualisation EA only; the source indicator contains no trading rules."
@@ -39,6 +39,11 @@ input group "CHoCH Display"
 input bool Show_CHoCH_Labels=true;
 input color Bullish_CHoCH_Color=clrRed;
 input color Bearish_CHoCH_Color=clrRed;
+
+input group "LS Display"
+input bool Show_LS_Labels=true;
+input color Bullish_LS_Color=C'229,184,0'; // Bullish LS Color (a failed bullish CHoCH)
+input color Bearish_LS_Color=C'229,184,0'; // Bearish LS Color (a failed bearish CHoCH)
 
 input group "Labels and Lines"
 input BASE_LABEL_SIZE Label_Size=BASE_SMALL;
@@ -195,6 +200,10 @@ struct BASE_STRUCTURE_EVENT
    bool bos;                // true BOS (continuation), false CHoCH
    datetime swing_time;     // pivot time of the broken level
    double level;
+   bool ls;                 // a CHoCH reclassified as a liquidity sweep (LS)
+   int ls_bar;              // candle on which the LS became known, -1 if none
+   double origin;           // CHoCH: its protected swing (0 when not watched)
+   double extreme;          // CHoCH: the old trend's most recent identified LL/HH
   };
 
 ENUM_TIMEFRAMES SetupTimeframe()
@@ -379,8 +388,20 @@ void AddStructureEvent(BASE_STRUCTURE_EVENT &events[],BASE_STRUCTURE_STATE &stat
    events[index].bos=bos;
    events[index].swing_time=swing_time;
    events[index].level=level;
+   events[index].ls=false;
+   events[index].ls_bar=-1;
+   events[index].origin=0.0;
+   events[index].extreme=0.0;
    state.direction=direction;
    state.last_break_was_bos=bos;
+  }
+
+// The direction of the latest event before `index` that is not an LS.
+int PreviousDirection(const BASE_STRUCTURE_EVENT &events[],const int index)
+  {
+   for(int i=index-1;i>=0;i--)
+      if(!events[i].ls) return events[i].direction;
+   return 0;
   }
 
 // One identified swing that a candle close can break.  `point` is the swing's
@@ -461,12 +482,93 @@ bool CHoCHComplete(const BASE_CHOCH_CANDIDATE &choch,const BASE_STRUCTURE_POINT 
           (opposite<extreme || points[opposite].kind<0);
   }
 
-void ConfirmCHoCH(BASE_STRUCTURE_EVENT &events[],BASE_STRUCTURE_STATE &state,
-                  const int bar,BASE_CHOCH_CANDIDATE &choch)
+// A CHoCH that reversed a trend is watched while it is the latest event: if
+// the old trend carries on instead, it was a liquidity sweep (LS).
+//  * Protected swing (origin): the swing the breaking move started from, the
+//    last low before the HH of a bullish CHoCH (the last high before the LL
+//    of a bearish one).
+//  * Extreme: the old trend's most recent identified LL (bullish CHoCH) or
+//    HH (bearish CHoCH).
+//  * Trigger: a close through the protected swing.
+//  * Confirmation: the old trend carries on beyond its extreme, by a close
+//    (which is also the old trend's BOS) or by a swing, before anything else
+//    prints.  A BOS in the CHoCH's direction or an opposite CHoCH ends the
+//    watch, and the CHoCH stands.
+struct BASE_LS_WATCH
   {
-   AddStructureEvent(events,state,bar,choch.break_bar,choch.direction,false,
+   int event;               // events index of the watched CHoCH, -1 if none
+   int direction;           // the CHoCH's direction
+   double origin;
+   double extreme;
+   int prior_direction;     // the trend before the CHoCH
+   bool prior_bos;
+   bool triggered;          // a close has broken the protected swing
+   bool beyond;             // a swing beyond the extreme has formed since
+  };
+
+bool LSWatching(const BASE_LS_WATCH &watch,const BASE_STRUCTURE_EVENT &events[])
+  {
+   return watch.event>=0 && watch.event==ArraySize(events)-1;
+  }
+
+// A swing on the old trend's side (side -1 low, 1 high) accepted while
+// watching: beyond the extreme it shows the old trend carrying on.  Returns
+// true when that confirms the LS.
+bool LSSwing(BASE_LS_WATCH &watch,const BASE_STRUCTURE_EVENT &events[],const int side,
+             const double price)
+  {
+   if(!LSWatching(watch,events) || watch.direction!=-side) return false;
+   if(side<0?price<watch.extreme:price>watch.extreme) watch.beyond=true;
+   return watch.triggered && watch.beyond;
+  }
+
+// A close while watching.  Returns true when it confirms the LS.
+bool LSClose(BASE_LS_WATCH &watch,const BASE_STRUCTURE_EVENT &events[],const double close)
+  {
+   if(!LSWatching(watch,events)) return false;
+   bool bullish=watch.direction>0;
+   if(bullish?close<watch.origin:close>watch.origin) watch.triggered=true;
+   return watch.triggered && (watch.beyond || (bullish?close<watch.extreme:close>watch.extreme));
+  }
+
+// The CHoCH was a liquidity sweep: it is relabelled LS and the trend it
+// changed is restored, as if it had never printed.
+void ConfirmLS(BASE_STRUCTURE_EVENT &events[],BASE_STRUCTURE_STATE &state,
+               BASE_LS_WATCH &watch,const int bar)
+  {
+   events[watch.event].ls=true;
+   events[watch.event].ls_bar=bar;
+   state.direction=watch.prior_direction;
+   state.last_break_was_bos=watch.prior_bos;
+   watch.event=-1;
+  }
+
+void ConfirmCHoCH(BASE_STRUCTURE_EVENT &events[],BASE_STRUCTURE_STATE &state,
+                  const int bar,BASE_CHOCH_CANDIDATE &choch,BASE_LS_WATCH &watch,
+                  const BASE_STRUCTURE_POINT &points[],const int high_point,const int low_point,
+                  const BASE_LEVEL &hh,const BASE_LEVEL &ll)
+  {
+   int prior_direction=state.direction;
+   bool prior_bos=state.last_break_was_bos;
+   int direction=choch.direction;
+   AddStructureEvent(events,state,bar,choch.break_bar,direction,false,
                      choch.level_time,choch.level);
    choch.direction=0;
+   watch.event=-1;
+   int origin=direction>0?low_point:high_point;
+   bool have_extreme=direction>0?ll.time>0:hh.time>0;
+   if(prior_direction==0 || origin<0 || !have_extreme) return;
+   int index=ArraySize(events)-1;
+   events[index].origin=points[origin].price;
+   events[index].extreme=direction>0?ll.price:hh.price;
+   watch.event=index;
+   watch.direction=direction;
+   watch.origin=events[index].origin;
+   watch.extreme=events[index].extreme;
+   watch.prior_direction=prior_direction;
+   watch.prior_bos=prior_bos;
+   watch.triggered=false;
+   watch.beyond=false;
   }
 
 // Consolidation / Undefined: flags the replay's current state when either
@@ -497,25 +599,27 @@ void ClassifyConsolidation(const BASE_STRUCTURE_POINT &points[],const BASE_STRUC
       int flips=0,previous=0;
       for(int i=0;i<event_count;i++)
         {
-         if(events[i].break_bar<points[state.labels_from].pivot) continue;
+         if(events[i].ls || events[i].break_bar<points[state.labels_from].pivot) continue;
          if(previous!=0 && events[i].direction!=previous) flips++;
          previous=events[i].direction;
         }
       if(flips>=SPORADIC_FLIPS) state.consolidation|=1;
      }
+   // An LS is not a break: it neither flips nor joins the trap.
    int start=0;
    for(int i=event_count-1;i>0;i--)
-      if(events[i].bos && events[i-1].direction==events[i].direction)
+      if(!events[i].ls && events[i].bos && PreviousDirection(events,i)==events[i].direction)
         {
          start=i+1;
          break;
         }
    int latest=-1;
    for(int i=event_count-1;i>=start && latest<0;i--)
-      if(!events[i].bos) latest=i;
+      if(!events[i].bos && !events[i].ls) latest=i;
    if(latest<0) return;
    for(int i=start;i<latest;i++)
-      if(!events[i].bos && MathAbs(events[i].level-events[latest].level)<=CHOCH_TRAP_AREA_ATR*atr)
+      if(!events[i].bos && !events[i].ls &&
+         MathAbs(events[i].level-events[latest].level)<=CHOCH_TRAP_AREA_ATR*atr)
         {
          state.consolidation|=2;
          state.trap_from=i;
@@ -576,8 +680,13 @@ void SwingATR(const MqlRates &rates[],const int total,double &atr[])
 //    HL is broken and the next swing low is an LL.
 //  * A broken LH in a bullish trend (or HL in a bearish trend) is a pullback
 //    inside that trend and prints nothing.
-// Trend/bias: bullish after a bullish BOS, bullish transitional after a
-// bullish CHoCH until the next bullish BOS; bearish mirrors this.
+//  * LS (liquidity sweep): a CHoCH that reversed a trend fails when, before
+//    anything else prints, a close breaks its protected swing and the old
+//    trend carries on beyond its extreme (see BASE_LS_WATCH).  The CHoCH is
+//    relabelled LS and the trend before it is restored.
+// Trend: bullish after a bullish BOS, bullish transitional after a bullish
+// CHoCH until the next bullish BOS or until it fails as an LS; bearish
+// mirrors this.
 bool ReplayStructure(const MqlRates &rates[],const int total,const BASE_SWING_FILTER &filter,
                      BASE_STRUCTURE_STATE &state,BASE_STRUCTURE_POINT &points[],
                      BASE_STRUCTURE_EVENT &events[])
@@ -603,6 +712,9 @@ bool ReplayStructure(const MqlRates &rates[],const int total,const BASE_SWING_FI
    ZeroMemory(hl);
    BASE_CHOCH_CANDIDATE choch;
    ZeroMemory(choch);
+   BASE_LS_WATCH watch;
+   ZeroMemory(watch);
+   watch.event=-1;
    for(int i=length;i<total;i++)
      {
       int pivot=i-length;
@@ -621,13 +733,20 @@ bool ReplayStructure(const MqlRates &rates[],const int total,const BASE_SWING_FI
             high_point=AddStructurePoint(points,pivot,i,rates[pivot],1,kind);
             state.last_high_kind=kind;
             state.last_high_time=rates[pivot].time;
+            // An HH beyond the old uptrend's extreme after a failed bearish
+            // CHoCH confirms the LS; a pending CHoCH attempt ends with it.
+            if(LSSwing(watch,events,1,rates[pivot].high))
+              {
+               ConfirmLS(events,state,watch,i);
+               choch.direction=0;
+              }
             // Only swings formed after the breaking close can cancel a CHoCH.
-            if(choch.direction>0 && kind<0 && pivot>choch.break_bar)
+            else if(choch.direction>0 && kind<0 && pivot>choch.break_bar)
                CancelCHoCH(choch,lh,hl,high_point,low_point);   // the break made only an LH
             else if(choch.direction<0 && kind>0 && pivot>choch.break_bar)
                CancelCHoCH(choch,lh,hl,high_point,low_point);   // an HH before the LL
             else if(choch.direction!=0 && CHoCHComplete(choch,points,high_point,low_point))
-               ConfirmCHoCH(events,state,i,choch);             // LH broken, then an HH
+               ConfirmCHoCH(events,state,i,choch,watch,points,high_point,low_point,hh,ll);             // LH broken, then an HH
            }
         }
       if(PivotLow(rates,total,pivot,length))
@@ -643,16 +762,29 @@ bool ReplayStructure(const MqlRates &rates[],const int total,const BASE_SWING_FI
             low_point=AddStructurePoint(points,pivot,i,rates[pivot],-1,kind);
             state.last_low_kind=kind;
             state.last_low_time=rates[pivot].time;
-            if(choch.direction<0 && kind<0 && pivot>choch.break_bar)
+            if(LSSwing(watch,events,-1,rates[pivot].low))
+              {
+               ConfirmLS(events,state,watch,i);
+               choch.direction=0;
+              }
+            else if(choch.direction<0 && kind<0 && pivot>choch.break_bar)
                CancelCHoCH(choch,lh,hl,high_point,low_point);   // the break made only an HL
             else if(choch.direction>0 && kind>0 && pivot>choch.break_bar)
                CancelCHoCH(choch,lh,hl,high_point,low_point);   // an LL before the HH
             else if(choch.direction!=0 && CHoCHComplete(choch,points,high_point,low_point))
-               ConfirmCHoCH(events,state,i,choch);             // HL broken, then an LL
+               ConfirmCHoCH(events,state,i,choch,watch,points,high_point,low_point,hh,ll);             // HL broken, then an LL
            }
         }
 
       double close=rates[i].close;
+      // LS first: the restored trend then decides the breaks below, so the
+      // protected swing's break is a pullback and a close beyond the old
+      // extreme is that trend's BOS.
+      if(LSClose(watch,events,close))
+        {
+         ConfirmLS(events,state,watch,i);
+         choch.direction=0;
+        }
       // A broken LH is a bullish CHoCH candidate unless the trend is already
       // bullish, in which case it is a pullback high.  An LH broken together
       // with an HH is the CHoCH, not a BOS.
@@ -664,7 +796,7 @@ bool ReplayStructure(const MqlRates &rates[],const int total,const BASE_SWING_FI
             CancelCHoCH(choch,lh,hl,high_point,low_point);
             StartCHoCH(choch,1,i,lh);
             // A wick may already have made the HH.
-            if(CHoCHComplete(choch,points,high_point,low_point)) ConfirmCHoCH(events,state,i,choch);
+            if(CHoCHComplete(choch,points,high_point,low_point)) ConfirmCHoCH(events,state,i,choch,watch,points,high_point,low_point,hh,ll);
            }
         }
       if(hh.active && close>hh.price)
@@ -683,7 +815,7 @@ bool ReplayStructure(const MqlRates &rates[],const int total,const BASE_SWING_FI
            {
             CancelCHoCH(choch,lh,hl,high_point,low_point);
             StartCHoCH(choch,-1,i,hl);
-            if(CHoCHComplete(choch,points,high_point,low_point)) ConfirmCHoCH(events,state,i,choch);
+            if(CHoCHComplete(choch,points,high_point,low_point)) ConfirmCHoCH(events,state,i,choch,watch,points,high_point,low_point,hh,ll);
            }
         }
       if(ll.active && close<ll.price)
@@ -783,7 +915,7 @@ string EvidenceText(const BASE_STRUCTURE_STATE &state,const BASE_STRUCTURE_POINT
      {
       string breaks="";
       for(int i=0;i<event_count;i++)
-         if(events[i].break_bar>=points[state.labels_from].pivot)
+         if(!events[i].ls && events[i].break_bar>=points[state.labels_from].pivot)
             breaks+=(breaks==""?"":", ")+BreakText(events[i]);
       text+="; breaks "+breaks;
      }
@@ -791,12 +923,14 @@ string EvidenceText(const BASE_STRUCTURE_STATE &state,const BASE_STRUCTURE_POINT
      {
       string chochs="";
       for(int i=state.trap_from;i<event_count;i++)
-         if(!events[i].bos) chochs+=(chochs==""?"":", ")+BreakText(events[i])+" "+PriceText(events[i].level);
+         if(!events[i].bos && !events[i].ls) chochs+=(chochs==""?"":", ")+BreakText(events[i])+" "+PriceText(events[i].level);
       text+=(text==""?"":" | ")+chochs+"; no confirming BoS since";
      }
-   if(state.consolidation==0 && event_count>0)
-      text+=(text==""?"":"; ")+"latest "+BreakText(events[event_count-1])+" "+
-            PriceText(events[event_count-1].level);
+   int latest=event_count-1;
+   while(latest>=0 && events[latest].ls) latest--;
+   if(state.consolidation==0 && latest>=0)
+      text+=(text==""?"":"; ")+"latest "+BreakText(events[latest])+" "+
+            PriceText(events[latest].level);
    return text==""?"No labels yet":text;
   }
 
@@ -1112,20 +1246,25 @@ void DrawSegment(const string id,const datetime from,const double from_price,
    ObjectSetInteger(0,name,OBJPROP_SELECTABLE,false);
   }
 
+// BOS, CHoCH and LS share one drawing: the caption on the broken level at
+// the breaking candle and a line from the broken swing.  An LS keeps the
+// place of the CHoCH it replaced, in its own colour.
 void DrawSignal(const string kind,const int direction,const datetime swing_time,
                 const double level,const MqlRates &bar)
   {
-   bool bos=kind=="BOS";
-   if((bos && !Show_BOS_Labels) || (!bos && !Show_CHoCH_Labels)) return;
-   color clr=direction>0?(bos?Bullish_BOS_Color:Bullish_CHoCH_Color)
-                         :(bos?Bearish_BOS_Color:Bearish_CHoCH_Color);
+   bool bos=kind=="BOS",ls=kind=="LS";
+   if((bos && !Show_BOS_Labels) || (ls && !Show_LS_Labels) || (!bos && !ls && !Show_CHoCH_Labels))
+      return;
+   color clr=ls?(direction>0?Bullish_LS_Color:Bearish_LS_Color):
+             direction>0?(bos?Bullish_BOS_Color:Bullish_CHoCH_Color)
+                        :(bos?Bearish_BOS_Color:Bearish_CHoCH_Color);
    string key=kind+(direction>0?"_UP_":"_DOWN_")+(string)bar.time;
    // Keep the caption on the broken level.  ANCHOR_UPPER places bullish text
    // immediately below it; ANCHOR_LOWER places bearish text immediately above.
    DrawText(key,bar.time,level,kind,clr,direction>0,(int)Label_Size);
    if(Show_Structure_Lines)
       DrawSegment(key+"_LINE",swing_time,level,bar.time,level,
-                  bos?clrBlue:clrRed,Line_Style,Line_Width);
+                  ls?clr:(bos?clrBlue:clrRed),Line_Style,Line_Width);
   }
 
 string StructureLabel(const BASE_STRUCTURE_POINT &point)
@@ -1160,7 +1299,7 @@ void DrawStructure(const MqlRates &rates[],const int total,const int first,
    int event_count=ArraySize(events);
    for(int i=0;i<event_count;i++)
       if(events[i].break_bar>=first && events[i].swing_time>=rates[first].time)
-         DrawSignal(events[i].bos?"BOS":"CHoCH",events[i].direction,events[i].swing_time,
+         DrawSignal(events[i].ls?"LS":(events[i].bos?"BOS":"CHoCH"),events[i].direction,events[i].swing_time,
                     events[i].level,rates[events[i].break_bar]);
    if(Show_Swing_Points && state.have_high)
       DrawSegment("LAST_HIGH",state.last_high_time,state.last_high,rates[total-1].time,
@@ -1464,11 +1603,19 @@ bool Rebuild(const bool permit_alert)
                  optimal,optimal_reason,bias_ready,healthy_extension,good_volume,volume_ratio,
                  good_momentum,momentum_ratio);
    // Alert every event that became known on the newest closed candle (a CHoCH
-   // confirmed by a second break arrives together with its BOS).
+   // confirmed by a second break arrives together with its BOS).  An LS
+   // comes first: it is known before the old trend's BOS on the same candle.
    string signal="";
    for(int i=ArraySize(events)-1;i>=0 && events[i].bar==total-1;i--)
       signal=(events[i].bos?"BOS ":"CHoCH ")+(events[i].direction>0?"bullish":"bearish")+
              (signal==""?"":" + ")+signal;
+   for(int i=ArraySize(events)-1;i>=0;i--)
+      if(events[i].ls && events[i].ls_bar==total-1)
+        {
+         signal="LS ("+(events[i].direction>0?"bullish":"bearish")+" CHoCH failed)"+
+                (signal==""?"":" + ")+signal;
+         break;
+        }
    if(permit_alert && signal!="") SendBASEAlert(signal,rates[total-1].time);
    ChartRedraw();
    return true;
