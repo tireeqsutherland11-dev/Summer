@@ -211,7 +211,7 @@ swing is a liquidity sweep, never a break; a candle must close beyond it. The
 label of the swing that is broken decides the event.
 
 - **Swings.** A swing high is a pivot of the timeframe's Swing Detection
-  Length (default 10): at least as high as that many candles on its left
+  Length: at least as high as that many candles on its left
   and strictly higher than as many on its right. It is also how many candles
   it takes to confirm the swing. Equal highs (a double top) form one swing at
   the latest of the equal candles. Swing lows mirror this. Swings alternate
@@ -219,8 +219,8 @@ label of the swing that is broken decides the event.
   leg, and only its highest high is kept (likewise the lowest low). This is
   the swing detection of WillyAlgoTrader's Smart Money Engine (SME).
 - **Swing Detection Length (2-50), one per timeframe.**
-  `HTF_Swing_Length`, `MTF_Swing_Length` and `LTF_Swing_Length` (default 10
-  each) set the swing size of each timeframe. The chart's own labels use the
+  `HTF_Swing_Length`, `MTF_Swing_Length` and `LTF_Swing_Length` (defaults
+  HTF 2, MTF 9, LTF 10) set the swing size of each timeframe. The chart's own labels use the
   length of the timeframe the chart is on, or the HTF length on any other
   chart period. Lower it for more, faster swings; raise it for fewer, cleaner
   ones. It replaces the Swing Sensitivity (0-100) of v2.37 and earlier,
@@ -250,7 +250,7 @@ label of the swing that is broken decides the event.
   with, which is why the replay starts well before the displayed window (see
   `Bars_To_Process`).
 - **EQH / EQL (equal highs and lows).** A swing within
-  `Equal_Highs_Lows_Threshold` ATR (default 0.1) of that previous swing is an
+  `Equal_Highs_Lows_Threshold` ATR (default 0.2) of that previous swing is an
   equal high or low. The two swings form one liquidity pool, so it is not
   called higher or lower by a hair:
   - It is labelled **EQH** (**EQL**), with a dotted line to the swing it
@@ -387,8 +387,12 @@ which requires the internal structure to agree (see Reading the dashboard).
   each line ends on the first candle that touches its level and its caption
   is centred on it. Where the internal pivot is also a swing of the main structure,
   only the main structure draws that level, so the chart does not double up.
-- Keep it shorter than the Swing Detection Length. At or above it, almost
-  every internal pivot is also a main swing, so almost nothing is drawn.
+- Keep it shorter than the Swing Detection Length to see internal breaks on
+  the chart. At or above it, almost every internal pivot is also a main
+  swing, so almost nothing is drawn. With the default HTF Swing Detection
+  Length of 2, the HTF internal structure (5) is slower than the HTF swings:
+  an HTF chart shows few internal breaks, while its dashboard row and
+  Tradable (Early) still use it.
 - `Show_Internal_Structure` hides the chart drawings and
   `Show_Internal_On_Dashboard` its dashboard rows.
 
@@ -402,7 +406,7 @@ and bold, for example **Market Trend (H4):**. Only the outputs are coloured:
 | Market Trend | Bullish, Bullish Transition | Bearish, Bearish Transition | Consolidation / Undefined | |
 | Internal Structure | Bullish | Bearish | Undefined | |
 | Market Tradability | Tradable | Not Tradable | | Tradable (Early) |
-| Optimal Conditions and each condition | OPTIMAL, PASS | NOT OPTIMAL, BLOCKED | | EARLY |
+| Optimal Conditions and each condition | OPTIMAL, PASS | NOT OPTIMAL, BLOCKED | | |
 
 The black text is made for a light chart background.
 
@@ -454,7 +458,9 @@ The black text is made for a light chart background.
     for the latest closed structure candle: whether a long or short
     BOS/CHoCH setup would pass, and each filter's reading.
 - **Tradability Reason.** One sentence that names the timeframes. It says
-  why the market is tradable, or gives the first rule that fails:
+  why the market is tradable, or gives the first rule that fails. Like the
+  Trade Recommendations, it wraps onto further lines of at most 48
+  characters so the dashboard stays narrow:
   - `H4 and H1 are both bullish, and the H4 trend is confirmed by a BOS.`
   - `H4 is bullish but H1 is bearish.`
   - `H4 and H1 are both bearish and their internal structure agrees, but the
@@ -487,13 +493,16 @@ The black text is made for a light chart background.
 - **Optimal Conditions.** OPTIMAL when every requirement enabled in the
   **Optimal Conditions** input group passes. Below it, each enabled
   requirement shows PASS or BLOCKED; hover any of these rows for the reason.
-  - By default it checks timeframe correlation (the Tradable rules above) and
-    relative tick volume. Tradable (Early) shows EARLY (amber) on the
-    Timeframe Correlation row and does not pass it, unless
-    `Early_Passes_Timeframe_Correlation` is on (then PASS (Early)).
-  - Healthy Extension measures from the latest LTF HL (in a bullish HTF
-    trend) or LH (in a bearish one) to the latest LTF close, and passes from
-    0 to 3 LTF ATR.
+  - By default it checks timeframe correlation and relative tick volume.
+    Timeframe Correlation passes whenever Market Tradability is Tradable or
+    Tradable (Early): in both, every selected timeframe agrees on the
+    direction.
+  - Healthy Extension blocks only an overextended market: the latest LTF
+    close more than 10 MTF ATR beyond the latest MTF swing low (in a bullish
+    HTF trend) or swing high (in a bearish one). The row shows the distance,
+    for example `PASS (4.2 H1 ATR)`. With no HTF direction or no MTF swing
+    yet, or price back beyond that swing, it passes. See **Healthy
+    Extension** below for how the limit was chosen.
   - Price Momentum compares the latest LTF true range with its 20-candle
     average (0.5x to 2x).
 - BOS/CHoCH/LS alerts describe confirmed structure events on the latest
@@ -522,12 +531,11 @@ The black text is made for a light chart background.
   - The established HTF trend prerequisite always applies, even when the HTF
     row is hidden. Tradable (Early) also always uses the HTF and its internal
     structure.
-- **Tradable (Early).** `Allow_Early_Tradability` (default on) shows it;
-  `Early_Passes_Timeframe_Correlation` (default off) lets it pass Optimal
-  Conditions' Timeframe Correlation.
+- **Tradable (Early).** `Allow_Early_Tradability` (default on) shows it. It
+  passes Optimal Conditions' Timeframe Correlation, like Tradable.
 
-  How it was tested: Base's engine and internal structure (defaults: Swing
-  Detection Length 10, Internal Structure Length 5) ran on HTF/MTF pairs
+  How it was tested: Base's engine and internal structure (Swing Detection
+  Length 10, Internal Structure Length 5) ran on HTF/MTF pairs
   built from real data (EURUSD H4/H1, an index M15/M5, five stocks W1/D1)
   and 60 generated H4/H1 markets. Each HTF transition with the MTF agreeing
   was followed until it reached its confirming BOS (success) or failed (an
@@ -546,7 +554,27 @@ The black text is made for a light chart background.
   candles, price moved on in the trend's direction on the generated markets
   (+0.8 ATR after 20 candles) but not on the real data, where moves were no
   better than chance. So Tradable (Early) marks the stronger transitions,
-  not confirmed trends.
+  not confirmed trends. At the v2.41 defaults (HTF 2, MTF 9) the gap held:
+  57% of 77 against 43% of 127 on real data (90% interval +3 to +26
+  points), 56% against 41% on the generated markets.
+- **Healthy Extension.** Until v2.40 it passed only from 0 to 3 LTF ATR
+  above the latest LTF HL (below the latest LTF LH in a bearish trend). On
+  real data (an index H1/M15/M5, EURUSD D1/H4/H1, five stocks MN/W1/D1) that
+  blocked 83% of Tradable candles, mostly because the latest LTF swing was
+  not an HL/LH or price was more than 3 LTF ATR away, and the blocked
+  candles did no worse afterwards than the passed ones. The v2.41 measure,
+  the distance beyond the latest MTF swing in MTF ATR, showed a real
+  overextension effect:
+
+  | Latest LTF close beyond the latest MTF swing | Tradable candles | 1 ATR pullback before a 1 ATR move on | Move after 50 LTF candles |
+  |---|---|---|---|
+  | up to 10 MTF ATR (passes) | 94% | 48% | +0.3 ATR |
+  | more than 10 MTF ATR (blocked) | 6% | 56% | -0.9 ATR |
+  | more than 12 MTF ATR | 2% | 64% | -2.2 ATR |
+
+  Six of the seven real datasets showed the same, and it held with MTF swing
+  lengths 5 and 14. The generated markets have no mean reversion (their
+  most extended candles did best), so they could not set the limit.
 - The four `Use_*_For_Optimal` inputs independently choose which requirements
   determine the Optimal Conditions result. At least one must remain enabled;
   disabled requirements are omitted from both the result and the dashboard.
@@ -556,16 +584,16 @@ The black text is made for a light chart background.
 - A custom session must use exactly `HHMM-HHMM` with numeric digits. Equal start
   and end means all day; ranges such as `2200-0600` cross midnight.
 - ATR thresholds use raw symbol price units, not points or pips.
-- **EQH/EQL.** `Equal_Highs_Lows_Threshold` (0 to 0.5 ATR, default 0.1; 0
+- **EQH/EQL.** `Equal_Highs_Lows_Threshold` (0 to 0.5 ATR, default 0.2; 0
   turns it off) decides which swings are equal. `Show_Equal_Highs_Lows` only
   changes the labels and dotted lines; with it off, equal swings show their
   role (HH/LH/LL/HL) but still act as one pool. On real EURUSD H1 and daily
-  stock data about 3.5% of swings were equal, and BOS/CHoCH follow-through,
+  stock data at the earlier default of 0.1 about 3.5% of swings were equal, and BOS/CHoCH follow-through,
   CHoCH-to-BOS confirmation and the LS rate stayed within noise of the
   version without EQH/EQL (see `Roadmap.txt`).
 - **Swing Detection and Internal Structure.** Each timeframe has its own
-  Swing Detection Length (default 10) and Internal Structure Length (default
-  5), both 2 to 50. The Real Time Swing Structure (LuxAlgo) of v2.36-v2.37
+  Swing Detection Length (defaults HTF 2, MTF 9, LTF 10) and Internal
+  Structure Length (default 5), both 2 to 50. The Real Time Swing Structure (LuxAlgo) of v2.36-v2.37
   was removed: SME's Strong/Weak High/Low and Internal Structure replace it.
 - **MA filters.** `MA Filter (HTF)` compares the latest closed HTF candle
   with an MA of the HTF (default EMA 50). `MA Filter (MTF)` compares the latest

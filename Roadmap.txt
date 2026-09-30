@@ -19,7 +19,7 @@ The processing pipeline is:
 
   1. Resolve PERIOD_CURRENT inputs and load every required series: closed
      structure, setup, LTF and chart candles plus the enabled MA, ADX and ATR
-     values and the LTF ATR. If anything is still synchronising, stop here and
+     values. If anything is still synchronising, stop here and
      keep the existing drawing; the timer retries.
   2. Replay the structure-timeframe history (ReplayStructure): confirm and
      classify swing highs/lows as HH/LH/LL/HL and detect close-confirmed
@@ -54,12 +54,13 @@ Structure_Timeframe (default PERIOD_H4)
   remains available as an explicit opt-in to chart-dependent analysis.
 
 Setup_Entry_Timeframe (default PERIOD_H1)
-  Drives the independent MTF/setup trend used in timeframe correlation, and
-  the MTF MA filter.
+  Drives the independent MTF/setup trend used in timeframe correlation, the
+  MTF MA filter, and Healthy Extension (its latest swings and 14-candle
+  ATR).
 
 LTF_Timeframe (default PERIOD_M15)
-  Supplies the LTF trend for timeframe correlation, plus the close, ATR,
-  volume and true range used by the Optimal Conditions Meter.
+  Supplies the LTF trend for timeframe correlation, plus the close, volume
+  and true range used by the Optimal Conditions Meter.
 
 Trend Analysis Timeframes: Use_HTF (Use HTF, default true), Use_MTF (Use MTF,
 default true), Use_LTF (Use LTF, default false)
@@ -101,7 +102,7 @@ Result
 ---------------------------------------
 
 HTF_Swing_Length, MTF_Swing_Length, LTF_Swing_Length
-(default 10 each; valid 2..50)
+(defaults HTF 2, MTF 9, LTF 10; valid 2..50)
   Swing detection of WillyAlgoTrader's Smart Money Engine (SME). Each
   timeframe's replay uses its own length (N). The chart's own labels use the
   length of the timeframe the chart is on, or the HTF length on any other
@@ -157,7 +158,7 @@ Swing classification
     window, so every drawn swing carries a label.
 
 EQH / EQL (equal highs and lows)
-Equal_Highs_Lows_Threshold (default 0.1; valid 0..0.5; 0 = off)
+Equal_Highs_Lows_Threshold (default 0.2; valid 0..0.5; 0 = off)
 Show_Equal_Highs_Lows (default true)
   Adapted from the EQH/EQL of LuxAlgo's Smart Money Concepts to Base's own
   swings. A swing whose price is within Equal_Highs_Lows_Threshold x the
@@ -480,7 +481,6 @@ Use_ATR_Filter (default true)
 
 ATR_Length (default 14; valid 1 or greater)
   ATR lookback. Shorter reacts faster to volatility changes; longer is smoother.
-  The same length is used for the LTF ATR of the Optimal Conditions Meter.
 
 ATR_Filter_Mode (internal, BASE_ATR_MINIMUM)
   MINIMUM: passes ATR >= ATR_Minimum.
@@ -570,8 +570,11 @@ Internal_Bullish_Color (default C'8,153,129') / Internal_Bearish_Color
     line like the main captions. A break is drawn when its closing candle is
     inside the drawn window. An internal pivot that is also a swing of the
     main structure is skipped, because the main structure draws that level.
-    Keep the length below the Swing Detection Length: at or above it almost
-    every internal pivot is a main swing and almost nothing is drawn.
+    Keep the length below the Swing Detection Length to see internal breaks:
+    at or above it almost every internal pivot is a main swing and almost
+    nothing is drawn. With the default HTF Swing Detection Length of 2 the
+    HTF internal structure (5) is slower than the HTF swings; its dashboard
+    row and Tradable (Early) still use it.
   * Show_Internal_On_Dashboard adds an Internal Structure row under each
     Market Trend (section 10).
 
@@ -623,8 +626,8 @@ H1, M15 for the defaults):
                     internal structure adds which timeframes lag: "H4 is only
                     in a bearish transition (...), and the H1 internal
                     structure is not bearish yet."
-Healthy Extension also needs an HTF direction. Optimal Conditions remains a
-separate quality meter and does not override tradability.
+Optimal Conditions remains a separate quality meter and does not override
+tradability.
 
 
 10. DASHBOARD SYSTEM
@@ -651,7 +654,10 @@ coloured. Rows, top to bottom:
                                 entry-filter diagnostics.
   Tradability Reason            one sentence: why the selected timeframes
                                 correlate, or the first failed rule
-                                (section 9).
+                                (section 9). It and the Trade
+                                Recommendations wrap onto continuation rows
+                                of at most 48 characters, broken between
+                                words (AddWrappedDashboardRow).
   Trade Recommendations         one action for the HTF trend and the price
                                 that decides it (below). When the HTF trend is
                                 established but a selected lower timeframe
@@ -716,19 +722,36 @@ Unselected requirements neither affect the result nor appear on the
 dashboard. Tuning values are internal and hidden from the Inputs dialog.
 
 Timeframe Correlation (Use_Timeframe_Correlation_For_Optimal, default true)
-  Passes when Market Tradability is Tradable (section 9). Tradable (Early)
-  shows EARLY (amber) and does not pass, unless
-  Early_Passes_Timeframe_Correlation (default false) is on, when it shows
-  PASS (Early).
+  Passes whenever Market Tradability is Tradable or Tradable (Early) (section
+  9): in both, every selected timeframe agrees on the direction.
 
 Healthy Extension (Use_Healthy_Extension_For_Optimal, default false)
-  Measured in the HTF trend direction, which is the trading direction. With a
-  bullish HTF trend the anchor is the latest LTF swing low and it must be an
-  HL; the extension is (LTF close - HL) / LTF ATR. With a bearish HTF trend the
-  anchor is the latest LTF swing high, which must be an LH, and the extension
-  is (LH - LTF close) / LTF ATR. It passes from 0 through
-  Maximum_Extension_ATR (3.0). No HTF direction, an LL/HH anchor, price beyond
-  the anchor, or a missing ATR fails it.
+  Blocks only an overextended market (TrendExtension). In the HTF trend
+  direction, the extension is how far the latest closed LTF candle's close
+  is beyond the latest MTF swing on the other side, in MTF ATR (the
+  14-candle average true range of the MTF replay):
+    bullish HTF trend: (LTF close - latest MTF swing low) / MTF ATR
+    bearish HTF trend: (latest MTF swing high - LTF close) / MTF ATR
+  More than Maximum_Extension_ATR (10) is overextended and BLOCKED; anything
+  less passes, including price back beyond the swing (a negative
+  extension). With no HTF direction, no MTF swing yet or no ATR there is
+  nothing to measure and it passes. The row shows the distance, e.g.
+  "PASS (4.2 H1 ATR)", and a blocked reason reads "price is overextended
+  (12.3 H1 ATR beyond the latest H1 swing)".
+  Why: until v2.40 it passed only from 0 to 3 LTF ATR above the latest LTF
+  HL (below the latest LTF LH). With the v2.41 defaults, on real data (an
+  index H1/M15/M5, EURUSD D1/H4/H1, five stocks MN/W1/D1; 18,058 Tradable
+  LTF candles) that rule blocked 83% of Tradable candles (47% because the
+  latest LTF swing was not an HL/LH, 28% for more than 3 ATR, 9% for price
+  beyond the anchor), and the blocked candles did no worse than the passed
+  ones. Beyond the latest MTF swing the effect is real (a pullback of 1 LTF
+  ATR before a 1 ATR move on; move after 50 LTF candles, in LTF ATR):
+    up to 10 MTF ATR (94%, passes)   48%   +0.3
+    more than 10 (6%, 87 runs)       56%   -0.9
+    more than 12 (2%)                64%   -2.2
+  Six of the seven datasets agreed, and it held with MTF swing lengths 5 and
+  14. The generated markets have no mean reversion (their most extended
+  candles did best), so they could not set the limit.
 
 Good Market Volume (Use_Market_Volume_For_Optimal, default true)
   The newest closed LTF candle's tick volume is divided by the average of the
@@ -785,7 +808,6 @@ Persistent globals
   g_mtf_ma_handle      MTF (setup-timeframe) MA handle, or INVALID_HANDLE.
   g_adx_handle         Structure-timeframe ADX handle, or INVALID_HANDLE.
   g_atr_handle         Structure-timeframe ATR handle, or INVALID_HANDLE.
-  g_ltf_atr_handle     LTF ATR handle used by the conditions meter.
 
 Structure state (BASE_STRUCTURE_STATE, rebuilt by every replay)
   direction            +1 bullish, -1 bearish, 0 not yet established.
@@ -847,8 +869,7 @@ only prefixed objects, and clears the chart comment.
     Allow_Early_Tradability.
 
   Change the Optimal Conditions result:
-    The Tradable result, the four Use_*_For_Optimal switches and
-    Early_Passes_Timeframe_Correlation.
+    The Tradable result and the four Use_*_For_Optimal switches.
 
   Change visuals only:
     Show toggles (including Show_Equal_Highs_Lows, Show_Internal_Structure,

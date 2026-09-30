@@ -1,5 +1,5 @@
 //@version=6
-// Base - Market Structure (TradingView port of Base.mq5 v2.40)
+// Base - Market Structure (TradingView port of Base.mq5 v2.41)
 //
 // Reads market structure from closed candles only:
 //  * HH/HL/LH/LL swings: pivots of each timeframe's Swing Detection Length
@@ -43,8 +43,8 @@ indicator("Base - Market Structure", shorttitle = "Base", overlay = true, max_la
 // ---------------------------------------------------------------- inputs
 grpTf = "Timeframes"
 htfTf = input.timeframe("240", "HTF", group = grpTf, tooltip = "Higher timeframe (HTF). Its structure sets the main trend, Market Tradability, the HTF MA, ADX, ATR and session filters, and the alerts.")
-mtfTf = input.timeframe("60", "MTF", group = grpTf, tooltip = "Middle timeframe (MTF). Its trend is correlated with the HTF for Market Tradability, and it drives the MTF MA filter.")
-ltfTf = input.timeframe("15", "LTF", group = grpTf, tooltip = "Lower timeframe (LTF). Its trend can be correlated too, and its candles feed Healthy Extension, Market Volume and Price Momentum.")
+mtfTf = input.timeframe("60", "MTF", group = grpTf, tooltip = "Middle timeframe (MTF). Its trend is correlated with the HTF for Market Tradability, it drives the MTF MA filter, and its swings and ATR measure Healthy Extension.")
+ltfTf = input.timeframe("15", "LTF", group = grpTf, tooltip = "Lower timeframe (LTF). Its trend can be correlated too, its latest close is the price Healthy Extension measures, and its candles feed Market Volume and Price Momentum.")
 
 grpTrend = "Trend Analysis Timeframes"
 useHtf = input.bool(true, "Use HTF", group = grpTrend, tooltip = "Show the HTF Market Trend and require it to agree with the other selected timeframes for Market Tradability. An established HTF trend is always required.")
@@ -56,8 +56,8 @@ grpProc = "Structure Bar Processing"
 barsToProcess = input.int(100, "Bars To Process", minval = 100, maxval = 100000, group = grpProc, tooltip = "How many HTF candles back structure is drawn. Other chart timeframes cover the same span of time. Structure is always calculated on all loaded history.")
 
 grpSwing = "Swing Detection"
-htfSwingLength = input.int(10, "HTF Swing Detection Length", minval = 2, maxval = 50, group = grpSwing, tooltip = "Candles on each side of a pivot for HTF swings (Smart Money Engine swing detection). It is also how many candles a swing takes to confirm. Lower = more, faster swings; higher = fewer, cleaner swings.")
-mtfSwingLength = input.int(10, "MTF Swing Detection Length", minval = 2, maxval = 50, group = grpSwing, tooltip = "Candles on each side of a pivot for MTF swings. Lower = more, faster swings; higher = fewer, cleaner swings.")
+htfSwingLength = input.int(2, "HTF Swing Detection Length", minval = 2, maxval = 50, group = grpSwing, tooltip = "Candles on each side of a pivot for HTF swings (Smart Money Engine swing detection). It is also how many candles a swing takes to confirm. Lower = more, faster swings; higher = fewer, cleaner swings.")
+mtfSwingLength = input.int(9, "MTF Swing Detection Length", minval = 2, maxval = 50, group = grpSwing, tooltip = "Candles on each side of a pivot for MTF swings. Lower = more, faster swings; higher = fewer, cleaner swings.")
 ltfSwingLength = input.int(10, "LTF Swing Detection Length", minval = 2, maxval = 50, group = grpSwing, tooltip = "Candles on each side of a pivot for LTF swings. Lower = more, faster swings; higher = fewer, cleaner swings.")
 showSwingPoints = input.bool(true, "Show Swing Points", group = grpSwing, tooltip = "Display the HH/HL/LH/LL (and EQH/EQL) swing labels and the dotted lines at the latest swing high and low.")
 showStrongWeak = input.bool(true, "Show Strong/Weak High/Low", group = grpSwing, tooltip = "Display Strong/Weak High/Low. Each break protects the latest swing on the other side (Strong); the trend's running extreme is Weak, the next target.")
@@ -94,7 +94,7 @@ lineWidth = input.int(2, "Line Width", minval = 1, maxval = 4, group = grpLines,
 
 grpEqual = "EQH/EQL"
 showEqual = input.bool(true, "Show EQH/EQL", group = grpEqual, tooltip = "Label equal highs and lows as EQH/EQL and join each to the swing it equals with a dotted line. When off, they still act as one liquidity pool.")
-equalThreshold = input.float(0.1, "EQH/EQL Threshold (ATR, 0 = off)", minval = 0.0, maxval = 0.5, step = 0.05, group = grpEqual, tooltip = "A swing within this many ATR of the previous swing on its side is an equal high or low: it keeps that swing's role and breaks at the pool's outer edge. 0 turns it off.")
+equalThreshold = input.float(0.2, "EQH/EQL Threshold (ATR, 0 = off)", minval = 0.0, maxval = 0.5, step = 0.05, group = grpEqual, tooltip = "A swing within this many ATR of the previous swing on its side is an equal high or low: it keeps that swing's role and breaks at the pool's outer edge. 0 turns it off.")
 
 grpHtfMa = "MA Filter (HTF)"
 useHtfMa = input.bool(true, "Use HTF MA Filter", group = grpHtfMa, tooltip = "Qualify setups with the latest closed HTF candle against the HTF MA (longs above, shorts below). Shown in the Market Tradability tooltip only.")
@@ -125,11 +125,10 @@ useAtr = input.bool(true, "Use ATR Filter", group = grpAtr, tooltip = "Require t
 atrLength = input.int(14, "ATR Length", minval = 1, group = grpAtr, tooltip = "Length of the HTF ATR.")
 
 grpOpt = "Optimal Conditions"
-useCorrOpt = input.bool(true, "Use Timeframe Correlation For Optimal", group = grpOpt, tooltip = "Optimal Conditions requires the selected timeframes to correlate (Market Tradability is Tradable).")
-useExtOpt = input.bool(false, "Use Healthy Extension For Optimal", group = grpOpt, tooltip = "Optimal Conditions requires price to be 0 to 3 LTF ATR from the latest LTF HL (bullish HTF trend) or LH (bearish).")
+useCorrOpt = input.bool(true, "Use Timeframe Correlation For Optimal", group = grpOpt, tooltip = "Optimal Conditions requires the selected timeframes to correlate (Market Tradability is Tradable or Tradable (Early).")
+useExtOpt = input.bool(false, "Use Healthy Extension For Optimal", group = grpOpt, tooltip = "Optimal Conditions blocks an overextended market: price more than 10 MTF ATR beyond the latest MTF swing low (bullish HTF trend) or swing high (bearish). Anything less passes.")
 useVolOpt = input.bool(true, "Use Market Volume For Optimal", group = grpOpt, tooltip = "Optimal Conditions requires the latest LTF volume to be 0.5x to 2x its 20-candle average.")
 useMomOpt = input.bool(false, "Use Price Momentum For Optimal", group = grpOpt, tooltip = "Optimal Conditions requires the latest LTF true range to be 0.5x to 2x its 20-candle average.")
-earlyPassesCorr = input.bool(false, "Tradable (Early) Passes Timeframe Correlation", group = grpOpt, tooltip = "Let Tradable (Early) pass the Timeframe Correlation requirement of Optimal Conditions. Off: only a fully Tradable market passes.")
 
 grpDash = "Dashboard and Alerts"
 dashPositionInput = input.string("Top Right", "Dashboard Position", options = ["Top Left", "Top Right", "Bottom Left", "Bottom Right"], group = grpDash, tooltip = "Corner of the chart where the dashboard is shown.")
@@ -144,7 +143,7 @@ ADX_BOS_AND_CHOCH = false
 ATR_MODE = "Minimum"
 ATR_MINIMUM = 1.0
 ATR_MAXIMUM = 10.0
-MAX_EXTENSION_ATR = 3.0
+MAX_EXTENSION_ATR = 10.0
 VOLUME_AVERAGE_LENGTH = 20
 VOLUME_MIN_RATIO = 0.50
 VOLUME_MAX_RATIO = 2.00
@@ -1015,18 +1014,18 @@ htfRequest() =>
 mtfRequest() =>
     [d, b, cons, lc, rlo, rhi, bc, bn, tc, tn, t1, t2, t3, t4, lcd, llv, nc, vhh, vlh, vll, vhl, et, hp, hk, hv, lp, lk, lv, th, tl] = structureRequest(mtfSwingLength)
     [iT, iC, iL] = internalRequest(mtfInternalLength)
-    [d[1], b[1], cons[1], lc[1], rlo[1], rhi[1], bc[1], bn[1], tc[1], tn[1], t1[1], t2[1], t3[1], t4[1], lcd[1], llv[1], vhh[1], vlh[1], vll[1], vhl[1], th[1], tl[1], iT[1], iC[1], iL[1]]
+    float atrS = swingAtrSeries()
+    [d[1], b[1], cons[1], lc[1], rlo[1], rhi[1], bc[1], bn[1], tc[1], tn[1], t1[1], t2[1], t3[1], t4[1], lcd[1], llv[1], vhh[1], vlh[1], vll[1], vhl[1], th[1], tl[1], iT[1], iC[1], iL[1], hp[1], hv[1], lp[1], lv[1], atrS[1]]
 
 ltfRequest() =>
     [d, b, cons, lc, rlo, rhi, bc, bn, tc, tn, t1, t2, t3, t4, lcd, llv, nc, vhh, vlh, vll, vhl, et, hp, hk, hv, lp, lk, lv, th, tl] = structureRequest(ltfSwingLength)
     float trL = ta.tr(true)
-    float atrL = ta.sma(trL, atrLength)
     float volAvg = nz(ta.sma(volume, VOLUME_AVERAGE_LENGTH)[1])
     float volRatio = volAvg > 0 ? nz(volume) / volAvg : 0.0
     float trAvg = nz(ta.sma(trL, MOMENTUM_AVERAGE_LENGTH)[1])
     float momRatio = trAvg > 0 ? trL / trAvg : 0.0
     [iT, iC, iL] = internalRequest(ltfInternalLength)
-    [d[1], b[1], cons[1], lc[1], rlo[1], rhi[1], bc[1], bn[1], tc[1], tn[1], t1[1], t2[1], t3[1], t4[1], lcd[1], llv[1], vhh[1], vlh[1], vll[1], vhl[1], hp[1], hk[1], hv[1], lp[1], lk[1], lv[1], close[1], atrL[1], volAvg[1], volRatio[1], trAvg[1], momRatio[1], th[1], tl[1], iT[1], iC[1], iL[1]]
+    [d[1], b[1], cons[1], lc[1], rlo[1], rhi[1], bc[1], bn[1], tc[1], tn[1], t1[1], t2[1], t3[1], t4[1], lcd[1], llv[1], vhh[1], vlh[1], vll[1], vhl[1], close[1], volAvg[1], volRatio[1], trAvg[1], momRatio[1], th[1], tl[1], iT[1], iC[1], iL[1]]
 
 mtfMaRequest() =>
     float e1 = ta.ema(close, mtfMaLength)
@@ -1035,8 +1034,8 @@ mtfMaRequest() =>
     [m[1], open[1], close[1]]
 
 [hDir, hBos, hCons, hLabels, hRangeLo, hRangeHi, hBreaks, hBreaksN, hTrap, hTrapN, hT1, hT2, hT3, hT4, hLatest, hLatestLv, hNew, hHH, hLH, hLL, hHL, hEvents, hClose, hOpen, hMa, hAdx, hAtr, hSession, hTrailHigh, hTrailLow, hInTrend, hInChoch, hInLevel] = request.security(syminfo.tickerid, htfTf, htfRequest(), lookahead = barmerge.lookahead_on)
-[mDir, mBos, mCons, mLabels, mRangeLo, mRangeHi, mBreaks, mBreaksN, mTrap, mTrapN, mT1, mT2, mT3, mT4, mLatest, mLatestLv, mHH, mLH, mLL, mHL, mTrailHigh, mTrailLow, mInTrend, mInChoch, mInLevel] = request.security(syminfo.tickerid, mtfTf, mtfRequest(), lookahead = barmerge.lookahead_on)
-[lDir, lBos, lCons, lLabels, lRangeLo, lRangeHi, lBreaks, lBreaksN, lTrap, lTrapN, lT1, lT2, lT3, lT4, lLatest, lLatestLv, lHH, lLH, lLL, lHL, lLastHigh, lLastHighKind, lHaveHigh, lLastLow, lLastLowKind, lHaveLow, lClose, lAtr, lVolAvg, lVolRatio, lTrAvg, lMomRatio, lTrailHigh, lTrailLow, lInTrend, lInChoch, lInLevel] = request.security(syminfo.tickerid, ltfTf, ltfRequest(), lookahead = barmerge.lookahead_on)
+[mDir, mBos, mCons, mLabels, mRangeLo, mRangeHi, mBreaks, mBreaksN, mTrap, mTrapN, mT1, mT2, mT3, mT4, mLatest, mLatestLv, mHH, mLH, mLL, mHL, mTrailHigh, mTrailLow, mInTrend, mInChoch, mInLevel, mLastHigh, mHaveHigh, mLastLow, mHaveLow, mAtr] = request.security(syminfo.tickerid, mtfTf, mtfRequest(), lookahead = barmerge.lookahead_on)
+[lDir, lBos, lCons, lLabels, lRangeLo, lRangeHi, lBreaks, lBreaksN, lTrap, lTrapN, lT1, lT2, lT3, lT4, lLatest, lLatestLv, lHH, lLH, lLL, lHL, lClose, lVolAvg, lVolRatio, lTrAvg, lMomRatio, lTrailHigh, lTrailLow, lInTrend, lInChoch, lInLevel] = request.security(syminfo.tickerid, ltfTf, ltfRequest(), lookahead = barmerge.lookahead_on)
 [mtfMaValue, mtfMaOpen, mtfMaClose] = request.security(syminfo.tickerid, mtfTf, mtfMaRequest(), lookahead = barmerge.lookahead_on)
 
 // ---------------------------------------------------- chart structure
@@ -1607,19 +1606,28 @@ tradeRecommendation(TfView htf, TfView mtf, TfView ltf, int tradability) =>
             s := lead + tfName(ltfTf) + " to confirm with a " + trendWord(d) + " BOS before " + action + "."
     s
 
-// Healthy Extension: in the HTF trend direction, from the latest LTF HL
-// (bullish) or LH (bearish) to the latest LTF close, 0 to 3 LTF ATR.
-healthyExtension(TfView htf, float ltfClose, float ltfAtr, float lastLow, int lastLowKind, bool haveLow, float lastHigh, int lastHighKind, bool haveHigh) =>
-    bool ok = false
-    if not na(ltfAtr) and ltfAtr > 0 and not na(ltfClose)
-        float ext = -1.0
-        int d = biasDirection(htf)
-        if d > 0 and haveLow and lastLowKind < 0
-            ext := (ltfClose - lastLow) / ltfAtr
-        else if d < 0 and haveHigh and lastHighKind < 0
-            ext := (lastHigh - ltfClose) / ltfAtr
-        ok := ext >= 0.0 and ext <= MAX_EXTENSION_ATR
-    ok
+// Healthy Extension blocks only an overextended market. In the HTF trend
+// direction, the extension is how far the latest LTF close is beyond the
+// latest MTF swing on the other side (the swing low in a bullish trend, the
+// swing high in a bearish one), in MTF ATR (14 candles); more than
+// MAX_EXTENSION_ATR (10) is overextended. With no trend direction or no MTF
+// swing yet, or price back beyond that swing, the market is not overextended.
+// On real data the 6% of Tradable candles beyond 10 MTF ATR were followed by
+// a 1 ATR pullback before a 1 ATR move on 56% of the time (48% for the rest).
+// Returns na when there is nothing to measure.
+trendExtension(TfView htf, float ltfClose, float mtfAtr, float lastLow, bool haveLow, float lastHigh, bool haveHigh) =>
+    float ext = na
+    int d = biasDirection(htf)
+    if d != 0 and not na(mtfAtr) and mtfAtr > 0 and not na(ltfClose)
+        if d > 0 and haveLow
+            ext := (ltfClose - lastLow) / mtfAtr
+        else if d < 0 and haveHigh
+            ext := (lastHigh - ltfClose) / mtfAtr
+    ext
+
+// "4.2 H1 ATR" for the dashboard.
+extensionText(float extension) =>
+    str.tostring(extension, "0.0") + " " + tfName(mtfTf) + " ATR"
 
 passText(bool pass) =>
     pass ? "PASS" : "BLOCKED"
@@ -1657,20 +1665,20 @@ entryFilterTooltip() =>
     out := out + "\nBOS: long " + passText(longDir and adxPass and atrPass) + ", short " + passText(shortDir and adxPass and atrPass)
     out := out + "\nCHoCH: long " + passText(longDir and chochAdx and atrPass) + ", short " + passText(shortDir and chochAdx and atrPass)
     out := out + "\nHTF MA " + htfText + " | MTF MA " + mtfText + " | Session " + (useSession ? (sess ? "in" : "out") : "off")
-    out := out + "\nADX " + (useAdx ? str.tostring(hAdx, "#.0") + " " + passText(adxPass) : "off") + " | ATR " + (useAtr ? str.tostring(hAtr, format.mintick) + " " + passText(atrPass) : "off")
+    out := out + "\nADX " + (useAdx ? str.tostring(hAdx, "0.0") + " " + passText(adxPass) : "off") + " | ATR " + (useAtr ? str.tostring(hAtr, format.mintick) + " " + passText(atrPass) : "off")
     out
 
 // Optimal Conditions: every enabled requirement must pass.
-evaluateOptimal(bool biasReady, bool early, bool healthy, bool goodVolume, float volumeRatio, bool goodMomentum, float momentumRatio) =>
+evaluateOptimal(bool biasReady, bool healthy, float extension, bool goodVolume, float volumeRatio, bool goodMomentum, float momentumRatio) =>
     bool optimal = (not useCorrOpt or biasReady) and (not useExtOpt or healthy) and (not useVolOpt or goodVolume) and (not useMomOpt or goodMomentum)
     string reason = ""
     if optimal
         reason := "All selected requirements are met"
     else
         if useCorrOpt and not biasReady
-            reason := early ? "the selected timeframes agree only early, before the confirming BOS (see Tradability Reason)" : "the selected timeframes do not correlate (see Tradability Reason)"
+            reason := "the selected timeframes do not correlate (see Tradability Reason)"
         if useExtOpt and not healthy
-            reason := reason + (reason == "" ? "" : "; ") + "price is overextended or lacks a valid corrective anchor"
+            reason := reason + (reason == "" ? "" : "; ") + "price is overextended" + (na(extension) ? "" : " (" + extensionText(extension) + " beyond the latest " + tfName(mtfTf) + " swing)")
         if useVolOpt and not goodVolume
             reason := reason + (reason == "" ? "" : "; ") + (volumeRatio < VOLUME_MIN_RATIO ? "volume is too low" : "volume is too high")
         if useMomOpt and not goodMomentum
@@ -1703,20 +1711,40 @@ internalColor(InternalView iv) =>
 
 // One row: the component name in bold, then its coloured output.
 dashRow(int row, string component, string output, color outputColor, string tip) =>
-    table.cell(dash, 0, row, component, text_color = DASH_TEXT_COLOR, text_halign = text.align_left, text_size = size.small, tooltip = tip, text_formatting = text.format_bold)
-    table.cell(dash, 1, row, output, text_color = outputColor, text_halign = text.align_left, text_size = size.small, tooltip = tip)
+    table.cell(dash, 0, row, component, text_color = DASH_TEXT_COLOR, text_halign = text.align_left, text_valign = text.align_top, text_size = size.small, tooltip = tip, text_formatting = text.format_bold)
+    table.cell(dash, 1, row, output, text_color = outputColor, text_halign = text.align_left, text_valign = text.align_top, text_size = size.small, tooltip = tip)
+
+// Long outputs (the Tradability Reason and Trade Recommendations) wrap onto
+// new lines of at most DASH_WRAP_CHARS characters, broken between words.
+DASH_WRAP_CHARS = 48
+wrapText(string s) =>
+    array<string> words = str.split(s, " ")
+    string out = ""
+    string line = ""
+    int n = words.size()
+    if n > 0
+        for i = 0 to n - 1
+            string w = words.get(i)
+            if w != ""
+                if line != "" and str.length(line) + 1 + str.length(w) > DASH_WRAP_CHARS
+                    out := out + (out == "" ? "" : "\n") + line
+                    line := ""
+                line := line + (line == "" ? "" : " ") + w
+    out + (out == "" or line == "" ? "" : "\n") + line
 
 if barstate.islast
     [tradability, tradeReason] = evaluateTradability(htfView, mtfView, ltfView, htfInternal, mtfInternal, ltfInternal)
     bool early = tradability == 1
-    // Tradable (Early) passes Timeframe Correlation only when allowed to.
-    bool correlated = tradability == 2 or (early and earlyPassesCorr)
-    bool healthy = healthyExtension(htfView, lClose, lAtr, lLastLow, nz(lLastLowKind), nz(lHaveLow) == 1, lLastHigh, nz(lLastHighKind), nz(lHaveHigh) == 1)
+    // The timeframes correlate whenever the market is Tradable or Tradable
+    // (Early): in both, every selected timeframe agrees on the direction.
+    bool correlated = tradability != 0
+    float extension = trendExtension(htfView, lClose, mAtr, mLastLow, nz(mHaveLow) == 1, mLastHigh, nz(mHaveHigh) == 1)
+    bool healthy = na(extension) or extension <= MAX_EXTENSION_ATR
     float volRatio = nz(lVolRatio)
     bool goodVolume = nz(lVolAvg) > 0 and volRatio >= VOLUME_MIN_RATIO and volRatio <= VOLUME_MAX_RATIO
     float momRatio = nz(lMomRatio)
     bool goodMomentum = nz(lTrAvg) > 0 and momRatio >= MOMENTUM_MIN_RATIO and momRatio <= MOMENTUM_MAX_RATIO
-    [optimal, optimalReason] = evaluateOptimal(correlated, early, healthy, goodVolume, volRatio, goodMomentum, momRatio)
+    [optimal, optimalReason] = evaluateOptimal(correlated, healthy, extension, goodVolume, volRatio, goodMomentum, momRatio)
     table.clear(dash, 0, 0, 1, 23)
     int row = 0
     // Each Market Trend with its Internal Structure below it.
@@ -1740,25 +1768,25 @@ if barstate.islast
             row += 1
     dashRow(row, "Market Tradability:", tradability == 2 ? "Tradable" : early ? "Tradable (Early)" : "Not Tradable", early ? DASH_EARLY_COLOR : passColor(tradability == 2), entryFilterTooltip())
     row += 1
-    dashRow(row, "Tradability Reason:", tradeReason, DASH_TEXT_COLOR, "")
+    dashRow(row, "Tradability Reason:", wrapText(tradeReason), DASH_TEXT_COLOR, "")
     row += 1
-    dashRow(row, "Trade Recommendations:", tradeRecommendation(htfView, mtfView, ltfView, tradability), DASH_TEXT_COLOR, "")
+    dashRow(row, "Trade Recommendations:", wrapText(tradeRecommendation(htfView, mtfView, ltfView, tradability)), DASH_TEXT_COLOR, "")
     row += 1
     dashRow(row, " ", " ", DASH_TEXT_COLOR, "")
     row += 1
     dashRow(row, "Optimal Conditions:", optimal ? "OPTIMAL" : "NOT OPTIMAL", passColor(optimal), optimalReason)
     row += 1
     if useCorrOpt
-        dashRow(row, "Timeframe Correlation:", early ? (correlated ? "PASS (Early)" : "EARLY") : passText(correlated), early and not correlated ? DASH_EARLY_COLOR : passColor(correlated), optimalReason)
+        dashRow(row, "Timeframe Correlation:", passText(correlated), passColor(correlated), optimalReason)
         row += 1
     if useExtOpt
-        dashRow(row, "Healthy Extension:", passText(healthy), passColor(healthy), optimalReason)
+        dashRow(row, "Healthy Extension:", passText(healthy) + (na(extension) ? "" : " (" + extensionText(extension) + ")"), passColor(healthy), optimalReason)
         row += 1
     if useVolOpt
-        dashRow(row, "Market Volume:", passText(goodVolume) + " (" + str.tostring(volRatio, "#.00") + "x average)", passColor(goodVolume), optimalReason)
+        dashRow(row, "Market Volume:", passText(goodVolume) + " (" + str.tostring(volRatio, "0.00") + "x average)", passColor(goodVolume), optimalReason)
         row += 1
     if useMomOpt
-        dashRow(row, "Price Momentum:", passText(goodMomentum) + " (" + str.tostring(momRatio, "#.00") + "x average range)", passColor(goodMomentum), optimalReason)
+        dashRow(row, "Price Momentum:", passText(goodMomentum) + " (" + str.tostring(momRatio, "0.00") + "x average range)", passColor(goodMomentum), optimalReason)
         row += 1
 
 // ------------------------------------------------------------------- alerts
