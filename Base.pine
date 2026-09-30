@@ -1,5 +1,5 @@
 //@version=6
-// Base - Market Structure (TradingView port of Base.mq5 v2.39)
+// Base - Market Structure (TradingView port of Base.mq5 v2.40)
 //
 // Reads market structure from closed candles only:
 //  * HH/HL/LH/LL swings: pivots of each timeframe's Swing Detection Length
@@ -35,8 +35,9 @@
 //    pivots (Internal Structure Length, 5 by default), dashed and faded on
 //    the chart and one dashboard row per timeframe.
 //  * Dashboard: the Market Trend and Internal Structure of each selected
-//    timeframe, Market Tradability and its reason, the trade recommendation
-//    and Optimal Conditions. It is an analysis tool and never places orders.
+//    timeframe, Market Tradability (Tradable, Tradable (Early) or Not
+//    Tradable) and its reason, the trade recommendation and Optimal
+//    Conditions. It is an analysis tool and never places orders.
 indicator("Base - Market Structure", shorttitle = "Base", overlay = true, max_labels_count = 500, max_lines_count = 500)
 
 // ---------------------------------------------------------------- inputs
@@ -49,6 +50,7 @@ grpTrend = "Trend Analysis Timeframes"
 useHtf = input.bool(true, "Use HTF", group = grpTrend, tooltip = "Show the HTF Market Trend and require it to agree with the other selected timeframes for Market Tradability. An established HTF trend is always required.")
 useMtf = input.bool(true, "Use MTF", group = grpTrend, tooltip = "Show the MTF Market Trend and require it to agree with the other selected timeframes for Market Tradability. It may be in transition.")
 useLtf = input.bool(false, "Use LTF", group = grpTrend, tooltip = "Show the LTF Market Trend and require it to agree for Market Tradability. A selected LTF trend must itself be established (latest break a BOS).")
+allowEarly = input.bool(true, "Allow Tradable (Early)", group = grpTrend, tooltip = "Show Tradable (Early), in amber, when the timeframes agree but the HTF (or a selected LTF) is only a transition (a CHoCH not yet confirmed by a BOS), and the internal structure of the HTF and of every selected timeframe agrees. Such transitions reached their BOS more often, but still failed about a third of the time.")
 
 grpProc = "Structure Bar Processing"
 barsToProcess = input.int(100, "Bars To Process", minval = 100, maxval = 100000, group = grpProc, tooltip = "How many HTF candles back structure is drawn. Other chart timeframes cover the same span of time. Structure is always calculated on all loaded history.")
@@ -127,6 +129,7 @@ useCorrOpt = input.bool(true, "Use Timeframe Correlation For Optimal", group = g
 useExtOpt = input.bool(false, "Use Healthy Extension For Optimal", group = grpOpt, tooltip = "Optimal Conditions requires price to be 0 to 3 LTF ATR from the latest LTF HL (bullish HTF trend) or LH (bearish).")
 useVolOpt = input.bool(true, "Use Market Volume For Optimal", group = grpOpt, tooltip = "Optimal Conditions requires the latest LTF volume to be 0.5x to 2x its 20-candle average.")
 useMomOpt = input.bool(false, "Use Price Momentum For Optimal", group = grpOpt, tooltip = "Optimal Conditions requires the latest LTF true range to be 0.5x to 2x its 20-candle average.")
+earlyPassesCorr = input.bool(false, "Tradable (Early) Passes Timeframe Correlation", group = grpOpt, tooltip = "Let Tradable (Early) pass the Timeframe Correlation requirement of Optimal Conditions. Off: only a fully Tradable market passes.")
 
 grpDash = "Dashboard and Alerts"
 dashPositionInput = input.string("Top Right", "Dashboard Position", options = ["Top Left", "Top Right", "Bottom Left", "Bottom Right"], group = grpDash, tooltip = "Corner of the chart where the dashboard is shown.")
@@ -875,8 +878,9 @@ structureRequest(int length) =>
 // Internal Structure (Smart Money Engine): minor structure inside the swings,
 // from pivots of the timeframe's Internal Structure Length candles (default
 // 5, shorter than the Swing Detection Length). It gives more insight into the
-// moves between swings without changing the Market Trend, Tradability,
-// Optimal Conditions or alerts.
+// moves between swings without changing the Market Trend or alerts; its only
+// effect elsewhere is Tradable (Early), which requires it to agree (see
+// evaluateTradability).
 //  * Each internal pivot high (low) becomes the internal high (low) level.
 //  * The first close above the internal high is an internal bullish BOS, or
 //    an internal bullish CHoCH when the internal trend was bearish; bearish
@@ -1481,11 +1485,28 @@ noTrendText(string name, TfView v) =>
 transitionText(string name, TfView v) =>
     name + " is only in a " + trendWord(v.dir) + " transition (a CHoCH not yet confirmed by a BOS)."
 
-// Market Tradability: the HTF trend must be established (latest break a BOS,
-// not Consolidation / Undefined); every selected timeframe must have a
-// direction and they must agree; a selected LTF must itself be established.
+// Timeframe names joined for a sentence: "H4", "H4 and M15".
+joinNames(array<string> names) =>
+    string r = ""
+    int count = names.size()
+    if count > 0
+        for i = 0 to count - 1
+            r := r + (i == 0 ? "" : i == count - 1 ? " and " : ", ") + names.get(i)
+    r
+
+// Market Tradability (2 Tradable, 1 Tradable (Early), 0 Not Tradable):
+//  * Tradable: the HTF trend is established (latest break a BOS, not
+//    Consolidation / Undefined); every selected timeframe has a direction and
+//    they agree; a selected LTF is itself established.
+//  * Tradable (Early), with Allow Tradable (Early): the same, except that the
+//    HTF and/or a selected LTF is only a transition (a CHoCH not yet confirmed
+//    by a BOS), the HTF agrees with every selected timeframe, and the internal
+//    structure of the HTF and of every selected timeframe agrees with that
+//    direction. Internal agreement made such transitions reach their BOS
+//    markedly more often, but they still failed about a third of the time,
+//    so it is shown apart from Tradable.
 // The reason says why in one sentence, naming the timeframes.
-evaluateTradability(TfView htf, TfView mtf, TfView ltf) =>
+evaluateTradability(TfView htf, TfView mtf, TfView ltf, InternalView hi, InternalView mi, InternalView li) =>
     bool htfDef = definiteBias(htf)
     bool ltfDef = definiteBias(ltf)
     int hd = biasDirection(htf)
@@ -1494,39 +1515,90 @@ evaluateTradability(TfView htf, TfView mtf, TfView ltf) =>
     bool available = (not useHtf or hd != 0) and (not useMtf or md != 0) and (not useLtf or ld != 0)
     bool agree = (not useHtf or not useMtf or hd == md) and (not useHtf or not useLtf or hd == ld) and (not useMtf or not useLtf or md == ld)
     bool ok = htfDef and available and agree and (not useLtf or ltfDef)
+    int selected = (useHtf ? 1 : 0) + (useMtf ? 1 : 0) + (useLtf ? 1 : 0)
+    // Tradable (Early): every direction agrees with the HTF and only the HTF
+    // and/or the selected LTF is still a transition.
+    bool earlyCandidate = allowEarly and hd != 0 and (not useMtf or md == hd) and (not useLtf or ld == hd)
+    array<string> pending = array.new<string>()
+    if not htfDef
+        pending.push(tfName(htfTf))
+    if useLtf and not ltfDef
+        pending.push(tfName(ltfTf))
+    array<string> disagree = array.new<string>()
+    if hi.trend != hd
+        disagree.push(tfName(htfTf))
+    if useMtf and mi.trend != hd
+        disagree.push(tfName(mtfTf))
+    if useLtf and li.trend != hd
+        disagree.push(tfName(ltfTf))
+    int state = 0
     string reason = ""
     if ok
-        int selected = (useHtf ? 1 : 0) + (useMtf ? 1 : 0) + (useLtf ? 1 : 0)
+        state := 2
         int direction = useHtf ? hd : useMtf ? md : ld
         reason := trendTimeframesText() + (selected == 1 ? " is " : selected == 2 ? " are both " : " are all ") + trendWord(direction) + ", and the " + tfName(htfTf) + " trend is confirmed by a BOS"
         if useLtf
             reason := reason + ", as is the " + tfName(ltfTf) + " trend"
         reason := reason + "."
-    else if hd == 0
-        reason := noTrendText(tfName(htfTf), htf)
-    else if not htfDef
-        reason := transitionText(tfName(htfTf), htf)
-    else if useMtf and md == 0
-        reason := noTrendText(tfName(mtfTf), mtf)
-    else if useLtf and ld == 0
-        reason := noTrendText(tfName(ltfTf), ltf)
-    else if not agree
-        string first = useHtf ? tfName(htfTf) : tfName(mtfTf)
-        int firstDir = useHtf ? hd : md
-        bool mtfConflict = useHtf and useMtf and md != hd
-        string other = mtfConflict ? tfName(mtfTf) : tfName(ltfTf)
-        int otherDir = mtfConflict ? md : ld
-        reason := first + " is " + trendWord(firstDir) + " but " + other + " is " + trendWord(otherDir) + "."
+    else if earlyCandidate and pending.size() > 0 and disagree.size() == 0
+        state := 1
+        int named = selected + (useHtf ? 0 : 1)
+        string names = useHtf ? trendTimeframesText() : tfName(htfTf) + (selected == 1 ? " and " : ", ") + trendTimeframesText()
+        reason := names + (named == 1 ? " is " : named == 2 ? " are both " : " are all ") + trendWord(hd) + " and " + (named == 1 ? "its" : "their") + " internal structure agrees, but the " + joinNames(pending) + (pending.size() == 1 ? " trend is only a transition (a CHoCH" : " trends are only transitions (CHoCHs") + " not yet confirmed by a BOS)."
     else
-        reason := transitionText(tfName(ltfTf), ltf)
-    [ok, reason]
+        if hd == 0
+            reason := noTrendText(tfName(htfTf), htf)
+        else if not htfDef
+            reason := transitionText(tfName(htfTf), htf)
+        else if useMtf and md == 0
+            reason := noTrendText(tfName(mtfTf), mtf)
+        else if useLtf and ld == 0
+            reason := noTrendText(tfName(ltfTf), ltf)
+        else if not agree
+            string first = useHtf ? tfName(htfTf) : tfName(mtfTf)
+            int firstDir = useHtf ? hd : md
+            bool mtfConflict = useHtf and useMtf and md != hd
+            string other = mtfConflict ? tfName(mtfTf) : tfName(ltfTf)
+            int otherDir = mtfConflict ? md : ld
+            reason := first + " is " + trendWord(firstDir) + " but " + other + " is " + trendWord(otherDir) + "."
+        else
+            reason := transitionText(tfName(ltfTf), ltf)
+        // A transition that would be Tradable (Early) but for the internal
+        // structure says which timeframes do not agree yet.
+        if earlyCandidate and pending.size() > 0 and disagree.size() > 0
+            reason := str.substring(reason, 0, str.length(reason) - 1) + ", and the " + joinNames(disagree) + " internal structure is not " + trendWord(hd) + " yet."
+    [state, reason]
+
+// Tradable (Early): early entries in the trend's direction while the
+// transition holds, and the BOS that would confirm it.
+earlyRecommendationText(TfView htf) =>
+    int d = biasDirection(htf)
+    string action = d > 0 ? "buys" : "sells"
+    string s = ""
+    if definiteBias(htf)
+        s := tfName(htfTf) + " is " + trendWord(d) + " and the internal structure agrees: early " + action + " are possible before " + tfName(ltfTf) + " confirms with a " + trendWord(d) + " BOS."
+    else
+        s := "Early " + action + " only"
+        if d > 0 and not na(htf.hl)
+            s := s + ", while price holds above HL " + priceText(htf.hl)
+        if d < 0 and not na(htf.lh)
+            s := s + ", while price holds below LH " + priceText(htf.lh)
+        if d > 0 and not na(htf.hh)
+            s := s + "; a close above HH " + priceText(htf.hh) + " (bullish BOS) confirms the trend"
+        if d < 0 and not na(htf.ll)
+            s := s + "; a close below LL " + priceText(htf.ll) + " (bearish BOS) confirms the trend"
+        s := s + "."
+    s
 
 // The dashboard's recommendation: the HTF's, unless an established HTF trend
-// is held back by a selected lower timeframe, which it then names.
-tradeRecommendation(TfView htf, TfView mtf, TfView ltf, bool tradable) =>
+// is held back by a selected lower timeframe, which it then names, or the
+// market is only Tradable (Early).
+tradeRecommendation(TfView htf, TfView mtf, TfView ltf, int tradability) =>
     int d = biasDirection(htf)
     string s = recommendationText(htf)
-    if not tradable and d != 0 and htf.lastBos
+    if tradability == 1
+        s := earlyRecommendationText(htf)
+    else if tradability == 0 and d != 0 and htf.lastBos
         string action = d > 0 ? "buying" : "selling"
         string lead = tfName(htfTf) + " is " + trendWord(d) + ", but wait for "
         if useMtf and biasDirection(mtf) != d
@@ -1589,14 +1661,14 @@ entryFilterTooltip() =>
     out
 
 // Optimal Conditions: every enabled requirement must pass.
-evaluateOptimal(bool biasReady, bool healthy, bool goodVolume, float volumeRatio, bool goodMomentum, float momentumRatio) =>
+evaluateOptimal(bool biasReady, bool early, bool healthy, bool goodVolume, float volumeRatio, bool goodMomentum, float momentumRatio) =>
     bool optimal = (not useCorrOpt or biasReady) and (not useExtOpt or healthy) and (not useVolOpt or goodVolume) and (not useMomOpt or goodMomentum)
     string reason = ""
     if optimal
         reason := "All selected requirements are met"
     else
         if useCorrOpt and not biasReady
-            reason := "the selected timeframes do not correlate (see Tradability Reason)"
+            reason := early ? "the selected timeframes agree only early, before the confirming BOS (see Tradability Reason)" : "the selected timeframes do not correlate (see Tradability Reason)"
         if useExtOpt and not healthy
             reason := reason + (reason == "" ? "" : "; ") + "price is overextended or lacks a valid corrective anchor"
         if useVolOpt and not goodVolume
@@ -1610,12 +1682,13 @@ dashPosition = dashPositionInput == "Top Left" ? position.top_left : dashPositio
 // Component names are black and bold, and only the outputs are coloured:
 // trends green (Bullish, Bullish Transition), red (Bearish, Bearish
 // Transition) or grey (Consolidation / Undefined); tradability and conditions
-// green when they pass and red when they do not. No background and no
-// borders.
+// green when they pass and red when they do not; Tradable (Early) amber. No
+// background and no borders.
 DASH_TEXT_COLOR = color.black
 DASH_POSITIVE_COLOR = color.green
 DASH_NEGATIVE_COLOR = color.red
 DASH_NEUTRAL_COLOR = color.gray
+DASH_EARLY_COLOR = #FF8C00
 var table dash = table.new(dashPosition, 2, 24, bgcolor = color.new(color.white, 100), frame_width = 0, border_width = 0)
 
 trendColor(TfView v) =>
@@ -1634,13 +1707,16 @@ dashRow(int row, string component, string output, color outputColor, string tip)
     table.cell(dash, 1, row, output, text_color = outputColor, text_halign = text.align_left, text_size = size.small, tooltip = tip)
 
 if barstate.islast
-    [tradable, tradeReason] = evaluateTradability(htfView, mtfView, ltfView)
+    [tradability, tradeReason] = evaluateTradability(htfView, mtfView, ltfView, htfInternal, mtfInternal, ltfInternal)
+    bool early = tradability == 1
+    // Tradable (Early) passes Timeframe Correlation only when allowed to.
+    bool correlated = tradability == 2 or (early and earlyPassesCorr)
     bool healthy = healthyExtension(htfView, lClose, lAtr, lLastLow, nz(lLastLowKind), nz(lHaveLow) == 1, lLastHigh, nz(lLastHighKind), nz(lHaveHigh) == 1)
     float volRatio = nz(lVolRatio)
     bool goodVolume = nz(lVolAvg) > 0 and volRatio >= VOLUME_MIN_RATIO and volRatio <= VOLUME_MAX_RATIO
     float momRatio = nz(lMomRatio)
     bool goodMomentum = nz(lTrAvg) > 0 and momRatio >= MOMENTUM_MIN_RATIO and momRatio <= MOMENTUM_MAX_RATIO
-    [optimal, optimalReason] = evaluateOptimal(tradable, healthy, goodVolume, volRatio, goodMomentum, momRatio)
+    [optimal, optimalReason] = evaluateOptimal(correlated, early, healthy, goodVolume, volRatio, goodMomentum, momRatio)
     table.clear(dash, 0, 0, 1, 23)
     int row = 0
     // Each Market Trend with its Internal Structure below it.
@@ -1662,18 +1738,18 @@ if barstate.islast
         if showInternalOnDashboard
             dashRow(row, "Internal Structure:", internalTrendText(ltfInternal), internalColor(ltfInternal), internalTooltip(ltfInternal, ltfView, tfName(ltfTf), ltfInternalLength))
             row += 1
-    dashRow(row, "Market Tradability:", tradable ? "Tradable" : "Not Tradable", passColor(tradable), entryFilterTooltip())
+    dashRow(row, "Market Tradability:", tradability == 2 ? "Tradable" : early ? "Tradable (Early)" : "Not Tradable", early ? DASH_EARLY_COLOR : passColor(tradability == 2), entryFilterTooltip())
     row += 1
     dashRow(row, "Tradability Reason:", tradeReason, DASH_TEXT_COLOR, "")
     row += 1
-    dashRow(row, "Trade Recommendations:", tradeRecommendation(htfView, mtfView, ltfView, tradable), DASH_TEXT_COLOR, "")
+    dashRow(row, "Trade Recommendations:", tradeRecommendation(htfView, mtfView, ltfView, tradability), DASH_TEXT_COLOR, "")
     row += 1
     dashRow(row, " ", " ", DASH_TEXT_COLOR, "")
     row += 1
     dashRow(row, "Optimal Conditions:", optimal ? "OPTIMAL" : "NOT OPTIMAL", passColor(optimal), optimalReason)
     row += 1
     if useCorrOpt
-        dashRow(row, "Timeframe Correlation:", passText(tradable), passColor(tradable), optimalReason)
+        dashRow(row, "Timeframe Correlation:", early ? (correlated ? "PASS (Early)" : "EARLY") : passText(correlated), early and not correlated ? DASH_EARLY_COLOR : passColor(correlated), optimalReason)
         row += 1
     if useExtOpt
         dashRow(row, "Healthy Extension:", passText(healthy), passColor(healthy), optimalReason)
