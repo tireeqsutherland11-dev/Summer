@@ -1,5 +1,5 @@
 #property copyright "Market Trend Analyser conversion"
-#property version   "2.39"
+#property version   "2.40"
 #property strict
 #property description "BASE: MT5 port of the Market Trend Analyser Pine Script."
 #property description "Signal/visualisation EA only; the source indicator contains no trading rules."
@@ -10,6 +10,8 @@ enum BASE_SESSION { BASE_NEW_YORK=0, BASE_LONDON=1, BASE_TOKYO=2, BASE_SYDNEY=3,
 enum BASE_ADX_SCOPE { BASE_BOS_ONLY=0, BASE_BOS_AND_CHOCH=1 };
 enum BASE_ATR_MODE { BASE_ATR_MINIMUM=0, BASE_ATR_MAXIMUM=1, BASE_ATR_RANGE=2 };
 enum BASE_LABEL_SIZE { BASE_TINY=7, BASE_SMALL=9, BASE_NORMAL=11, BASE_LARGE=14 };
+// Market Tradability (see EvaluateTradability).
+enum BASE_TRADABILITY { BASE_NOT_TRADABLE=0, BASE_TRADABLE_EARLY=1, BASE_TRADABLE=2 };
 
 input group "Timeframes"
 input ENUM_TIMEFRAMES Structure_Timeframe=PERIOD_H4; // HTF
@@ -20,6 +22,7 @@ input group "Trend Analysis Timeframes"
 input bool Use_HTF=true; // Use HTF
 input bool Use_MTF=true; // Use MTF
 input bool Use_LTF=false; // Use LTF
+input bool Allow_Early_Tradability=true; // Allow Tradable (Early)
 
 input group "Structure Bar Processing"
 input int Bars_To_Process=100;
@@ -99,6 +102,7 @@ input bool Use_Timeframe_Correlation_For_Optimal=true;
 input bool Use_Healthy_Extension_For_Optimal=false;
 input bool Use_Market_Volume_For_Optimal=true;
 input bool Use_Price_Momentum_For_Optimal=false;
+input bool Early_Passes_Timeframe_Correlation=false; // Tradable (Early) Passes Timeframe Correlation
 
 input group "Alerts"
 input bool Enable_Popup_Alerts=false;
@@ -970,8 +974,9 @@ bool AnalyseStructure(const ENUM_TIMEFRAMES timeframe,const int wanted,const int
 // Internal Structure (Smart Money Engine): minor structure inside the swings,
 // from pivots of the timeframe's Internal Structure Length candles (default
 // 5, shorter than the Swing Detection Length).  It gives more insight into
-// the moves between swings without changing the Market Trend, Tradability,
-// Optimal Conditions or alerts.
+// the moves between swings without changing the Market Trend or alerts; its
+// only effect elsewhere is Tradable (Early), which requires it to agree (see
+// EvaluateTradability).
 //  * Each internal pivot high (low) becomes the internal high (low) level.
 //  * The first close above the internal high is an internal bullish BOS, or
 //    an internal bullish CHoCH when the internal trend was bearish; bearish
@@ -1207,13 +1212,33 @@ string RecommendationText(const BASE_STRUCTURE_STATE &state,const BASE_STRUCTURE
           "Look for sells on pullbacks.";
   }
 
-// The dashboard's recommendation: the HTF's, unless an established HTF trend
-// is held back by a selected lower timeframe, which it then names.
-string TradeRecommendation(const BASE_STRUCTURE_STATE &htf,const BASE_STRUCTURE_POINT &points[],
-                           const BASE_STRUCTURE_STATE &mtf,const BASE_STRUCTURE_STATE &ltf,
-                           const bool tradable)
+// Tradable (Early): early entries in the trend's direction while the
+// transition holds, and the BOS that would confirm it.
+string EarlyRecommendationText(const BASE_STRUCTURE_STATE &htf,const BASE_STRUCTURE_STATE &ltf)
   {
    int direction=BiasDirection(htf);
+   string action=direction>0?"buys":"sells";
+   if(DefiniteBias(htf))
+      return HTFName()+" is "+TrendWord(direction)+" and the internal structure agrees: early "+action+
+             " are possible before "+LTFName()+" confirms with a "+TrendWord(direction)+" BOS.";
+   string text="Early "+action+" only";
+   if(direction>0 && htf.have_hl) text+=", while price holds above HL "+PriceText(htf.hl);
+   if(direction<0 && htf.have_lh) text+=", while price holds below LH "+PriceText(htf.lh);
+   if(direction>0 && htf.have_hh) text+="; a close above HH "+PriceText(htf.hh)+" (bullish BOS) confirms the trend";
+   if(direction<0 && htf.have_ll) text+="; a close below LL "+PriceText(htf.ll)+" (bearish BOS) confirms the trend";
+   return text+".";
+  }
+
+// The dashboard's recommendation: the HTF's, unless an established HTF trend
+// is held back by a selected lower timeframe, which it then names, or the
+// market is only Tradable (Early).
+string TradeRecommendation(const BASE_STRUCTURE_STATE &htf,const BASE_STRUCTURE_POINT &points[],
+                           const BASE_STRUCTURE_STATE &mtf,const BASE_STRUCTURE_STATE &ltf,
+                           const BASE_TRADABILITY tradability)
+  {
+   int direction=BiasDirection(htf);
+   if(tradability==BASE_TRADABLE_EARLY) return EarlyRecommendationText(htf,ltf);
+   bool tradable=tradability==BASE_TRADABLE;
    if(!tradable && direction!=0 && htf.last_break_was_bos)
      {
       string action=direction>0?"buying":"selling";
@@ -1308,13 +1333,36 @@ string TransitionText(const string name,const BASE_STRUCTURE_STATE &state)
           " transition (a CHoCH not yet confirmed by a BOS).";
   }
 
-// Market Tradability: the HTF trend must be established (latest break a
-// BOS); every selected trend timeframe must have a direction and they must
-// all agree; a selected LTF must itself be established.  The MTF may be
-// transitional.  A Consolidation / Undefined trend has no direction.  The
-// reason says why in one sentence, naming the timeframes.
-bool EvaluateTradability(const BASE_STRUCTURE_STATE &htf,const BASE_STRUCTURE_STATE &mtf,
-                          const BASE_STRUCTURE_STATE &ltf,string &reason)
+// "H4", "H4 and M15": timeframes joined for a sentence.
+string JoinNames(const string &names[],const int count)
+  {
+   string result="";
+   for(int i=0;i<count;i++)
+      result+=(i==0?"":(i==count-1?" and ":", "))+names[i];
+   return result;
+  }
+
+// Market Tradability:
+//  * Tradable: the HTF trend is established (latest break a BOS); every
+//    selected trend timeframe has a direction and they all agree; a selected
+//    LTF is itself established.  The MTF may be transitional.  A
+//    Consolidation / Undefined trend has no direction.
+//  * Tradable (Early), when Allow_Early_Tradability is on: the same, except
+//    that the HTF and/or a selected LTF is only in transition (a CHoCH not
+//    yet confirmed by a BOS), the HTF agrees with every selected timeframe,
+//    and the internal structure of the HTF and of every selected timeframe
+//    agrees with that direction.  On real and generated markets, internal
+//    agreement made an HTF transition (with the MTF agreeing) reach its
+//    confirming BOS markedly more often (58-70% of episodes against 44-50%
+//    without it), but it still failed about a third of the time, so it is
+//    shown apart from Tradable.
+//  * Not Tradable otherwise.
+// The reason says why in one sentence, naming the timeframes.
+BASE_TRADABILITY EvaluateTradability(const BASE_STRUCTURE_STATE &htf,const BASE_STRUCTURE_STATE &mtf,
+                                     const BASE_STRUCTURE_STATE &ltf,
+                                     const BASE_INTERNAL_STRUCTURE &htf_internal,
+                                     const BASE_INTERNAL_STRUCTURE &mtf_internal,
+                                     const BASE_INTERNAL_STRUCTURE &ltf_internal,string &reason)
   {
    bool htf_definite=DefiniteBias(htf);
    bool ltf_definite=DefiniteBias(ltf);
@@ -1331,16 +1379,41 @@ bool EvaluateTradability(const BASE_STRUCTURE_STATE &htf,const BASE_STRUCTURE_ST
               (!Use_MTF || !Use_LTF ||
                mtf_direction==ltf_direction);
    bool tradable=htf_definite && available && match && (!Use_LTF || ltf_definite);
+   int selected=(Use_HTF?1:0)+(Use_MTF?1:0)+(Use_LTF?1:0);
    if(tradable)
      {
-      int selected=(Use_HTF?1:0)+(Use_MTF?1:0)+(Use_LTF?1:0);
       int direction=Use_HTF?htf_direction:(Use_MTF?mtf_direction:ltf_direction);
       reason=TrendTimeframesText()+(selected==1?" is ":selected==2?" are both ":" are all ")+
              TrendWord(direction)+", and the "+HTFName()+" trend is confirmed by a BOS";
       if(Use_LTF) reason+=", as is the "+LTFName()+" trend";
       reason+=".";
+      return BASE_TRADABLE;
      }
-   else if(htf_direction==0) reason=NoTrendText(HTFName(),htf);
+   // Tradable (Early): every direction agrees with the HTF and only the
+   // HTF and/or the selected LTF is still a transition.
+   bool early_candidate=Allow_Early_Tradability && htf_direction!=0 &&
+                        (!Use_MTF || mtf_direction==htf_direction) &&
+                        (!Use_LTF || ltf_direction==htf_direction);
+   string pending[2];
+   int pending_count=0;
+   if(!htf_definite) pending[pending_count++]=HTFName();
+   if(Use_LTF && !ltf_definite) pending[pending_count++]=LTFName();
+   string disagree[3];
+   int disagree_count=0;
+   if(htf_internal.trend!=htf_direction) disagree[disagree_count++]=HTFName();
+   if(Use_MTF && mtf_internal.trend!=htf_direction) disagree[disagree_count++]=MTFName();
+   if(Use_LTF && ltf_internal.trend!=htf_direction) disagree[disagree_count++]=LTFName();
+   if(early_candidate && pending_count>0 && disagree_count==0)
+     {
+      int named=selected+(Use_HTF?0:1);
+      string names=Use_HTF?TrendTimeframesText():HTFName()+(selected==1?" and ":", ")+TrendTimeframesText();
+      reason=names+(named==1?" is ":named==2?" are both ":" are all ")+TrendWord(htf_direction)+
+             " and "+(named==1?"its":"their")+" internal structure agrees, but the "+
+             JoinNames(pending,pending_count)+(pending_count==1?" trend is only a transition (a CHoCH":
+             " trends are only transitions (CHoCHs")+" not yet confirmed by a BOS).";
+      return BASE_TRADABLE_EARLY;
+     }
+   if(htf_direction==0) reason=NoTrendText(HTFName(),htf);
    else if(!htf_definite) reason=TransitionText(HTFName(),htf);
    else if(Use_MTF && mtf_direction==0) reason=NoTrendText(MTFName(),mtf);
    else if(Use_LTF && ltf_direction==0) reason=NoTrendText(LTFName(),ltf);
@@ -1354,7 +1427,12 @@ bool EvaluateTradability(const BASE_STRUCTURE_STATE &htf,const BASE_STRUCTURE_ST
       reason=first+" is "+TrendWord(first_direction)+" but "+other+" is "+TrendWord(other_direction)+".";
      }
    else reason=TransitionText(LTFName(),ltf);
-   return tradable;
+   // A transition that would be Tradable (Early) but for the internal
+   // structure says which timeframes do not agree yet.
+   if(early_candidate && pending_count>0 && disagree_count>0)
+      reason=StringSubstr(reason,0,StringLen(reason)-1)+", and the "+JoinNames(disagree,disagree_count)+
+             " internal structure is not "+TrendWord(htf_direction)+" yet.";
+   return BASE_NOT_TRADABLE;
   }
 
 // Healthy Extension: measured in the HTF bias direction (the trading
@@ -1377,7 +1455,8 @@ bool HealthyExtension(const BASE_STRUCTURE_STATE &htf,const BASE_STRUCTURE_STATE
 // result and the reason listing each failed requirement.
 bool EvaluateOptimal(const bool bias_ready,const bool healthy_extension,
                      const bool good_volume,const double volume_ratio,
-                     const bool good_momentum,const double momentum_ratio,string &reason)
+                     const bool good_momentum,const double momentum_ratio,string &reason,
+                     const bool early=false)
   {
    bool optimal=(!Use_Timeframe_Correlation_For_Optimal || bias_ready) &&
                 (!Use_Healthy_Extension_For_Optimal || healthy_extension) &&
@@ -1390,7 +1469,8 @@ bool EvaluateOptimal(const bool bias_ready,const bool healthy_extension,
      }
    reason="";
    if(Use_Timeframe_Correlation_For_Optimal && !bias_ready)
-      reason="the selected timeframes do not correlate (see Tradability Reason)";
+      reason=early?"the selected timeframes agree only early, before the confirming BOS (see Tradability Reason)":
+             "the selected timeframes do not correlate (see Tradability Reason)";
    if(Use_Healthy_Extension_For_Optimal && !healthy_extension)
       reason+=(reason==""?"":"; ")+"price is overextended or lacks a valid corrective anchor";
    if(Use_Market_Volume_For_Optimal && !good_volume)
@@ -1757,7 +1837,8 @@ void SendBASEAlert(const string signal,const datetime bar_time)
 // outputs are coloured.  Trends are green (Bullish, Bullish
 // Transition), red (Bearish, Bearish Transition) or grey (Consolidation /
 // Undefined); tradability and conditions are green when they pass and red
-// when they do not.  There is no background or border.
+// when they do not, and Tradable (Early) is amber.  There is no background
+// or border.
 const int DASHBOARD_FONT_SIZE=10;
 const int DASHBOARD_ROW_HEIGHT=18;
 const int DASHBOARD_INDENT=12;
@@ -1765,6 +1846,7 @@ const color DASHBOARD_TEXT_COLOR=clrBlack;
 const color DASHBOARD_POSITIVE_COLOR=clrGreen;
 const color DASHBOARD_NEGATIVE_COLOR=clrRed;
 const color DASHBOARD_NEUTRAL_COLOR=clrGray;
+const color DASHBOARD_EARLY_COLOR=clrDarkOrange;   // Tradable (Early)
 
 struct BASE_DASHBOARD_ROW
   {
@@ -1877,7 +1959,7 @@ void DrawDashboard(const BASE_STRUCTURE_STATE &htf,const string htf_breakdown,
                    const string mtf_breakdown,const BASE_STRUCTURE_STATE &ltf,
                    const string ltf_breakdown,const BASE_INTERNAL_STRUCTURE &htf_internal,
                    const BASE_INTERNAL_STRUCTURE &mtf_internal,const BASE_INTERNAL_STRUCTURE &ltf_internal,
-                   const bool tradable,
+                   const BASE_TRADABILITY tradability,
                    const string tradability_reason,const string filter_tooltip,
                    const bool optimal,const string optimal_reason,const bool correlated,
                    const bool healthy_extension,const bool good_volume,const double volume_ratio,
@@ -1903,16 +1985,24 @@ void DrawDashboard(const BASE_STRUCTURE_STATE &htf,const string htf_breakdown,
                       ltf_breakdown);
       AddInternalStructureRow(rows,ltf_internal,ltf,LTFName(),LTF_Internal_Length);
      }
-   AddDashboardRow(rows,"Market Tradability:",tradable?"Tradable":"Not Tradable",
-                   PassColor(tradable),filter_tooltip);
+   AddDashboardRow(rows,"Market Tradability:",
+                   tradability==BASE_TRADABLE?"Tradable":tradability==BASE_TRADABLE_EARLY?"Tradable (Early)":
+                   "Not Tradable",tradability==BASE_TRADABLE_EARLY?DASHBOARD_EARLY_COLOR:
+                   PassColor(tradability==BASE_TRADABLE),filter_tooltip);
    AddDashboardRow(rows,"Tradability Reason:",tradability_reason,DASHBOARD_TEXT_COLOR);
    AddDashboardRow(rows,"Trade Recommendations:",recommendation,DASHBOARD_TEXT_COLOR);
    AddDashboardRow(rows,"","",DASHBOARD_TEXT_COLOR);
    AddDashboardRow(rows,"Optimal Conditions:",optimal?"OPTIMAL":"NOT OPTIMAL",PassColor(optimal),
                    optimal_reason);
+   // Tradable (Early) passes only with Early_Passes_Timeframe_Correlation.
    if(Use_Timeframe_Correlation_For_Optimal)
-      AddDashboardRow(rows,"Timeframe Correlation:",PassText(correlated),PassColor(correlated),
+     {
+      bool early=tradability==BASE_TRADABLE_EARLY;
+      AddDashboardRow(rows,"Timeframe Correlation:",
+                      early?(correlated?"PASS (Early)":"EARLY"):PassText(correlated),
+                      early && !correlated?DASHBOARD_EARLY_COLOR:PassColor(correlated),
                       optimal_reason,true,DASHBOARD_INDENT);
+     }
    if(Use_Healthy_Extension_For_Optimal)
       AddDashboardRow(rows,"Healthy Extension:",PassText(healthy_extension),
                       PassColor(healthy_extension),optimal_reason,true,DASHBOARD_INDENT);
@@ -1983,7 +2073,8 @@ bool Rebuild(const bool permit_alert)
    BASE_STRUCTURE_EVENT events[];
    ReplayStructure(rates,total,length,structure_state,points,events);
 
-   // The internal structure of each trend timeframe, for the dashboard.
+   // The internal structure of each trend timeframe, for the dashboard and
+   // Tradable (Early).
    BASE_INTERNAL_STRUCTURE htf_internal,mtf_internal,ltf_internal;
    BASE_BREAK_MARK unused[];
    ReplayInternalStructure(rates,total,HTF_Internal_Length,htf_internal,unused);
@@ -2021,8 +2112,10 @@ bool Rebuild(const bool permit_alert)
    DrawAverageLines(rates,total,displayed,ma,mtf_rates,mtf_ma,mtf_count);
 
    string tradability_reason="";
-   bool bias_ready=EvaluateTradability(structure_state,setup_state,ltf_state,tradability_reason);
-   bool tradable=bias_ready;
+   BASE_TRADABILITY tradability=EvaluateTradability(structure_state,setup_state,ltf_state,htf_internal,
+                                                    mtf_internal,ltf_internal,tradability_reason);
+   bool bias_ready=tradability==BASE_TRADABLE ||
+                   (tradability==BASE_TRADABLE_EARLY && Early_Passes_Timeframe_Correlation);
    bool healthy_extension=HealthyExtension(structure_state,ltf_state,
                                            ltf_rates[ltf_total-1].close,ltf_atr[0]);
 
@@ -2045,13 +2138,14 @@ bool Rebuild(const bool permit_alert)
                       momentum_ratio<=Momentum_Maximum_Ratio;
    string optimal_reason="";
    bool optimal=EvaluateOptimal(bias_ready,healthy_extension,good_volume,volume_ratio,
-                                good_momentum,momentum_ratio,optimal_reason);
+                                good_momentum,momentum_ratio,optimal_reason,
+                                tradability==BASE_TRADABLE_EARLY);
 
    DrawDashboard(structure_state,BreakdownText(structure_state,points,events),
-                 TradeRecommendation(structure_state,points,setup_state,ltf_state,tradable),
+                 TradeRecommendation(structure_state,points,setup_state,ltf_state,tradability),
                  setup_state,BreakdownText(setup_state,setup_points,setup_events),
                  ltf_state,BreakdownText(ltf_state,ltf_points,ltf_events),
-                 htf_internal,mtf_internal,ltf_internal,tradable,tradability_reason,EntryFilterTooltip(rates[total-1],ma,adx,atr),
+                 htf_internal,mtf_internal,ltf_internal,tradability,tradability_reason,EntryFilterTooltip(rates[total-1],ma,adx,atr),
                  optimal,optimal_reason,bias_ready,healthy_extension,good_volume,volume_ratio,
                  good_momentum,momentum_ratio);
    // Alert every event that became known on the newest closed candle (a CHoCH
