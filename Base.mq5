@@ -1,5 +1,5 @@
 #property copyright "Market Trend Analyser conversion"
-#property version   "2.40"
+#property version   "2.41"
 #property strict
 #property description "BASE: MT5 port of the Market Trend Analyser Pine Script."
 #property description "Signal/visualisation EA only; the source indicator contains no trading rules."
@@ -28,8 +28,8 @@ input group "Structure Bar Processing"
 input int Bars_To_Process=100;
 
 input group "Swing Detection"
-input int HTF_Swing_Length=10; // HTF Swing Detection Length
-input int MTF_Swing_Length=10; // MTF Swing Detection Length
+input int HTF_Swing_Length=2; // HTF Swing Detection Length
+input int MTF_Swing_Length=9; // MTF Swing Detection Length
 input int LTF_Swing_Length=10; // LTF Swing Detection Length
 input bool Show_Swing_Points=true;
 input bool Show_Strong_Weak_High_Low=true; // Show Strong/Weak High/Low
@@ -66,7 +66,7 @@ input int Line_Width=2;
 
 input group "EQH/EQL"
 input bool Show_Equal_Highs_Lows=true; // Show EQH/EQL
-input double Equal_Highs_Lows_Threshold=0.1; // EQH/EQL Threshold (ATR, 0 = off)
+input double Equal_Highs_Lows_Threshold=0.2; // EQH/EQL Threshold (ATR, 0 = off)
 
 input group "MA Filter (HTF)"
 input bool Use_HTF_MA_Filter=true;
@@ -102,7 +102,6 @@ input bool Use_Timeframe_Correlation_For_Optimal=true;
 input bool Use_Healthy_Extension_For_Optimal=false;
 input bool Use_Market_Volume_For_Optimal=true;
 input bool Use_Price_Momentum_For_Optimal=false;
-input bool Early_Passes_Timeframe_Correlation=false; // Tradable (Early) Passes Timeframe Correlation
 
 input group "Alerts"
 input bool Enable_Popup_Alerts=false;
@@ -118,7 +117,7 @@ const BASE_ATR_MODE ATR_Filter_Mode=BASE_ATR_MINIMUM;
 const double ATR_Minimum=1.0;
 const double ATR_Maximum=10.0;
 const bool Use_Optimal_Conditions_Meter=true;
-const double Maximum_Extension_ATR=3.0;
+const double Maximum_Extension_ATR=10.0;   // MTF ATR beyond the latest MTF swing (see TrendExtension)
 const int Volume_Average_Length=20;
 const double Volume_Minimum_Ratio=0.50;
 const double Volume_Maximum_Ratio=2.00;
@@ -154,7 +153,6 @@ int g_htf_ma_handle=INVALID_HANDLE;
 int g_mtf_ma_handle=INVALID_HANDLE;
 int g_adx_handle=INVALID_HANDLE;
 int g_atr_handle=INVALID_HANDLE;
-int g_ltf_atr_handle=INVALID_HANDLE;
 
 // Every replay covers this many times the displayed history.  The extra,
 // undrawn candles let the trend and the HH/HL/LH/LL labels settle before the
@@ -1435,20 +1433,38 @@ BASE_TRADABILITY EvaluateTradability(const BASE_STRUCTURE_STATE &htf,const BASE_
    return BASE_NOT_TRADABLE;
   }
 
-// Healthy Extension: measured in the HTF bias direction (the trading
-// direction) from the newest corrective LTF swing, which must be an HL for a
-// bullish bias or an LH for a bearish bias, to the latest LTF close.
-bool HealthyExtension(const BASE_STRUCTURE_STATE &htf,const BASE_STRUCTURE_STATE &ltf,
-                      const double close,const double atr)
+// Healthy Extension blocks only an overextended market.  In the HTF trend
+// direction, the extension is how far the latest LTF close is beyond the
+// latest MTF swing on the other side (the swing low in a bullish trend, the
+// swing high in a bearish one), in MTF ATR (14 candles); more than
+// Maximum_Extension_ATR (10) is overextended.  With no trend direction or no
+// MTF swing yet, or price back beyond that swing, the market is not
+// overextended.  On real data (an index H1/M15/M5, EURUSD D1/H4/H1, five
+// stocks MN/W1/D1) the 6% of Tradable candles beyond 10 MTF ATR were
+// followed by a pullback of 1 ATR before a 1 ATR move on 56% of the time
+// (48% for the rest), and price was 0.9 ATR lower after 50 candles.  The
+// v2.40 rule (0 to 3 LTF ATR from an LTF HL/LH) blocked 83% of Tradable
+// candles without those blocked doing any worse.
+// Returns EMPTY_VALUE when there is nothing to measure.
+double TrendExtension(const BASE_STRUCTURE_STATE &htf,const BASE_STRUCTURE_STATE &mtf,
+                      const double close,const double mtf_atr)
   {
-   if(atr==EMPTY_VALUE || atr<=0.0) return false;
-   double extension=-1.0;
    int direction=BiasDirection(htf);
-   if(direction>0 && ltf.have_low && ltf.last_low_kind<0)
-      extension=(close-ltf.last_low)/atr;
-   else if(direction<0 && ltf.have_high && ltf.last_high_kind<0)
-      extension=(ltf.last_high-close)/atr;
-   return extension>=0.0 && extension<=Maximum_Extension_ATR;
+   if(direction==0 || mtf_atr<=0.0) return EMPTY_VALUE;
+   if(direction>0 && mtf.have_low) return (close-mtf.last_low)/mtf_atr;
+   if(direction<0 && mtf.have_high) return (mtf.last_high-close)/mtf_atr;
+   return EMPTY_VALUE;
+  }
+
+bool HealthyExtension(const double extension)
+  {
+   return extension==EMPTY_VALUE || extension<=Maximum_Extension_ATR;
+  }
+
+// "4.2 H1 ATR" for the dashboard; empty when nothing was measured.
+string ExtensionText(const double extension)
+  {
+   return extension==EMPTY_VALUE?"":DoubleToString(extension,1)+" "+MTFName()+" ATR";
   }
 
 // Optimal Conditions: every enabled requirement must pass.  Returns the
@@ -1456,7 +1472,7 @@ bool HealthyExtension(const BASE_STRUCTURE_STATE &htf,const BASE_STRUCTURE_STATE
 bool EvaluateOptimal(const bool bias_ready,const bool healthy_extension,
                      const bool good_volume,const double volume_ratio,
                      const bool good_momentum,const double momentum_ratio,string &reason,
-                     const bool early=false)
+                     const double extension=EMPTY_VALUE)
   {
    bool optimal=(!Use_Timeframe_Correlation_For_Optimal || bias_ready) &&
                 (!Use_Healthy_Extension_For_Optimal || healthy_extension) &&
@@ -1469,10 +1485,10 @@ bool EvaluateOptimal(const bool bias_ready,const bool healthy_extension,
      }
    reason="";
    if(Use_Timeframe_Correlation_For_Optimal && !bias_ready)
-      reason=early?"the selected timeframes agree only early, before the confirming BOS (see Tradability Reason)":
-             "the selected timeframes do not correlate (see Tradability Reason)";
+      reason="the selected timeframes do not correlate (see Tradability Reason)";
    if(Use_Healthy_Extension_For_Optimal && !healthy_extension)
-      reason+=(reason==""?"":"; ")+"price is overextended or lacks a valid corrective anchor";
+      reason+=(reason==""?"":"; ")+"price is overextended"+
+              (extension==EMPTY_VALUE?"":" ("+ExtensionText(extension)+" beyond the latest "+MTFName()+" swing)");
    if(Use_Market_Volume_For_Optimal && !good_volume)
       reason+=(reason==""?"":"; ")+(volume_ratio<Volume_Minimum_Ratio?"volume is too low":"volume is too high");
    if(Use_Price_Momentum_For_Optimal && !good_momentum)
@@ -1872,6 +1888,32 @@ void AddDashboardRow(BASE_DASHBOARD_ROW &rows[],const string label,const string 
    rows[index].indent=indent;
   }
 
+// Long outputs (the Tradability Reason and Trade Recommendations) wrap onto
+// continuation rows of at most DASHBOARD_WRAP_CHARS characters, broken
+// between words; the continuation rows have no component name.
+const int DASHBOARD_WRAP_CHARS=48;
+
+void AddWrappedDashboardRow(BASE_DASHBOARD_ROW &rows[],const string label,const string value,
+                            const color value_color,const string tooltip="")
+  {
+   string words[];
+   int count=StringSplit(value,' ',words);
+   string line="";
+   bool first=true;
+   for(int i=0;i<count;i++)
+     {
+      if(words[i]=="") continue;
+      if(line!="" && StringLen(line)+1+StringLen(words[i])>DASHBOARD_WRAP_CHARS)
+        {
+         AddDashboardRow(rows,first?label:"",line,value_color,tooltip);
+         first=false;
+         line="";
+        }
+      line+=(line==""?"":" ")+words[i];
+     }
+   if(line!="" || first) AddDashboardRow(rows,first?label:"",line,value_color,tooltip);
+  }
+
 string DashboardFont(const bool bold)
   {
    return bold?"Arial Bold":"Arial";
@@ -1913,13 +1955,16 @@ void DrawDashboardRows(const BASE_DASHBOARD_ROW &rows[])
       if(rows[i].label!="")
          column=MathMax(column,rows[i].indent+DashboardTextWidth(rows[i].label,rows[i].bold));
    column+=10+8;
+   // A spacer row (no name, no value) draws nothing; a continuation row
+   // (no name) draws only its value.
    for(int i=0;i<count;i++)
      {
-      if(rows[i].label=="") continue;
+      if(rows[i].label=="" && rows[i].value=="") continue;
       int y=10+i*DASHBOARD_ROW_HEIGHT;
       string name=g_prefix+"DASHBOARD_"+(string)i;
-      DrawDashboardText(name,10+rows[i].indent,y,rows[i].label,DASHBOARD_TEXT_COLOR,rows[i].bold,
-                        rows[i].tooltip);
+      if(rows[i].label!="")
+         DrawDashboardText(name,10+rows[i].indent,y,rows[i].label,DASHBOARD_TEXT_COLOR,rows[i].bold,
+                           rows[i].tooltip);
       DrawDashboardText(name+"_VALUE",column,y,rows[i].value,rows[i].value_color,false,
                         rows[i].tooltip);
      }
@@ -1962,7 +2007,7 @@ void DrawDashboard(const BASE_STRUCTURE_STATE &htf,const string htf_breakdown,
                    const BASE_TRADABILITY tradability,
                    const string tradability_reason,const string filter_tooltip,
                    const bool optimal,const string optimal_reason,const bool correlated,
-                   const bool healthy_extension,const bool good_volume,const double volume_ratio,
+                   const bool healthy_extension,const double extension,const bool good_volume,const double volume_ratio,
                    const bool good_momentum,const double momentum_ratio)
   {
    Comment("");
@@ -1989,22 +2034,17 @@ void DrawDashboard(const BASE_STRUCTURE_STATE &htf,const string htf_breakdown,
                    tradability==BASE_TRADABLE?"Tradable":tradability==BASE_TRADABLE_EARLY?"Tradable (Early)":
                    "Not Tradable",tradability==BASE_TRADABLE_EARLY?DASHBOARD_EARLY_COLOR:
                    PassColor(tradability==BASE_TRADABLE),filter_tooltip);
-   AddDashboardRow(rows,"Tradability Reason:",tradability_reason,DASHBOARD_TEXT_COLOR);
-   AddDashboardRow(rows,"Trade Recommendations:",recommendation,DASHBOARD_TEXT_COLOR);
+   AddWrappedDashboardRow(rows,"Tradability Reason:",tradability_reason,DASHBOARD_TEXT_COLOR);
+   AddWrappedDashboardRow(rows,"Trade Recommendations:",recommendation,DASHBOARD_TEXT_COLOR);
    AddDashboardRow(rows,"","",DASHBOARD_TEXT_COLOR);
    AddDashboardRow(rows,"Optimal Conditions:",optimal?"OPTIMAL":"NOT OPTIMAL",PassColor(optimal),
                    optimal_reason);
-   // Tradable (Early) passes only with Early_Passes_Timeframe_Correlation.
    if(Use_Timeframe_Correlation_For_Optimal)
-     {
-      bool early=tradability==BASE_TRADABLE_EARLY;
-      AddDashboardRow(rows,"Timeframe Correlation:",
-                      early?(correlated?"PASS (Early)":"EARLY"):PassText(correlated),
-                      early && !correlated?DASHBOARD_EARLY_COLOR:PassColor(correlated),
+      AddDashboardRow(rows,"Timeframe Correlation:",PassText(correlated),PassColor(correlated),
                       optimal_reason,true,DASHBOARD_INDENT);
-     }
    if(Use_Healthy_Extension_For_Optimal)
-      AddDashboardRow(rows,"Healthy Extension:",PassText(healthy_extension),
+      AddDashboardRow(rows,"Healthy Extension:",PassText(healthy_extension)+
+                      (extension==EMPTY_VALUE?"":" ("+ExtensionText(extension)+")"),
                       PassColor(healthy_extension),optimal_reason,true,DASHBOARD_INDENT);
    if(Use_Market_Volume_For_Optimal)
       AddDashboardRow(rows,"Market Volume:",PassText(good_volume)+" ("+DoubleToString(volume_ratio,2)+
@@ -2052,8 +2092,6 @@ bool Rebuild(const bool permit_alert)
                         LTF_Swing_Length,ltf_state,ltf_rates,ltf_points,ltf_events))
       return false;
    int ltf_total=ArraySize(ltf_rates);
-   double ltf_atr[];
-   if(!CopyIndicator(g_ltf_atr_handle,0,1,ltf_atr)) return false;
 
    // Labels follow the chart period, while the dashboard state stays on
    // Structure_Timeframe.
@@ -2114,10 +2152,15 @@ bool Rebuild(const bool permit_alert)
    string tradability_reason="";
    BASE_TRADABILITY tradability=EvaluateTradability(structure_state,setup_state,ltf_state,htf_internal,
                                                     mtf_internal,ltf_internal,tradability_reason);
-   bool bias_ready=tradability==BASE_TRADABLE ||
-                   (tradability==BASE_TRADABLE_EARLY && Early_Passes_Timeframe_Correlation);
-   bool healthy_extension=HealthyExtension(structure_state,ltf_state,
-                                           ltf_rates[ltf_total-1].close,ltf_atr[0]);
+   // The timeframes correlate whenever the market is Tradable or Tradable
+   // (Early): in both, every selected timeframe agrees on the direction.
+   bool bias_ready=tradability!=BASE_NOT_TRADABLE;
+   double setup_atr[];
+   int setup_total=ArraySize(setup_rates);
+   SwingATR(setup_rates,setup_total,setup_atr);
+   double extension=TrendExtension(structure_state,setup_state,ltf_rates[ltf_total-1].close,
+                                   setup_total>0?setup_atr[setup_total-1]:0.0);
+   bool healthy_extension=HealthyExtension(extension);
 
    int volume_length=MathMin(Volume_Average_Length,ltf_total-1);
    double average_volume=0.0;
@@ -2138,15 +2181,14 @@ bool Rebuild(const bool permit_alert)
                       momentum_ratio<=Momentum_Maximum_Ratio;
    string optimal_reason="";
    bool optimal=EvaluateOptimal(bias_ready,healthy_extension,good_volume,volume_ratio,
-                                good_momentum,momentum_ratio,optimal_reason,
-                                tradability==BASE_TRADABLE_EARLY);
+                                good_momentum,momentum_ratio,optimal_reason,extension);
 
    DrawDashboard(structure_state,BreakdownText(structure_state,points,events),
                  TradeRecommendation(structure_state,points,setup_state,ltf_state,tradability),
                  setup_state,BreakdownText(setup_state,setup_points,setup_events),
                  ltf_state,BreakdownText(ltf_state,ltf_points,ltf_events),
                  htf_internal,mtf_internal,ltf_internal,tradability,tradability_reason,EntryFilterTooltip(rates[total-1],ma,adx,atr),
-                 optimal,optimal_reason,bias_ready,healthy_extension,good_volume,volume_ratio,
+                 optimal,optimal_reason,bias_ready,healthy_extension,extension,good_volume,volume_ratio,
                  good_momentum,momentum_ratio);
    // Alert every event that became known on the newest closed candle (a CHoCH
    // confirmed by a second break arrives together with its BOS).  An LS
@@ -2211,7 +2253,6 @@ int OnInit()
    if(Use_MTF_MA_Filter && (g_mtf_ma_handle=iMA(_Symbol,SetupTimeframe(),MTF_MA_Length,0,BASEMAMethod(MTF_MA_Type),PRICE_CLOSE))==INVALID_HANDLE) return INIT_FAILED;
    if(Use_ADX_Filter && (g_adx_handle=iADX(_Symbol,timeframe,ADX_Length))==INVALID_HANDLE) return INIT_FAILED;
    if(Use_ATR_Filter && (g_atr_handle=iATR(_Symbol,timeframe,ATR_Length))==INVALID_HANDLE) return INIT_FAILED;
-   if((g_ltf_atr_handle=iATR(_Symbol,LTFTimeframe(),ATR_Length))==INVALID_HANDLE) return INIT_FAILED;
    if(!EventSetTimer(2)) return INIT_FAILED;
    CheckForBar();
    return INIT_SUCCEEDED;
@@ -2224,12 +2265,10 @@ void OnDeinit(const int reason)
    if(g_mtf_ma_handle!=INVALID_HANDLE) IndicatorRelease(g_mtf_ma_handle);
    if(g_adx_handle!=INVALID_HANDLE) IndicatorRelease(g_adx_handle);
    if(g_atr_handle!=INVALID_HANDLE) IndicatorRelease(g_atr_handle);
-   if(g_ltf_atr_handle!=INVALID_HANDLE) IndicatorRelease(g_ltf_atr_handle);
    g_htf_ma_handle=INVALID_HANDLE;
    g_mtf_ma_handle=INVALID_HANDLE;
    g_adx_handle=INVALID_HANDLE;
    g_atr_handle=INVALID_HANDLE;
-   g_ltf_atr_handle=INVALID_HANDLE;
    ObjectsDeleteAll(0,g_prefix);
    Comment("");
   }
