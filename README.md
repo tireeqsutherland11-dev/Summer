@@ -223,8 +223,8 @@ label of the swing that is broken decides the event.
   first, a bearish or flat one its high first. This is the swing detection
   of WillyAlgoTrader's Smart Money Engine (SME).
 - **Swing Detection Length (1-10), one per timeframe.**
-  `HTF_Swing_Level`, `MTF_Swing_Level` and `LTF_Swing_Level` (defaults 4, 6
-  and 6) set the swing size of each timeframe on a 1-10 scale, 1 finest and
+  `HTF_Swing_Level`, `MTF_Swing_Level` and `LTF_Swing_Level` (defaults 3, 5
+  and 7: 3, 7 and 14 candles) set the swing size of each timeframe on a 1-10 scale, 1 finest and
   10 broadest. The chart's own labels use the level of the timeframe the
   chart is on, or the HTF level on any other chart period.
 
@@ -246,8 +246,8 @@ label of the swing that is broken decides the event.
   Generated markets gave the same picture (23-43% per step), and on the
   EA's own H4 chart every step changed 27-56% of the drawn labels. A swing
   confirms N candles after its pivot, so higher levels also react later.
-  The defaults keep the earlier lengths: level 4 is 5 candles and level 6
-  is 10 (the MTF's 9 became 10, which changes about 11% of its labels).
+  The defaults are HTF 3 (3 candles), MTF 5 (7 candles) and LTF 7 (14
+  candles).
 
   Swing detection by length replaced the Swing Sensitivity (0-100) of v2.37
   and earlier, which blended a 2-4 candle strength with a 1-3 ATR size
@@ -418,10 +418,11 @@ which requires the internal structure to agree (see Reading the dashboard).
 - Keep its level below the timeframe's Swing Detection Length to see
   internal breaks on the chart. At or above it, almost every internal pivot
   is also a main swing, so almost nothing is drawn. With the defaults the
-  HTF's two levels are equal (both 4), so an HTF chart shows few internal
-  breaks, while its dashboard row and Tradable (Early) still use it; set
-  the HTF Internal Structure Length to 3 or lower, or the HTF Swing
-  Detection Length to 5 or higher, to see them.
+  HTF Internal Structure Length (4) is above the HTF Swing Detection Length
+  (3), so an HTF chart shows almost no internal breaks, while its dashboard
+  row and Tradable (Early) still use it; set the HTF Internal Structure
+  Length to 2 or lower, or the HTF Swing Detection Length to 5 or higher,
+  to see them. The MTF (5) and LTF (7) are above their internal level (4).
 - `Show_Internal_Structure` hides the chart drawings and
   `Show_Internal_On_Dashboard` its dashboard rows.
 
@@ -621,7 +622,7 @@ The black text is made for a light chart background.
   CHoCH-to-BOS confirmation and the LS rate stayed within noise of the
   version without EQH/EQL (see `Roadmap.txt`).
 - **Swing Detection and Internal Structure.** Each timeframe has its own
-  Swing Detection Length (defaults HTF 4, MTF 6, LTF 6) and Internal
+  Swing Detection Length (defaults HTF 3, MTF 5, LTF 7) and Internal
   Structure Length (default 4), both on the 1-10 scale above. Settings saved
   before v2.42 (2-50 candles) do not carry over: the inputs were renamed so
   that an old 9 is not read as level 9 (26 candles). The Real Time Swing Structure (LuxAlgo) of v2.36-v2.37

@@ -1,5 +1,5 @@
 //@version=6
-// Base - Market Structure (TradingView port of Base.mq5 v2.42)
+// Base - Market Structure (TradingView port of Base.mq5 v2.43)
 //
 // Reads market structure from closed candles only:
 //  * HH/HL/LH/LL swings: pivots of each timeframe's Swing Detection Length
@@ -56,9 +56,9 @@ grpProc = "Structure Bar Processing"
 barsToProcess = input.int(100, "Bars To Process", minval = 100, maxval = 100000, group = grpProc, tooltip = "How many HTF candles back structure is drawn. Other chart timeframes cover the same span of time. Structure is always calculated on all loaded history.")
 
 grpSwing = "Swing Detection"
-htfSwingLevel = input.int(4, "HTF Swing Detection Length (1-10)", minval = 1, maxval = 10, group = grpSwing, tooltip = "Size of the HTF swings (Smart Money Engine swing detection). 1 = finest, 10 = broadest; each step changes about a third of the drawn swings. Candles on each side of a pivot (also how many candles a swing takes to confirm): 1:1, 2:2, 3:3, 4:5, 5:7, 6:10, 7:14, 8:19, 9:26, 10:36.")
-mtfSwingLevel = input.int(6, "MTF Swing Detection Length (1-10)", minval = 1, maxval = 10, group = grpSwing, tooltip = "Size of the MTF swings. 1 = finest, 10 = broadest; each step changes about a third of the drawn swings. Candles on each side of a pivot (also how many candles a swing takes to confirm): 1:1, 2:2, 3:3, 4:5, 5:7, 6:10, 7:14, 8:19, 9:26, 10:36.")
-ltfSwingLevel = input.int(6, "LTF Swing Detection Length (1-10)", minval = 1, maxval = 10, group = grpSwing, tooltip = "Size of the LTF swings. 1 = finest, 10 = broadest; each step changes about a third of the drawn swings. Candles on each side of a pivot (also how many candles a swing takes to confirm): 1:1, 2:2, 3:3, 4:5, 5:7, 6:10, 7:14, 8:19, 9:26, 10:36.")
+htfSwingLevel = input.int(3, "HTF Swing Detection Length (1-10)", minval = 1, maxval = 10, group = grpSwing, tooltip = "Size of the HTF swings (Smart Money Engine swing detection). 1 = finest, 10 = broadest; each step changes about a third of the drawn swings. Candles on each side of a pivot (also how many candles a swing takes to confirm): 1:1, 2:2, 3:3, 4:5, 5:7, 6:10, 7:14, 8:19, 9:26, 10:36.")
+mtfSwingLevel = input.int(5, "MTF Swing Detection Length (1-10)", minval = 1, maxval = 10, group = grpSwing, tooltip = "Size of the MTF swings. 1 = finest, 10 = broadest; each step changes about a third of the drawn swings. Candles on each side of a pivot (also how many candles a swing takes to confirm): 1:1, 2:2, 3:3, 4:5, 5:7, 6:10, 7:14, 8:19, 9:26, 10:36.")
+ltfSwingLevel = input.int(7, "LTF Swing Detection Length (1-10)", minval = 1, maxval = 10, group = grpSwing, tooltip = "Size of the LTF swings. 1 = finest, 10 = broadest; each step changes about a third of the drawn swings. Candles on each side of a pivot (also how many candles a swing takes to confirm): 1:1, 2:2, 3:3, 4:5, 5:7, 6:10, 7:14, 8:19, 9:26, 10:36.")
 showSwingPoints = input.bool(true, "Show Swing Points", group = grpSwing, tooltip = "Display the HH/HL/LH/LL (and EQH/EQL) swing labels and the dotted lines at the latest swing high and low.")
 showStrongWeak = input.bool(true, "Show Strong/Weak High/Low", group = grpSwing, tooltip = "Display Strong/Weak High/Low. Each break protects the latest swing on the other side (Strong); the trend's running extreme is Weak, the next target.")
 

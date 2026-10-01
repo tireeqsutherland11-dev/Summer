@@ -1,5 +1,5 @@
 #property copyright "Market Trend Analyser conversion"
-#property version   "2.42"
+#property version   "2.43"
 #property strict
 #property description "BASE: MT5 port of the Market Trend Analyser Pine Script."
 #property description "Signal/visualisation EA only; the source indicator contains no trading rules."
@@ -28,9 +28,9 @@ input group "Structure Bar Processing"
 input int Bars_To_Process=100;
 
 input group "Swing Detection"
-input int HTF_Swing_Level=4; // HTF Swing Detection Length (1-10)
-input int MTF_Swing_Level=6; // MTF Swing Detection Length (1-10)
-input int LTF_Swing_Level=6; // LTF Swing Detection Length (1-10)
+input int HTF_Swing_Level=3; // HTF Swing Detection Length (1-10)
+input int MTF_Swing_Level=5; // MTF Swing Detection Length (1-10)
+input int LTF_Swing_Level=7; // LTF Swing Detection Length (1-10)
 input bool Show_Swing_Points=true;
 input bool Show_Strong_Weak_High_Low=true; // Show Strong/Weak High/Low
 
