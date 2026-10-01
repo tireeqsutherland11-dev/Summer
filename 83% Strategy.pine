@@ -56,7 +56,7 @@
 //    timeframe, Market Tradability (Tradable, Tradable (Early) or Not
 //    Tradable) and its reason, the trade recommendation and Optimal
 //    Conditions. It is an analysis tool and never places orders.
-strategy("83% Strategy", shorttitle = "83%", overlay = true, initial_capital = 10000, default_qty_type = strategy.fixed, default_qty_value = 1, pyramiding = 0, calc_on_order_fills = false, process_orders_on_close = false, max_bars_back = 500, max_labels_count = 500, max_lines_count = 500, max_boxes_count = 500)
+strategy("83% Strategy", shorttitle = "83%", overlay = true, initial_capital = 10000, default_qty_type = strategy.fixed, default_qty_value = 1, pyramiding = 0, calc_on_order_fills = false, process_orders_on_close = false, margin_long = 0, margin_short = 0, max_bars_back = 500, max_labels_count = 500, max_lines_count = 500, max_boxes_count = 500)
 
 // ---------------------------------------------------------------- inputs
 grpTf = "Timeframes"
@@ -167,6 +167,11 @@ useMomOpt = input.bool(false, "Use Price Momentum For Optimal", group = grpOpt, 
 grpDash = "Dashboard and Alerts"
 dashPositionInput = input.string("Top Right", "Dashboard Position", options = ["Top Left", "Top Right", "Bottom Left", "Bottom Right"], group = grpDash, tooltip = "Corner of the chart where the dashboard is shown.")
 enableAlerts = input.bool(false, "Alert On Structure-Timeframe BOS / CHoCH / LS", group = grpDash, tooltip = "Send an alert() when a BOS, CHoCH or LS is confirmed on the latest closed HTF candle. Create the alert with Any alert() function call.")
+
+grpS83Sym = "83% Strategy - Symbol (Deriv Synthetic Indices)"
+symbolProfile = input.string("Auto", "Symbol Profile", options = ["Auto", "Deriv Synthetic Index", "Standard Symbol"], group = grpS83Sym, tooltip = "Deriv synthetic indices tick at a fixed rate around the clock, so their volume measures nothing: Market Volume is not applied to them (nor to any symbol without volume data). Auto recognises them by ticker, description or the DERIV prefix.")
+minQty = input.float(0.0, "Minimum Quantity (0 = none)", minval = 0.0, group = grpS83Sym, tooltip = "The symbol's minimum order size, e.g. the Deriv minimum lot. A smaller risk-based size is not traded, unless the option below allows the minimum.")
+minQtyRiskMultiple = input.float(0.0, "Trade The Minimum If It Risks At Most N x The Plan (0 = skip)", minval = 0.0, step = 0.5, group = grpS83Sym, tooltip = "When the risk-based size is below the minimum quantity, trade the minimum only if its loss at the stop is at most this many times the planned risk.")
 
 grpS83 = "83% Strategy - Setup (LTF)"
 ltfBarsToProcess = input.int(25, "LTF Independent Processed Bars", minval = 5, maxval = 400, group = grpS83, tooltip = "How many LTF candles the setup is looked for in, and how far back Base's structure is drawn on the LTF chart. A (the HL or LH) must lie within them; a setup whose A leaves them expires.")
@@ -1932,6 +1937,20 @@ tradabilityState(TfView htf, TfView mtf, TfView ltf, InternalView hi, InternalVi
     bool disagree = hi.trend != hd or (useMtf and mi.trend != hd) or (useLtf and li.trend != hd)
     ok ? 2 : earlyCandidate and pending and not disagree ? 1 : 0
 
+// ------------------------------------------------ Deriv synthetic indices
+// Deriv's synthetic indices (Volatility, Crash / Boom, Jump, Step, Range Break,
+// DEX, Drift Switch ...) are generated prices that tick at a fixed rate around
+// the clock, so their volume measures nothing and is often missing on
+// TradingView. Base's Market Volume requirement is not applied to them, nor to
+// any symbol without volume data (it would block every trade). Auto
+// recognises them by ticker, description or the DERIV prefix.
+string s83SymText = str.upper(syminfo.ticker + " | " + syminfo.description + " | " + syminfo.prefix)
+bool s83AutoSynthetic = syminfo.prefix == "DERIV" or str.contains(s83SymText, "VOLATILITY") or str.contains(s83SymText, "CRASH") or str.contains(s83SymText, "BOOM") or str.contains(s83SymText, "JUMP") or str.contains(s83SymText, "STEP") or str.contains(s83SymText, "RANGE BREAK") or str.contains(s83SymText, "DEX ") or str.contains(s83SymText, "DRIFT SWITCH") or str.contains(s83SymText, "HYBRID") or str.startswith(str.upper(syminfo.ticker), "R_") or str.startswith(str.upper(syminfo.ticker), "1HZ")
+bool s83Synthetic = symbolProfile == "Deriv Synthetic Index" or (symbolProfile == "Auto" and s83AutoSynthetic)
+bool s83NoVolume = ta.cum(nz(volume)) == 0
+bool s83VolumeNA = s83Synthetic or s83NoVolume
+string s83VolumeNote = s83Synthetic ? "synthetic index" : s83NoVolume ? "no volume data" : ""
+
 // ------------------------------------------------- market filters per candle
 // The latest closed LTF candle is the chart's own when the chart is the LTF.
 bool s83OnLtf = timeframe.in_seconds() == timeframe.in_seconds(ltfTf)
@@ -1943,7 +1962,7 @@ int s83Tradability = tradabilityState(htfView, mtfView, ltfView, htfInternal, mt
 int s83MarketDir = useHtf ? biasDirection(htfView) : useMtf ? biasDirection(mtfView) : biasDirection(ltfView)
 float s83Extension = trendExtension(htfView, close, mAtr, mLastLow, nz(mHaveLow) == 1, mLastHigh, nz(mHaveHigh) == 1)
 bool s83Healthy = na(s83Extension) or s83Extension <= MAX_EXTENSION_ATR
-bool s83GoodVolume = s83VolAvg > 0 and s83VolRatio >= VOLUME_MIN_RATIO and s83VolRatio <= VOLUME_MAX_RATIO
+bool s83GoodVolume = s83VolumeNA or (s83VolAvg > 0 and s83VolRatio >= VOLUME_MIN_RATIO and s83VolRatio <= VOLUME_MAX_RATIO)
 bool s83GoodMomentum = s83TrAvg > 0 and s83MomRatio >= MOMENTUM_MIN_RATIO and s83MomRatio <= MOMENTUM_MAX_RATIO
 bool s83Optimal = (not useCorrOpt or s83Tradability != 0) and (not useExtOpt or s83Healthy) and (not useVolOpt or s83GoodVolume) and (not useMomOpt or s83GoodMomentum)
 string s83OptimalReason = useCorrOpt and s83Tradability == 0 ? "timeframes do not correlate" : useExtOpt and not s83Healthy ? "overextended" : useVolOpt and not s83GoodVolume ? (s83VolRatio < VOLUME_MIN_RATIO ? "volume too low" : "volume too high") : useMomOpt and not s83GoodMomentum ? (s83MomRatio < MOMENTUM_MIN_RATIO ? "momentum too low" : "momentum too high") : ""
@@ -2250,13 +2269,17 @@ if barstate.isconfirmed and s83OnLtf
             float riskCash = balance * s83RiskPct() / 100
             float dist = math.abs(s.level - psl)
             qty := pok and dist > 0 ? math.floor(riskCash / (dist * syminfo.pointvalue) / qtyStep) * qtyStep : 0.0
+            // Below the symbol's minimum quantity: no trade, or the minimum
+            // when it risks at most Minimum Quantity Max Risk times the plan.
+            if pok and minQty > 0 and qty < minQty
+                qty := minQtyRiskMultiple > 0 and minQty * dist * syminfo.pointvalue <= minQtyRiskMultiple * riskCash ? minQty : 0.0
             tp := ptp
             sl := psl
             rr := prr
             if not pok
                 why := "the take profit is not beyond the entry"
             else if qty <= 0
-                why := "the position size rounds to zero"
+                why := minQty > 0 ? "the position size is below the minimum quantity of " + str.tostring(minQty) : "the position size rounds to zero"
         if live and why == ""
             strategy.entry(id, side == 0 ? strategy.long : strategy.short, qty = qty, limit = s.level, oca_name = "83% entry", oca_type = strategy.oca.cancel, comment = id)
             strategy.exit(id + " exit", from_entry = id, stop = sl, limit = tp, comment_loss = "SL", comment_profit = "TP")
@@ -2355,7 +2378,7 @@ if barstate.islast
     float extension = trendExtension(htfView, lClose, mAtr, mLastLow, nz(mHaveLow) == 1, mLastHigh, nz(mHaveHigh) == 1)
     bool healthy = na(extension) or extension <= MAX_EXTENSION_ATR
     float volRatio = nz(lVolRatio)
-    bool goodVolume = nz(lVolAvg) > 0 and volRatio >= VOLUME_MIN_RATIO and volRatio <= VOLUME_MAX_RATIO
+    bool goodVolume = s83VolumeNA or (nz(lVolAvg) > 0 and volRatio >= VOLUME_MIN_RATIO and volRatio <= VOLUME_MAX_RATIO)
     float momRatio = nz(lMomRatio)
     bool goodMomentum = nz(lTrAvg) > 0 and momRatio >= MOMENTUM_MIN_RATIO and momRatio <= MOMENTUM_MAX_RATIO
     [optimal, optimalReason] = evaluateOptimal(correlated, healthy, extension, goodVolume, volRatio, goodMomentum, momRatio)
@@ -2397,7 +2420,7 @@ if barstate.islast
         dashRow(row, "Healthy Extension:", passText(healthy) + (na(extension) ? "" : " (" + extensionText(extension) + ")"), passColor(healthy), optimalReason)
         row += 1
     if useVolOpt
-        dashRow(row, "Market Volume:", passText(goodVolume) + " (" + str.tostring(volRatio, "0.00") + "x average)", passColor(goodVolume), optimalReason)
+        dashRow(row, "Market Volume:", s83VolumeNA ? "PASS (not applied: " + s83VolumeNote + ")" : passText(goodVolume) + " (" + str.tostring(volRatio, "0.00") + "x average)", passColor(goodVolume), optimalReason)
         row += 1
     if useMomOpt
         dashRow(row, "Price Momentum:", passText(goodMomentum) + " (" + str.tostring(momRatio, "0.00") + "x average range)", passColor(goodMomentum), optimalReason)
@@ -2410,6 +2433,8 @@ if barstate.islast
     bool sellArmed = not na(s83Sell) and s83Sell.state == S83_ARMED
     string s83State = not s83OnLtf ? "Open a " + tfName(ltfTf) + " chart to trade" : strategy.position_size > 0 ? "Buy position open" : strategy.position_size < 0 ? "Sell position open" : buyArmed and sellArmed ? "Buy and sell setups armed" : buyArmed ? "Buy setup armed" : sellArmed ? "Sell setup armed" : "Waiting for a setup"
     color s83Color = not s83OnLtf ? DASH_NEGATIVE_COLOR : strategy.position_size > 0 or (buyArmed and not sellArmed) ? DASH_POSITIVE_COLOR : strategy.position_size < 0 or (sellArmed and not buyArmed) ? DASH_NEGATIVE_COLOR : DASH_NEUTRAL_COLOR
+    dashRow(row, "Symbol:", s83Synthetic ? "Deriv synthetic index" : "Standard symbol", DASH_TEXT_COLOR, s83Synthetic ? "Generated prices with a fixed tick rate: Market Volume is not applied." : "Set Symbol Profile to Deriv Synthetic Index if this is one.")
+    row += 1
     dashRow(row, "83% Strategy (" + tfName(ltfTf) + "):", s83State, s83Color, "Buys (sells) at the " + s83LevelText() + " retracement of the latest " + tfName(ltfTf) + " HL-to-HH (LH-to-LL) leg with heavy pressure, within the last " + str.tostring(ltfBarsToProcess) + " " + tfName(ltfTf) + " candles.")
     row += 1
     if buyArmed

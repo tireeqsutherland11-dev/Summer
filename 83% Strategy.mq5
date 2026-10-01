@@ -22,6 +22,12 @@ enum S83_TRADE_MODE
    S83_TRADING_TESTER=1,    // Strategy Tester only
    S83_TRADING_LIVE=2       // Strategy Tester and live charts
   };
+enum S83_SYMBOL_PROFILE
+  {
+   S83_PROFILE_AUTO=0,      // Auto (recognise Deriv synthetic indices)
+   S83_PROFILE_SYNTHETIC=1, // Deriv Synthetic Index
+   S83_PROFILE_OTHER=2      // Standard symbol
+  };
 enum S83_FIB_LABEL
   {
    S83_LABEL_PERCENT=0,     // Percent (83.00%)
@@ -123,6 +129,10 @@ input bool Use_Price_Momentum_For_Optimal=false;
 input group "Alerts"
 input bool Enable_Popup_Alerts=false;
 input bool Enable_Push_Notifications=false;
+
+input group "83% Strategy - Symbol (Deriv Synthetic Indices)"
+input S83_SYMBOL_PROFILE Symbol_Profile=S83_PROFILE_AUTO;      // Symbol Profile
+input double Minimum_Lot_Max_Risk_Multiple=0.0;   // Trade The Minimum Lot If It Risks At Most N x The Planned Risk (0 = skip)
 
 input group "83% Strategy - Setup (LTF)"
 input int    LTF_Bars_To_Process=25;              // LTF Independent Processed Bars
@@ -2173,8 +2183,8 @@ void DrawDashboard(const BASE_STRUCTURE_STATE &htf,const string htf_breakdown,
                       (extension==EMPTY_VALUE?"":" ("+ExtensionText(extension)+")"),
                       PassColor(healthy_extension),optimal_reason,true,DASHBOARD_INDENT);
    if(Use_Market_Volume_For_Optimal)
-      AddDashboardRow(rows,"Market Volume:",PassText(good_volume)+" ("+DoubleToString(volume_ratio,2)+
-                      "x average)",PassColor(good_volume),optimal_reason,true,DASHBOARD_INDENT);
+      AddDashboardRow(rows,"Market Volume:",S83VolumeText(good_volume,volume_ratio),
+                      PassColor(good_volume),optimal_reason,true,DASHBOARD_INDENT);
    if(Use_Price_Momentum_For_Optimal)
       AddDashboardRow(rows,"Price Momentum:",PassText(good_momentum)+" ("+
                       DoubleToString(momentum_ratio,2)+"x average range)",PassColor(good_momentum),
@@ -2246,6 +2256,55 @@ int ChartDisplayBars(const ENUM_TIMEFRAMES timeframe)
 bool DrawingEnabled()
   {
    return MQLInfoInteger(MQL_TESTER)==0 || MQLInfoInteger(MQL_VISUAL_MODE)!=0;
+  }
+
+// --------------------------------------------- Deriv synthetic indices
+// Deriv's synthetic indices (Volatility, Crash / Boom, Jump, Step, Range
+// Break, DEX, Drift Switch, Hybrid ...) are generated prices that tick at a
+// fixed rate around the clock.  Their tick volume is that rate, so Base's
+// Market Volume requirement measures nothing on them and is not applied; it
+// is also not applied on any symbol without tick volume.  Auto recognises
+// them by name, description or symbol path (or Deriv's R_ / 1HZ codes).
+bool g_s83_synthetic=false;
+string g_s83_volume_note="";
+string g_s83_waiting="";
+
+bool S83DetectSynthetic()
+  {
+   if(Symbol_Profile==S83_PROFILE_SYNTHETIC) return true;
+   if(Symbol_Profile==S83_PROFILE_OTHER) return false;
+   string text=_Symbol+" | "+SymbolInfoString(_Symbol,SYMBOL_DESCRIPTION)+" | "+
+               SymbolInfoString(_Symbol,SYMBOL_PATH);
+   StringToUpper(text);
+   return StringFind(text,"VOLATILITY")>=0 || StringFind(text,"CRASH")>=0 || StringFind(text,"BOOM")>=0 ||
+          StringFind(text,"JUMP")>=0 || StringFind(text,"STEP")>=0 || StringFind(text,"RANGE BREAK")>=0 ||
+          StringFind(text,"DEX ")>=0 || StringFind(text,"DRIFT SWITCH")>=0 || StringFind(text,"HYBRID")>=0 ||
+          StringFind(text,"SYNTHETIC")>=0 || StringFind(text,"DERIVED")>=0 ||
+          StringFind(text,"R_")==0 || StringFind(text,"1HZ")==0;
+  }
+
+// Whether Market Volume is left out of the Optimal Conditions (and why).
+bool S83VolumeNotApplied(const double average_volume)
+  {
+   g_s83_volume_note=g_s83_synthetic?"synthetic index":(average_volume<=0.0?"no tick volume":"");
+   return g_s83_volume_note!="";
+  }
+
+// The dashboard's Market Volume output.
+string S83VolumeText(const bool good_volume,const double volume_ratio)
+  {
+   if(g_s83_volume_note!="") return "PASS (not applied: "+g_s83_volume_note+")";
+   return PassText(good_volume)+" ("+DoubleToString(volume_ratio,2)+"x average)";
+  }
+
+// A build waiting for data says why in the Journal, once per reason (a
+// symbol with too little history otherwise just never trades).
+bool S83Wait(const string reason)
+  {
+   if(reason!=g_s83_waiting && MQLInfoInteger(MQL_OPTIMIZATION)==0)
+      Print("83% Strategy: waiting - ",reason);
+   g_s83_waiting=reason;
+   return false;
   }
 
 // ------------------------------------------------------------ Fib Base
@@ -2723,13 +2782,20 @@ double S83RiskPercent(const S83_DAY &day)
    return Risk_Percent*MathPow(Risk_Cut_Factor,day.cuts);
   }
 
-// Volume that loses `risk_money` at the stop.  Returns 0 below the symbol's
-// minimum volume.
+// Volume that loses `risk_money` at the stop, rounded down to the symbol's
+// volume step.  Below the symbol's minimum it is 0 (no trade), or the minimum
+// when that risks at most Minimum_Lot_Max_Risk_Multiple times `risk_money`;
+// above the maximum per order (or the symbol's total volume limit) it is
+// capped, which risks less.  `note` says which applied.
+string g_s83_size_note="";
 double S83Volume(const bool sell,const double entry,const double sl,const double risk_money)
   {
+   g_s83_size_note="";
    double step=SymbolInfoDouble(_Symbol,SYMBOL_VOLUME_STEP);
    double minimum=SymbolInfoDouble(_Symbol,SYMBOL_VOLUME_MIN);
    double maximum=SymbolInfoDouble(_Symbol,SYMBOL_VOLUME_MAX);
+   double limit=SymbolInfoDouble(_Symbol,SYMBOL_VOLUME_LIMIT);
+   if(limit>0.0) maximum=MathMin(maximum,limit);
    double loss=0.0;
    if(!OrderCalcProfit(sell?ORDER_TYPE_SELL:ORDER_TYPE_BUY,_Symbol,1.0,entry,sl,loss) || loss>=0.0)
       return 0.0;
@@ -2739,8 +2805,20 @@ double S83Volume(const bool sell,const double entry,const double sl,const double
       lots=MathFloor(lots/step+1e-8)*step;
       lots=NormalizeDouble(lots,(int)MathMax(0.0,MathCeil(-MathLog10(step)-1e-8)));
      }
-   if(lots<minimum) return 0.0;
-   return MathMin(lots,maximum);
+   if(lots<minimum)
+     {
+      if(Minimum_Lot_Max_Risk_Multiple<=0.0 || minimum*(-loss)>Minimum_Lot_Max_Risk_Multiple*risk_money)
+         return 0.0;
+      g_s83_size_note="minimum lot "+DoubleToString(minimum,2)+", risking "+
+                      DoubleToString(minimum*(-loss)/risk_money,2)+"x the planned risk";
+      return minimum;
+     }
+   if(lots>maximum && maximum>0.0)
+     {
+      g_s83_size_note="capped at the symbol's maximum of "+DoubleToString(maximum,2)+" lots";
+      return maximum;
+     }
+   return lots;
   }
 
 // Why a touched setup cannot be traded now, or "".
@@ -2786,7 +2864,9 @@ string S83Plan(const S83_SETUP &setup,const double entry,const double spread,con
    if((d>0?entry-sl:sl-entry)<minimum || reward<minimum) return "the stop or target is too close to the price";
    risk_money=AccountInfoDouble(ACCOUNT_BALANCE)*S83RiskPercent(g_s83_day)/100.0;
    lots=S83Volume(d<0,entry,sl,risk_money);
-   if(lots<=0.0) return "the position size is below the minimum volume";
+   if(lots<=0.0)
+      return "the position size is below the symbol's minimum of "+
+             DoubleToString(SymbolInfoDouble(_Symbol,SYMBOL_VOLUME_MIN),2)+" lots";
    double margin=0.0;
    if(OrderCalcMargin(d<0?ORDER_TYPE_SELL:ORDER_TYPE_BUY,_Symbol,lots,entry,margin) &&
       margin>AccountInfoDouble(ACCOUNT_MARGIN_FREE))
@@ -2819,6 +2899,9 @@ void S83Enter(const S83_SETUP &setup,const MqlTick &tick)
       S83Journal(what+" not traded: "+reason);
       return;
      }
+   // Synthetic indices move many points a tick; a fixed 20-point deviation
+   // would requote on instant execution, so allow a tenth of the LTF ATR.
+   g_trade.SetDeviationInPoints((ulong)MathMax(20.0,MathRound(0.1*g_s83_atr/_Point)));
    string comment="83% "+S83Side(setup.direction)+" r="+
                   (string)(long)MathRound(MathAbs(entry-sl)/_Point);
    bool sent=buy?g_trade.Buy(lots,_Symbol,0.0,sl,tp,comment):g_trade.Sell(lots,_Symbol,0.0,sl,tp,comment);
@@ -2827,10 +2910,12 @@ void S83Enter(const S83_SETUP &setup,const MqlTick &tick)
      {
       g_s83_day.trades++;
       S83Record(setup,true,S83Side(setup.direction)+" "+DoubleToString(lots,2)+" lots at "+PriceText(entry)+
-                ", SL "+PriceText(sl)+", TP "+PriceText(tp)+" (1:"+DoubleToString(rr,0)+")",entry,sl,tp,rr,lots);
+                ", SL "+PriceText(sl)+", TP "+PriceText(tp)+" (1:"+DoubleToString(rr,0)+")"+
+                (g_s83_size_note==""?"":"; "+g_s83_size_note),entry,sl,tp,rr,lots);
       S83Journal(S83Side(setup.direction)+" "+DoubleToString(lots,2)+" lots at "+PriceText(entry)+" SL "+
                  PriceText(sl)+" TP "+PriceText(tp)+" 1:"+DoubleToString(rr,0)+", risk "+
-                 DoubleToString(S83RiskPercent(g_s83_day),2)+"% ("+what+")");
+                 DoubleToString(S83RiskPercent(g_s83_day),2)+"% ("+what+")"+
+                 (g_s83_size_note==""?"":"; "+g_s83_size_note));
       S83Alert(S83Side(setup.direction)+" at "+PriceText(entry)+", SL "+PriceText(sl)+", TP "+PriceText(tp));
      }
    else
@@ -2968,6 +3053,9 @@ void S83DashboardRows(BASE_DASHBOARD_ROW &rows[])
    else if(g_s83_armed_valid[0]!=0 && g_s83_armed_valid[1]!=0) state="Buy and sell setups armed";
    else if(g_s83_armed_valid[0]!=0) { state="Buy setup armed"; state_color=DASHBOARD_POSITIVE_COLOR; }
    else if(g_s83_armed_valid[1]!=0) { state="Sell setup armed"; state_color=DASHBOARD_NEGATIVE_COLOR; }
+   AddDashboardRow(rows,"Symbol:",g_s83_synthetic?"Deriv synthetic index":"Standard symbol",DASHBOARD_TEXT_COLOR,
+                   g_s83_synthetic?"Generated prices with a fixed tick rate: Market Volume is not applied.":
+                   "Set Symbol_Profile to Deriv Synthetic Index if this is one.");
    AddDashboardRow(rows,"83% Strategy ("+LTFName()+"):",state,state_color,
                    "Buys (sells) at the "+S83LevelText()+" retracement of the latest "+LTFName()+
                    " HL-to-HH (LH-to-LL) leg with heavy pressure, within the last "+(string)LTFBarsToProcess()+
@@ -3151,6 +3239,7 @@ string S83InputProblem()
    if(Reward_Risk_Low<=0.0 || Reward_Risk_High<Reward_Risk_Low)
       return "the standard reward-to-risk ratios must be positive, the second at least the first";
    if(Breakeven_At_Percent<0.0 || Breakeven_At_Percent>=100.0) return "Breakeven_At_Percent must be 0 to 99";
+   if(Minimum_Lot_Max_Risk_Multiple<0.0) return "Minimum_Lot_Max_Risk_Multiple cannot be negative";
    return "";
   }
 
@@ -3162,6 +3251,11 @@ void S83Init()
    ArrayResize(g_s83_setups,0);
    g_s83_breakeven_failed=0;
    g_s83_journaled="";
+   g_s83_waiting="";
+   g_s83_synthetic=S83DetectSynthetic();
+   if(MQLInfoInteger(MQL_OPTIMIZATION)==0)
+      Print("83% Strategy: ",_Symbol,g_s83_synthetic?" is treated as a Deriv synthetic index (Market Volume not applied)":
+            " is treated as a standard symbol");
    g_trade.SetExpertMagicNumber(Magic_Number);
    g_trade.SetDeviationInPoints(20);
    g_trade.SetTypeFillingBySymbol(_Symbol);
@@ -3182,13 +3276,15 @@ bool Rebuild(const bool permit_alert)
    MqlRates rates[];
    ArraySetAsSeries(rates,false);
    int total=CopyRates(_Symbol,timeframe,1,ReplayBars(displayed),rates);
-   if(total<2*length+2) return false;
+   if(total<2*length+2)
+      return S83Wait("not enough "+TimeframeName(timeframe)+" history yet ("+(string)MathMax(total,0)+" candles)");
 
    // Only the MA line needs history; the filters use the latest closed bar.
    double ma[],adx[],atr[];
-   if(Use_HTF_MA_Filter && !CopyIndicator(g_htf_ma_handle,0,Show_HTF_MA_Line?total:1,ma)) return false;
-   if(Use_ADX_Filter && !CopyIndicator(g_adx_handle,0,1,adx)) return false;
-   if(Use_ATR_Filter && !CopyIndicator(g_atr_handle,0,1,atr)) return false;
+   if(Use_HTF_MA_Filter && !CopyIndicator(g_htf_ma_handle,0,Show_HTF_MA_Line?total:1,ma))
+      return S83Wait("the HTF MA is still calculating");
+   if(Use_ADX_Filter && !CopyIndicator(g_adx_handle,0,1,adx)) return S83Wait("the HTF ADX is still calculating");
+   if(Use_ATR_Filter && !CopyIndicator(g_atr_handle,0,1,atr)) return S83Wait("the HTF ATR is still calculating");
 
    // The MTF and LTF biases are replayed over the same elapsed time as the
    // structure timeframe (plus the same warm-up), so every bias has comparable
@@ -3199,10 +3295,10 @@ bool Rebuild(const bool permit_alert)
    BASE_STRUCTURE_EVENT setup_events[],ltf_events[];
    if(!AnalyseStructure(SetupTimeframe(),ReplayBars(ChartStructureBars(SetupTimeframe())),
                         MTFSwingLength(),setup_state,setup_rates,setup_points,setup_events))
-      return false;
+      return S83Wait("not enough "+MTFName()+" history yet");
    if(!AnalyseStructure(LTFTimeframe(),ReplayBars(ChartStructureBars(LTFTimeframe())),
                         LTFSwingLength(),ltf_state,ltf_rates,ltf_points,ltf_events))
-      return false;
+      return S83Wait("not enough "+LTFName()+" history yet");
    int ltf_total=ArraySize(ltf_rates);
 
    // Labels follow the chart period, while the dashboard state stays on
@@ -3215,7 +3311,7 @@ bool Rebuild(const bool permit_alert)
      {
       chart_total=CopyRates(_Symbol,chart_timeframe,1,
                             ReplayBars(ChartStructureBars(chart_timeframe)),chart_rates);
-      if(chart_total<=0) return false;
+      if(chart_total<=0) return S83Wait("the chart's history is not loaded yet");
      }
 
    BASE_STRUCTURE_STATE structure_state;
@@ -3284,6 +3380,7 @@ bool Rebuild(const bool permit_alert)
    double volume_ratio=average_volume>0.0?(double)ltf_rates[ltf_total-1].tick_volume/average_volume:0.0;
    bool good_volume=average_volume>0.0 && volume_ratio>=Volume_Minimum_Ratio &&
                     volume_ratio<=Volume_Maximum_Ratio;
+   if(S83VolumeNotApplied(average_volume)) good_volume=true;
    int momentum_length=MathMin(Momentum_Average_Length,ltf_total-2);
    double average_true_range=0.0;
    for(int i=ltf_total-1-momentum_length;i<ltf_total-1;i++)
@@ -3308,6 +3405,7 @@ bool Rebuild(const bool permit_alert)
                  optimal,optimal_reason,bias_ready,healthy_extension,extension,good_volume,volume_ratio,
                  good_momentum,momentum_ratio);
    if(DrawingEnabled()) S83DrawAll();
+   g_s83_waiting="";
    // Alert every event that became known on the newest closed candle (a CHoCH
    // confirmed by a second break arrives together with its BOS).  An LS
    // comes first: it is known before the old trend's BOS on the same candle.
@@ -3398,7 +3496,11 @@ void CheckForBar()
    datetime current=iTime(_Symbol,LTFTimeframe(),0);
    datetime structure_current=iTime(_Symbol,BASETimeframe(),0);
    datetime setup_current=iTime(_Symbol,SetupTimeframe(),0);
-   if(current==0 || structure_current==0 || setup_current==0) return;
+   if(current==0 || structure_current==0 || setup_current==0)
+     {
+      S83Wait("no "+(structure_current==0?HTFName():setup_current==0?MTFName():LTFName())+" candles yet");
+      return;
+     }
    bool changed=current!=g_last_ltf_bar || structure_current!=g_last_structure_bar ||
                 setup_current!=g_last_setup_bar;
    if(changed)
