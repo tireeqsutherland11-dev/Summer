@@ -775,12 +775,16 @@ Buys (bullish market):
    - **A** is the most recent HL from which there was heavy buying pressure.
    - **B** is the HH that move formed.
    - The Fibonacci runs from B (0%) back to A (100%).
-4. **Entry.** Price touches the 83% level (`Entry_Level`, 0.83).
-5. **Invalid.** If price makes a new HH (trades above B) before reaching 83%,
+4. **Touch.** Price touches the 83% level (`Entry_Level`, 0.83).
+5. **Confirmation.** After the touch, a bullish engulfing candle on M15 or
+   M30 confirms the buy, and the trade is entered at its close. See
+   [Entry confirmation](#entry-confirmation-the-engulfing) below.
+6. **Invalid.** If price makes a new HH (trades above B) before reaching 83%,
    the setup is dead and its HL is used up. A new setup needs a new HL.
 
 Sells mirror this: an LH with heavy selling pressure, the LL it formed, a
-sell at the 83% retracement, and invalidation on a new LL.
+touch of the 83% retracement, a bearish engulfing, and invalidation on a new
+LL.
 
 How the rules are made exact:
 
@@ -797,6 +801,47 @@ How the rules are made exact:
 - **The processed bars.** A must lie within the processed candles. A setup
   whose A leaves them **expires**. On the LTF chart, Base's structure is also
   drawn over just those candles.
+
+### Entry confirmation: the engulfing
+
+With `Engulfing_Confirmation` on (the default), touching the 83% level no
+longer enters the trade by itself. The setup becomes **touched** and waits
+for an engulfing candle in the trend direction.
+
+- **The engulfing.** For a buy, a bearish candle followed by a bullish
+  candle that:
+  - closes above the bearish candle's open; and
+  - opens at or below the bearish candle's close.
+
+  A sell mirrors this: a bullish candle followed by a bearish candle that
+  closes below its open and opens at or above its close. Wicks are not
+  compared; the bodies decide.
+- **The timeframes.** Either timeframe confirms, whichever comes first:
+  - the lower timeframe (`Engulfing_Lower_Timeframe`, M15), when
+    `Use_Lower_Engulfing` is on;
+  - the LTF (M30), when `Use_LTF_Engulfing` is on.
+
+  The lower timeframe must be below the LTF and divide it evenly.
+- **When it counts.** The engulfing candle must be the touching candle or a
+  later one. An M15 engulfing must come at or after the M15 candle that
+  touched. An M30 engulfing can be the M30 candle that touched.
+- **The wait.** The engulfing must close within
+  `Confirmation_Window_Candles` (4) LTF candles, the touching candle
+  included. Before that, the setup **fails** if:
+  - a candle closes through A (below the HL, above the LH); or
+  - price makes a new HH (LL) beyond B; or
+  - A leaves the processed candles.
+
+  A failed setup's A is used up, like an invalidated one.
+- **The entry.** The trade is entered at the market once the engulfing
+  candle has closed. The usual filters, the day's limits and the risk
+  management then apply as before.
+- **Too far from the level.** The entry is now wherever the engulfing
+  closed, which can be well past 83%. If the 1:2 or 1:3 stop would then not
+  be behind A, the trade is skipped with the reason "too far from the 83%
+  level", because the strategy's stop belongs behind the HL (LH).
+- **Turning it off.** With `Engulfing_Confirmation` off, the strategy enters
+  on the first touch, exactly as before.
 
 ### Risk management (all adjustable)
 
@@ -824,8 +869,9 @@ How the rules are made exact:
     `Reward_Risk_High`) is closer, and moves the stop to match while keeping
     the take profit. For example, 1:2.4 uses 1:2.
   - With 0.5 ATR, the natural ratio fell between 1:2.2 and 1:3.0 for 80% of
-    the real-data setups, as the strategy describes. The adjusted stop is
-    always behind A.
+    the real-data setups, as the strategy describes.
+  - The adjusted stop is always behind A. When an engulfing entry is too far
+    from the level for that, the trade is skipped (see above).
 - **Breakeven.** The stop moves to the entry price once price has covered
   `Breakeven_At_Percent` (60%) of the way to the take profit.
 
@@ -841,15 +887,22 @@ strategy's examples:
   - Four optional levels (0.5, 0.618, 0.705, 0.886) can be switched on, and
     every level's ratio and colour can be changed.
 - **Points.** A, B and C (the entry).
+  - With confirmation, `touch` marks where price reached the level. C sits
+    at the engulfing candle's close, labelled `M15 engulfing` or
+    `M30 engulfing`.
+  - A setup waiting for its engulfing shows `waiting for a M15 or M30
+    engulfing`.
 - **Position zones.** The target zone (blue, entry to take profit) and the
   stop zone (red, entry to stop loss), drawn from C.
   - An armed setup shows its planned zones from the latest candle.
   - Failed setups are drawn dotted with their reason: invalidated, expired,
-    or missed.
+    missed, or failed. A failed setup's reason names the close through A,
+    the new HH (LL), or the window that ran out before an engulfing.
 
 The dashboard gains these rows under Base's own:
 
-- **83% Strategy.** Waiting, a buy or sell setup armed, or a position open.
+- **83% Strategy.** Waiting, a buy or sell setup armed, a setup touched and
+  waiting for its engulfing, or a position open.
 - **Setup.** A, B and the 83% price.
 - **Entry Filters.** PASS, or BLOCKED with the reason.
 - **Risk Today.** Trades taken out of the maximum, the current risk %, and
@@ -863,15 +916,20 @@ The dashboard gains these rows under Base's own:
   compile it in MetaEditor, and attach it to a chart. To backtest it, open
   the Strategy Tester (Ctrl+R) and select **83% Strategy**, the symbol and a
   date range. Use **Every tick** or **Every tick based on real ticks**
-  modelling, since entries happen on the first tick at the level.
+  modelling, since entries happen on the first tick after the engulfing (or
+  at the level, without confirmation).
 - **Viewing the trades.** Choose the M30 chart in visual mode to watch the
   setups. Non-visual runs and optimisation skip all drawing.
 - **Trade Mode.** `Trade_Mode` is **Strategy Tester only** by default, so a
   chart running the EA for analysis never places orders. Choose **Strategy
   Tester and live charts** deliberately.
-- **Entries.** The EA enters at the market on the first tick at which the
-  chart price (bid) touches the level. It invalidates a setup on the first
-  tick beyond B.
+- **Entries.** With confirmation, the EA enters at the market on the first
+  tick after the engulfing candle closes. It checks the setups on every new
+  M15 and M30 candle, so an M15 engulfing in the middle of an M30 candle is
+  entered straight away.
+  - Without confirmation, it enters on the first tick at which the chart
+    price (bid) touches the level, and invalidates a setup on the first tick
+    beyond B.
   - The take profit and stop of a sell include the spread, because they
     trigger on the ask.
   - Each untraded touch is written to the Journal once, with its reason.
@@ -883,10 +941,19 @@ The dashboard gains these rows under Base's own:
 - **Installing.** Paste `83% Strategy.pine` into the Pine Editor, save it,
   and add it to an M30 chart (the LTF). Setups, orders and drawings follow
   that chart; on any other chart the dashboard asks for the LTF chart.
-- **Entries.** Entries are limit orders at the level, placed at a candle's
-  close. A buy and a sell order cancel each other.
+- **Entries.**
+  - With confirmation, the strategy reads the M15 candles inside each M30
+    candle with `request.security_lower_tf`. It enters at the market at the
+    close of the M30 candle that holds the engulfing. TradingView's
+    Strategy Tester fills that order at the next candle's open.
+  - Without confirmation, entries are limit orders at the level, placed at a
+    candle's close. A buy and a sell order cancel each other.
 - **Differences from the EA:**
-  - A limit order fills at the level, or better on a gap.
+  - An M15 engulfing in the first half of an M30 candle is entered at that
+    M30 candle's close, up to 15 minutes later than the EA, and at that
+    later price.
+  - Without confirmation, a limit order fills at the level, or better on a
+    gap.
   - Breakeven is checked at candle closes.
   - Pine has no spread.
   - Days follow the exchange time zone.

@@ -141,6 +141,13 @@ input int    Impulse_Candles=3;                   // Heavy Pressure: Candles Aft
 input double Impulse_Min_ATR=2.0;                 // Heavy Pressure: Minimum Move (LTF ATR)
 input bool   Allow_Tradable_Early_Entries=false;  // Also Trade When Tradable (Early)
 
+input group "83% Strategy - Entry Confirmation"
+input bool   Engulfing_Confirmation=true;         // Wait For An Engulfing After The 83% Touch
+input bool   Use_Lower_Engulfing=true;            // Engulfing On The Lower Timeframe (M15)
+input ENUM_TIMEFRAMES Engulfing_Lower_Timeframe=PERIOD_M15; // Lower Engulfing Timeframe
+input bool   Use_LTF_Engulfing=true;              // Engulfing On The LTF (M30)
+input int    Confirmation_Window_Candles=4;       // LTF Candles To Wait For The Engulfing (touch candle included)
+
 input group "83% Strategy - Risk Management"
 input S83_TRADE_MODE Trade_Mode=S83_TRADING_TESTER;
 input double Risk_Percent=5.0;                    // Risk (%) Per Trade
@@ -2244,6 +2251,20 @@ void DrawDashboard(const BASE_STRUCTURE_STATE &htf,const string htf_breakdown,
 
 int LTFBarsToProcess() { return MathMax(5,MathMin(LTF_Bars_To_Process,400)); }
 
+// The lower timeframe of the engulfing confirmation (M15 by default).
+ENUM_TIMEFRAMES S83LowerTimeframe()
+  {
+   return Engulfing_Lower_Timeframe==PERIOD_CURRENT?LTFTimeframe():Engulfing_Lower_Timeframe;
+  }
+
+// Lower-timeframe candles the scan needs: three processed windows, plus the
+// forming LTF candle.
+int S83LowerBars()
+  {
+   int per=MathMax(1,PeriodSeconds(LTFTimeframe())/MathMax(1,PeriodSeconds(S83LowerTimeframe())));
+   return (3*LTFBarsToProcess()+3)*per+2;
+  }
+
 // The drawn history of a chart period: LTF_Bars_To_Process candles on the
 // LTF, as for Base elsewhere.
 int ChartDisplayBars(const ENUM_TIMEFRAMES timeframe)
@@ -2341,7 +2362,10 @@ enum S83_STATE
    S83_INVALID=2,     // a new HH (LL) came first
    S83_EXPIRED=3,     // A left the LTF processed bars
    S83_MISSED=4,      // the entry level was reached before B was confirmed
-   S83_REPLACED=5     // a newer setup in the same direction took over
+   S83_REPLACED=5,    // a newer setup in the same direction took over
+   S83_WAITING=6,     // touched; waiting for an engulfing (confirmation on)
+   S83_CONFIRMED=7,   // an engulfing confirmed it: the entry
+   S83_FAILED=8       // no engulfing in time, or the leg broke first
   };
 
 // One setup: A (the HL/LH the heavy move started from), B (the HH/LL it
@@ -2362,7 +2386,42 @@ struct S83_SETUP
    datetime created_time;   // the candle that confirmed B
    int state;               // S83_STATE
    datetime end_time;       // the candle of the touch, invalidation, expiry or miss
+   // Engulfing confirmation (see S83ScanSetups).
+   datetime touch_time;     // the candle that touched the entry level
+   int touch_bar;           // its LTF candle
+   datetime confirm_time;   // the close of the engulfing candle (the entry time)
+   int confirm_seconds;     // the engulfing's timeframe
+   double confirm_price;    // the engulfing candle's close
+   int why;                 // why it ended (S83_WHY)
   };
+
+enum S83_WHY
+  {
+   S83_WHY_NONE=0,
+   S83_WHY_NEW_B=1,         // a new HH (LL) before the touch
+   S83_WHY_THROUGH_A=2,     // a close through A before an engulfing
+   S83_WHY_NEW_B_WAITING=3, // a new HH (LL) before an engulfing
+   S83_WHY_WINDOW=4,        // no engulfing within the window
+   S83_WHY_EXPIRED=5,       // A left the processed candles
+   S83_WHY_MISSED=6,        // the level was reached before B was confirmed
+   S83_WHY_REPLACED=7       // a newer setup in the same direction
+  };
+
+string S83WhyText(const S83_SETUP &setup)
+  {
+   string b=S83BLabel(setup.direction);
+   switch(setup.why)
+     {
+      case S83_WHY_NEW_B: return "invalidated: a new "+b+" first";
+      case S83_WHY_THROUGH_A: return "failed: a close through A before an engulfing";
+      case S83_WHY_NEW_B_WAITING: return "failed: a new "+b+" before an engulfing";
+      case S83_WHY_WINDOW: return "failed: no engulfing within "+(string)Confirmation_Window_Candles+" "+LTFName()+" candles";
+      case S83_WHY_EXPIRED: return "expired: A left the "+(string)LTFBarsToProcess()+" processed candles";
+      case S83_WHY_MISSED: return "missed: "+S83LevelText()+" reached before B was confirmed";
+      case S83_WHY_REPLACED: return "replaced by a newer setup";
+     }
+   return "";
+  }
 
 // What happened live when an armed setup was touched or invalidated.
 struct S83_OUTCOME
@@ -2401,7 +2460,11 @@ string g_s83_mtf_text="";
 double g_s83_atr=0.0;              // LTF ATR of the latest closed LTF candle
 datetime g_s83_last_time=0;        // the latest closed LTF candle
 S83_SETUP g_s83_setups[];          // every setup found in the processed bars
-S83_SETUP g_s83_armed[2];          // [0] buy, [1] sell
+S83_SETUP g_s83_armed[2];          // [0] buy, [1] sell: the live (armed or waiting) setups
+// Setups confirmed by an engulfing on the latest closed candle: entered now.
+S83_SETUP g_s83_fresh[2];
+int g_s83_fresh_valid[2];
+datetime g_s83_last_lower_bar=0;
 int g_s83_armed_valid[2];          // 1 when that slot holds an armed setup
 S83_OUTCOME g_s83_outcomes[];
 S83_DAY g_s83_day;
@@ -2437,56 +2500,186 @@ bool S83Beyond(const S83_SETUP &setup,const MqlRates &bar)
    return setup.direction>0?bar.high>setup.b_price:bar.low<setup.b_price;
   }
 
+// Engulfing (body): the previous candle closed against the setup's
+// direction, this one with it, closing beyond the previous open from an open
+// at or beyond the previous close.
+bool S83Engulfing(const int direction,const MqlRates &previous,const MqlRates &candle)
+  {
+   if(direction>0)
+      return previous.close<previous.open && candle.close>candle.open &&
+             candle.close>previous.open && candle.open<=previous.close;
+   return previous.close>previous.open && candle.close<candle.open &&
+          candle.close<previous.open && candle.open>=previous.close;
+  }
+
+bool S83Live(const S83_SETUP &setup)
+  {
+   return setup.state==S83_ARMED || setup.state==S83_WAITING;
+  }
+
+void S83End(S83_SETUP &setup,const int state,const datetime time,const int why)
+  {
+   setup.state=state;
+   setup.end_time=time;
+   setup.why=why;
+  }
+
+string S83TfName(const int seconds)
+  {
+   return seconds%3600==0?"H"+(string)(seconds/3600):"M"+(string)(seconds/60);
+  }
+
+// "M15 or M30": the engulfing timeframes in use.
+string S83ConfirmText()
+  {
+   string lower=TimeframeName(S83LowerTimeframe()),ltf=LTFName();
+   if(Use_Lower_Engulfing && Use_LTF_Engulfing && lower!=ltf) return lower+" or "+ltf;
+   return Use_Lower_Engulfing?lower:ltf;
+  }
+
+// One candle of a live setup: the LTF candle itself, or with Engulfing
+// Confirmation each lower-timeframe candle in turn.
+//  * Armed: a touch of the entry level makes it touched (waiting for an
+//    engulfing with confirmation); otherwise going beyond B invalidates it.
+//  * Waiting: a close beyond A (the HL/LH broke) or a high beyond B (a new
+//    HH, a low beyond B for a sell) fails it; otherwise a lower-timeframe
+//    engulfing in its direction, on the touching candle or later, confirms
+//    it at that candle's close.
+void S83Step(S83_SETUP &setup,const MqlRates &candle,const MqlRates &previous,const bool have_previous,
+             const int bar,const datetime bar_time,const bool lower,const int lower_seconds)
+  {
+   int d=setup.direction;
+   if(setup.state==S83_ARMED)
+     {
+      if(S83Touched(setup,candle))
+        {
+         if(Engulfing_Confirmation)
+           {
+            setup.state=S83_WAITING;
+            setup.touch_bar=bar;
+            setup.touch_time=candle.time;
+           }
+         else S83End(setup,S83_TOUCHED,bar_time,S83_WHY_NONE);
+        }
+      else if(S83Beyond(setup,candle))
+         S83End(setup,S83_INVALID,lower?candle.time:bar_time,S83_WHY_NEW_B);
+     }
+   if(setup.state!=S83_WAITING) return;
+   if(d>0?candle.close<setup.a_price:candle.close>setup.a_price)
+      S83End(setup,S83_FAILED,candle.time,S83_WHY_THROUGH_A);
+   else if(S83Beyond(setup,candle))
+      S83End(setup,S83_FAILED,candle.time,S83_WHY_NEW_B_WAITING);
+   else if(lower && Use_Lower_Engulfing && have_previous && S83Engulfing(d,previous,candle))
+     {
+      S83End(setup,S83_CONFIRMED,candle.time,S83_WHY_NONE);
+      setup.confirm_time=candle.time+lower_seconds;
+      setup.confirm_seconds=lower_seconds;
+      setup.confirm_price=candle.close;
+     }
+  }
+
 // The setups of one LTF replay, candle by candle over its last
 // LTF_Bars_To_Process closed candles.  On each candle:
-//  1. each armed setup is touched (the candle reached the entry level),
-//     invalidated (it went beyond B) or expired (A is no longer within the
-//     processed candles), in that order;
+//  1. each live setup steps through the candle (see S83Step): the LTF candle
+//     itself, or with Engulfing_Confirmation each of its lower-timeframe
+//     candles in turn.  Then, at the LTF close, a waiting setup is confirmed
+//     by an LTF engulfing in its direction (on the touching candle or
+//     later), or fails when Confirmation_Window_Candles LTF candles have
+//     closed since the touch without one; an armed or waiting setup whose A
+//     is no longer within the processed candles expires.
 //  2. each swing confirmed on the candle that is an HH (a buy) or an LL (a
 //     sell), not an EQH/EQL, starts a setup with the swing before it on the
 //     other side (A) when A is an HL (LH), has not been used, lies within the
 //     processed candles and shows heavy pressure.  If the entry level was
 //     reached while B was being confirmed, the setup is missed; otherwise it
-//     is armed and replaces any armed setup in its direction.
-// A setup that is touched, invalidated, expired or missed uses up its A.
-// Only the setups armed now or ended within the processed candles are kept.
+//     is armed and replaces any live setup in its direction.
+// With confirmation, the lower-timeframe candles already closed in the
+// forming LTF candle are stepped through too, so a setup can be confirmed
+// mid-candle.  Every ended setup uses up its A.
+// Only the setups live now or ended within the processed candles are kept.
 // They were all created at most two windows back, and whether their A was
 // used up depends only on that A's earlier setups, all created after A within
 // one more window; so scanning from three windows back gives the same result
 // as scanning all of history.
 void S83ScanSetups(const MqlRates &rates[],const int total,const BASE_STRUCTURE_POINT &points[],
-                   const double &atr[],S83_SETUP &setups[],int &armed_buy,int &armed_sell)
+                   const double &atr[],const MqlRates &lower[],const int lower_total,
+                   S83_SETUP &setups[],int &live_buy,int &live_sell)
   {
    ArrayResize(setups,0);
-   armed_buy=-1;
-   armed_sell=-1;
+   live_buy=-1;
+   live_sell=-1;
    int window=LTFBarsToProcess();
    int first=MathMax(0,total-window);
    int start=MathMax(0,total-3*window);
+   int period=PeriodSeconds(LTFTimeframe());
+   int lower_seconds=PeriodSeconds(S83LowerTimeframe());
    int count=ArraySize(points);
    int next=0;
    while(next<count && points[next].confirmed<start) next++;
+   int li=0;
+   while(li<lower_total && lower[li].time<rates[start].time) li++;
+   MqlRates previous;
+   ZeroMemory(previous);
+   bool have_previous=li>0;
+   if(have_previous) previous=lower[li-1];
    datetime used_buy[],used_sell[];
-   for(int i=start;i<total;i++)
+   for(int i=start;i<=total;i++)
      {
+      // i==total: the closed lower candles of the forming LTF candle.
+      if(i==total && !Engulfing_Confirmation) break;
+      datetime bar_time=i<total?rates[i].time:rates[total-1].time+period;
+      if(Engulfing_Confirmation)
+        {
+         for(;li<lower_total && (i==total || lower[li].time<bar_time+period);li++)
+           {
+            if(lower[li].time>=bar_time)
+               for(int slot=0;slot<2;slot++)
+                 {
+                  int index=slot==0?live_buy:live_sell;
+                  if(index<0) continue;
+                  S83Step(setups[index],lower[li],previous,have_previous,i,bar_time,true,lower_seconds);
+                 }
+            previous=lower[li];
+            have_previous=true;
+           }
+        }
+      else
+         for(int slot=0;slot<2;slot++)
+           {
+            int index=slot==0?live_buy:live_sell;
+            if(index>=0) S83Step(setups[index],rates[i],rates[i],false,i,bar_time,false,lower_seconds);
+           }
+      if(i==total) break;
       for(int slot=0;slot<2;slot++)
         {
-         int index=slot==0?armed_buy:armed_sell;
+         int index=slot==0?live_buy:live_sell;
          if(index<0) continue;
-         if(S83Touched(setups[index],rates[i])) setups[index].state=S83_TOUCHED;
-         else if(S83Beyond(setups[index],rates[i])) setups[index].state=S83_INVALID;
-         else if(setups[index].a_bar<i-window+1) setups[index].state=S83_EXPIRED;
-         else continue;
-         setups[index].end_time=rates[i].time;
+         if(setups[index].state==S83_WAITING)
+           {
+            if(Use_LTF_Engulfing && i>0 && i>=setups[index].touch_bar &&
+               S83Engulfing(setups[index].direction,rates[i-1],rates[i]))
+              {
+               S83End(setups[index],S83_CONFIRMED,rates[i].time,S83_WHY_NONE);
+               setups[index].confirm_time=rates[i].time+period;
+               setups[index].confirm_seconds=period;
+               setups[index].confirm_price=rates[i].close;
+              }
+            else if(i-setups[index].touch_bar+1>=Confirmation_Window_Candles)
+               S83End(setups[index],S83_FAILED,rates[i].time,S83_WHY_WINDOW);
+           }
+         if(S83Live(setups[index]) && setups[index].a_bar<i-window+1)
+            S83End(setups[index],setups[index].state==S83_ARMED?S83_EXPIRED:S83_FAILED,rates[i].time,
+                   S83_WHY_EXPIRED);
+         if(S83Live(setups[index])) continue;
          if(slot==0)
            {
             S83Use(used_buy,setups[index].a_time);
-            armed_buy=-1;
+            live_buy=-1;
            }
          else
            {
             S83Use(used_sell,setups[index].a_time);
-            armed_sell=-1;
+            live_sell=-1;
            }
         }
       for(;next<count && points[next].confirmed==i;next++)
@@ -2516,35 +2709,39 @@ void S83ScanSetups(const MqlRates &rates[],const int total,const BASE_STRUCTURE_
          setups[index].created_time=rates[i].time;
          setups[index].state=S83_ARMED;
          setups[index].end_time=0;
+         setups[index].touch_time=0;
+         setups[index].touch_bar=-1;
+         setups[index].confirm_time=0;
+         setups[index].confirm_seconds=0;
+         setups[index].confirm_price=0.0;
+         setups[index].why=S83_WHY_NONE;
          bool missed=false;
          for(int k=points[next].pivot+1;k<=i && !missed;k++)
             if(S83Touched(setups[index],rates[k])) missed=true;
          if(missed)
            {
-            setups[index].state=S83_MISSED;
-            setups[index].end_time=rates[i].time;
+            S83End(setups[index],S83_MISSED,rates[i].time,S83_WHY_MISSED);
             if(direction>0) S83Use(used_buy,points[a].time);
             else S83Use(used_sell,points[a].time);
             continue;
            }
-         int previous=direction>0?armed_buy:armed_sell;
-         if(previous>=0)
-           {
-            setups[previous].state=S83_REPLACED;
-            setups[previous].end_time=rates[i].time;
-           }
-         if(direction>0) armed_buy=index; else armed_sell=index;
+         int previous_live=direction>0?live_buy:live_sell;
+         if(previous_live>=0) S83End(setups[previous_live],S83_REPLACED,rates[i].time,S83_WHY_REPLACED);
+         if(direction>0) live_buy=index; else live_sell=index;
         }
      }
-   // Keep the setups armed now or ended within the processed candles.
+   // Keep the setups live now or ended within the processed candles (a
+   // setup can also end on a lower candle of the forming LTF candle).
+   live_buy=-1;
+   live_sell=-1;
    int kept=0;
    for(int k=0;k<ArraySize(setups);k++)
      {
-      if(setups[k].state!=S83_ARMED && setups[k].end_time<rates[first].time) continue;
+      if(!S83Live(setups[k]) && setups[k].end_time<rates[first].time) continue;
       if(kept!=k) setups[kept]=setups[k];
-      if(setups[kept].state==S83_ARMED)
+      if(S83Live(setups[kept]))
         {
-         if(setups[kept].direction>0) armed_buy=kept; else armed_sell=kept;
+         if(setups[kept].direction>0) live_buy=kept; else live_sell=kept;
         }
       kept++;
      }
@@ -2862,6 +3059,11 @@ string S83Plan(const S83_SETUP &setup,const double entry,const double spread,con
    sl=d>0?AlignPrice(entry-risk,-1):AlignPrice(entry+risk,1);
    double minimum=MinimumStopDistance();
    if((d>0?entry-sl:sl-entry)<minimum || reward<minimum) return "the stop or target is too close to the price";
+   // An entry well past the entry level (after a strong engulfing) leaves a
+   // 1:2 / 1:3 stop in front of A; the stop must stay behind the HL (LH).
+   if(d>0?sl>=setup.a_price:sl<=setup.a_price)
+      return "the price is too far from the "+S83LevelText()+" level: a 1:"+DoubleToString(rr,0)+
+             " stop would not be behind the "+S83ALabel(d);
    risk_money=AccountInfoDouble(ACCOUNT_BALANCE)*S83RiskPercent(g_s83_day)/100.0;
    lots=S83Volume(d<0,entry,sl,risk_money);
    if(lots<=0.0)
@@ -2874,14 +3076,24 @@ string S83Plan(const S83_SETUP &setup,const double entry,const double spread,con
    return "";
   }
 
-// Price touched the entry level of an armed setup.
+// "83% touched" or "M15 engulfing after the 83% touch".
+string S83EventText(const S83_SETUP &setup)
+  {
+   if(setup.state==S83_CONFIRMED)
+      return S83TfName(setup.confirm_seconds)+" engulfing after the "+S83LevelText()+" touch";
+   return S83LevelText()+" touched";
+  }
+
+// The entry moment of a setup: price touched the entry level, or with
+// Engulfing_Confirmation an engulfing confirmed it.
 void S83Enter(const S83_SETUP &setup,const MqlTick &tick)
   {
    string what=S83Side(setup.direction)+" setup ("+S83SetupText(setup)+")";
+   string event=S83EventText(setup);
    if(!TradingActive())
      {
-      S83Record(setup,false,S83LevelText()+" touched; not traded (Trade Mode)",0.0,0.0,0.0,0.0,0.0);
-      S83Alert(S83LevelText()+" touched on the "+what);
+      S83Record(setup,false,event+"; not traded (Trade Mode)",0.0,0.0,0.0,0.0,0.0);
+      S83Alert(event+" on the "+what);
       return;
      }
    S83LoadDay(g_s83_day);
@@ -2895,7 +3107,7 @@ void S83Enter(const S83_SETUP &setup,const MqlTick &tick)
       reason="Algo Trading is disabled";
    if(reason!="")
      {
-      S83Record(setup,false,S83LevelText()+" touched; not traded: "+reason,0.0,0.0,0.0,0.0,0.0);
+      S83Record(setup,false,event+"; not traded: "+reason,0.0,0.0,0.0,0.0,0.0);
       S83Journal(what+" not traded: "+reason);
       return;
      }
@@ -2922,7 +3134,7 @@ void S83Enter(const S83_SETUP &setup,const MqlTick &tick)
      {
       // A setup is used up even when the request fails, so a rejected order
       // is not resent on every tick.
-      S83Record(setup,false,S83LevelText()+" touched; the order failed ("+g_trade.ResultRetcodeDescription()+")",
+      S83Record(setup,false,event+"; the order failed ("+g_trade.ResultRetcodeDescription()+")",
                 0.0,0.0,0.0,0.0,0.0);
       Print("83% Strategy: the order for the ",what," failed - ",g_trade.ResultRetcodeDescription());
      }
@@ -2936,6 +3148,21 @@ void S83CheckEntry()
    MqlTick tick;
    if(!SymbolInfoTick(_Symbol,tick) || tick.bid<=0.0 || tick.ask<=0.0) return;
    bool changed=false;
+   // With Engulfing_Confirmation, a setup is entered on the first tick after
+   // its engulfing candle closed (found by the scan at that candle's close).
+   if(Engulfing_Confirmation)
+     {
+      for(int slot=0;slot<2;slot++)
+        {
+         if(g_s83_fresh_valid[slot]==0) continue;
+         S83_SETUP fresh=g_s83_fresh[slot];
+         if(S83OutcomeIndex(fresh.direction,fresh.a_time)>=0) continue;
+         S83Enter(fresh,tick);
+         changed=true;
+        }
+      if(changed && DrawingEnabled()) S83Redraw();
+      return;
+     }
    for(int slot=0;slot<2;slot++)
      {
       if(g_s83_armed_valid[slot]==0) continue;
@@ -2997,8 +3224,8 @@ void S83OnTick()
 // timeframes: publishes the market filters and finds the LTF setups.
 void S83Update(const BASE_STRUCTURE_STATE &htf,const BASE_STRUCTURE_STATE &mtf,
                const BASE_STRUCTURE_STATE &ltf,const MqlRates &ltf_rates[],const int ltf_total,
-               const BASE_STRUCTURE_POINT &ltf_points[],const BASE_TRADABILITY tradability,
-               const bool optimal,const string optimal_reason)
+               const BASE_STRUCTURE_POINT &ltf_points[],const MqlRates &lower_rates[],const int lower_total,
+               const BASE_TRADABILITY tradability,const bool optimal,const string optimal_reason)
   {
    g_s83_tradability=tradability;
    g_s83_market_direction=Use_HTF?BiasDirection(htf):(Use_MTF?BiasDirection(mtf):BiasDirection(ltf));
@@ -3019,11 +3246,24 @@ void S83Update(const BASE_STRUCTURE_STATE &htf,const BASE_STRUCTURE_STATE &mtf,
       was_armed[slot]=g_s83_ready && g_s83_armed_valid[slot]!=0?1:0;
       was_time[slot]=g_s83_armed[slot].a_time;
      }
-   S83ScanSetups(ltf_rates,ltf_total,ltf_points,atr,g_s83_setups,armed_buy,armed_sell);
+   S83ScanSetups(ltf_rates,ltf_total,ltf_points,atr,lower_rates,lower_total,g_s83_setups,armed_buy,armed_sell);
    g_s83_armed_valid[0]=armed_buy>=0?1:0;
    g_s83_armed_valid[1]=armed_sell>=0?1:0;
    if(armed_buy>=0) g_s83_armed[0]=g_s83_setups[armed_buy];
    if(armed_sell>=0) g_s83_armed[1]=g_s83_setups[armed_sell];
+   // Confirmed on the latest closed candle (lower timeframe or LTF): fresh.
+   datetime latest=ltf_rates[ltf_total-1].time+PeriodSeconds(LTFTimeframe());
+   if(lower_total>0 && lower_rates[lower_total-1].time+PeriodSeconds(S83LowerTimeframe())>latest)
+      latest=lower_rates[lower_total-1].time+PeriodSeconds(S83LowerTimeframe());
+   g_s83_fresh_valid[0]=0;
+   g_s83_fresh_valid[1]=0;
+   for(int k=0;k<ArraySize(g_s83_setups);k++)
+      if(g_s83_setups[k].state==S83_CONFIRMED && g_s83_setups[k].confirm_time==latest)
+        {
+         int slot=S83Slot(g_s83_setups[k].direction);
+         g_s83_fresh[slot]=g_s83_setups[k];
+         g_s83_fresh_valid[slot]=1;
+        }
    S83LoadDay(g_s83_day);
    // A newly armed setup is announced once.
    for(int slot=0;slot<2;slot++)
@@ -3050,16 +3290,27 @@ void S83DashboardRows(BASE_DASHBOARD_ROW &rows[])
       state=(buy?"Buy":"Sell")+" position open";
       state_color=buy?DASHBOARD_POSITIVE_COLOR:DASHBOARD_NEGATIVE_COLOR;
      }
-   else if(g_s83_armed_valid[0]!=0 && g_s83_armed_valid[1]!=0) state="Buy and sell setups armed";
-   else if(g_s83_armed_valid[0]!=0) { state="Buy setup armed"; state_color=DASHBOARD_POSITIVE_COLOR; }
-   else if(g_s83_armed_valid[1]!=0) { state="Sell setup armed"; state_color=DASHBOARD_NEGATIVE_COLOR; }
+   else if(g_s83_armed_valid[0]!=0 && g_s83_armed_valid[1]!=0) state="Buy and sell setups live";
+   else if(g_s83_armed_valid[0]!=0)
+     {
+      state=g_s83_armed[0].state==S83_WAITING?"Buy setup touched: waiting for a "+S83ConfirmText()+" engulfing":
+            "Buy setup armed";
+      state_color=DASHBOARD_POSITIVE_COLOR;
+     }
+   else if(g_s83_armed_valid[1]!=0)
+     {
+      state=g_s83_armed[1].state==S83_WAITING?"Sell setup touched: waiting for a "+S83ConfirmText()+" engulfing":
+            "Sell setup armed";
+      state_color=DASHBOARD_NEGATIVE_COLOR;
+     }
    AddDashboardRow(rows,"Symbol:",g_s83_synthetic?"Deriv synthetic index":"Standard symbol",DASHBOARD_TEXT_COLOR,
                    g_s83_synthetic?"Generated prices with a fixed tick rate: Market Volume is not applied.":
                    "Set Symbol_Profile to Deriv Synthetic Index if this is one.");
    AddDashboardRow(rows,"83% Strategy ("+LTFName()+"):",state,state_color,
                    "Buys (sells) at the "+S83LevelText()+" retracement of the latest "+LTFName()+
                    " HL-to-HH (LH-to-LL) leg with heavy pressure, within the last "+(string)LTFBarsToProcess()+
-                   " "+LTFName()+" candles.");
+                   " "+LTFName()+" candles"+(Engulfing_Confirmation?", once a "+S83ConfirmText()+
+                   " engulfing in the trade direction follows the touch.":"."));
    for(int slot=0;slot<2;slot++)
       if(g_s83_armed_valid[slot]!=0)
          AddWrappedDashboardRow(rows,"Setup:",S83SetupText(g_s83_armed[slot]),DASHBOARD_TEXT_COLOR,
@@ -3143,9 +3394,10 @@ void S83DrawLevel(const string id,const S83_SETUP &setup,const double ratio,cons
 void S83DrawSetup(const S83_SETUP &setup,const int index,const datetime right)
   {
    string key=(setup.direction>0?"BUY_":"SELL_")+(string)setup.a_time;
-   bool armed=setup.state==S83_ARMED;
+   bool armed=S83Live(setup);
    int outcome=S83OutcomeIndex(setup.direction,setup.a_time);
-   bool touched=setup.state==S83_TOUCHED || (outcome>=0 && StringFind(g_s83_outcomes[outcome].text,"invalidated")<0);
+   bool touched=setup.state==S83_TOUCHED || setup.state==S83_CONFIRMED ||
+                (outcome>=0 && StringFind(g_s83_outcomes[outcome].text,"invalidated")<0);
    bool failed=!armed && !touched;
    int period=PeriodSeconds(LTFTimeframe());
    datetime end=right;
@@ -3169,16 +3421,26 @@ void S83DrawSetup(const S83_SETUP &setup,const int index,const datetime right)
       S83Text(key+"_B",setup.b_time,setup.b_price,"B",point_color,setup.direction>0?ANCHOR_LOWER:ANCHOR_UPPER,
               (int)Label_Size+1);
      }
-   string why="";
-   if(setup.state==S83_INVALID) why="invalidated: a new "+S83BLabel(setup.direction)+" first";
-   else if(setup.state==S83_EXPIRED) why="expired: A left the "+(string)LTFBarsToProcess()+" processed candles";
-   else if(setup.state==S83_MISSED) why="missed: "+S83LevelText()+" reached before B was confirmed";
-   else if(setup.state==S83_REPLACED) why="replaced by a newer setup";
+   string why=S83WhyText(setup);
    if(outcome>=0 && !g_s83_outcomes[outcome].traded) why=g_s83_outcomes[outcome].text;
+   // With confirmation: the touch, then C at the engulfing candle's close.
+   if(setup.touch_time>0 && Show_Setup_Points)
+      S83Text(key+"_TOUCH",setup.touch_time,setup.level,"touch",point_color,
+              setup.direction>0?ANCHOR_UPPER:ANCHOR_LOWER,(int)Label_Size);
+   if(setup.state==S83_WAITING && why=="")
+      why="waiting for a "+S83ConfirmText()+" engulfing";
    if(touched && Show_Setup_Points)
      {
-      datetime c_time=setup.state==S83_TOUCHED?setup.end_time:g_s83_outcomes[outcome].time;
-      S83Text(key+"_C",c_time,setup.level,"C",point_color,setup.direction>0?ANCHOR_UPPER:ANCHOR_LOWER,
+      datetime c_time=setup.end_time;
+      double c_price=setup.level;
+      if(setup.state==S83_CONFIRMED)
+        {
+         c_price=setup.confirm_price;
+         S83Text(key+"_ENGULF",c_time,c_price,S83TfName(setup.confirm_seconds)+" engulfing",point_color,
+                 setup.direction>0?ANCHOR_LOWER:ANCHOR_UPPER,(int)Label_Size);
+        }
+      else if(setup.state!=S83_TOUCHED && outcome>=0) c_time=g_s83_outcomes[outcome].time;
+      S83Text(key+"_C",c_time,c_price,"C",point_color,setup.direction>0?ANCHOR_UPPER:ANCHOR_LOWER,
               (int)Label_Size+1);
      }
    if(why!="")
@@ -3196,7 +3458,7 @@ void S83DrawSetup(const S83_SETUP &setup,const int index,const datetime right)
       rr=g_s83_outcomes[outcome].rr;
       from=g_s83_outcomes[outcome].time;
      }
-   else if(armed)
+   else if(setup.state==S83_ARMED)
      {
       double lots=0.0,risk_money=0.0;
       if(S83Plan(setup,entry,0.0,g_s83_atr,sl,tp,rr,lots,risk_money)=="" || (sl>0.0 && tp>0.0))
@@ -3240,6 +3502,14 @@ string S83InputProblem()
       return "the standard reward-to-risk ratios must be positive, the second at least the first";
    if(Breakeven_At_Percent<0.0 || Breakeven_At_Percent>=100.0) return "Breakeven_At_Percent must be 0 to 99";
    if(Minimum_Lot_Max_Risk_Multiple<0.0) return "Minimum_Lot_Max_Risk_Multiple cannot be negative";
+   if(Engulfing_Confirmation)
+     {
+      int lower=PeriodSeconds(S83LowerTimeframe()),ltf=PeriodSeconds(LTFTimeframe());
+      if(!Use_Lower_Engulfing && !Use_LTF_Engulfing) return "enable the lower-timeframe or the LTF engulfing";
+      if(lower>ltf || ltf%lower!=0)
+         return "Engulfing_Lower_Timeframe must be at or below the LTF and divide it (M15 for M30)";
+      if(Confirmation_Window_Candles<1) return "Confirmation_Window_Candles must be at least 1";
+     }
    return "";
   }
 
@@ -3248,6 +3518,9 @@ void S83Init()
    g_s83_ready=false;
    g_s83_armed_valid[0]=0;
    g_s83_armed_valid[1]=0;
+   g_s83_fresh_valid[0]=0;
+   g_s83_fresh_valid[1]=0;
+   g_s83_last_lower_bar=0;
    ArrayResize(g_s83_setups,0);
    g_s83_breakeven_failed=0;
    g_s83_journaled="";
@@ -3300,6 +3573,14 @@ bool Rebuild(const bool permit_alert)
                         LTFSwingLength(),ltf_state,ltf_rates,ltf_points,ltf_events))
       return S83Wait("not enough "+LTFName()+" history yet");
    int ltf_total=ArraySize(ltf_rates);
+   MqlRates lower_rates[];
+   ArraySetAsSeries(lower_rates,false);
+   int lower_total=0;
+   if(Engulfing_Confirmation)
+     {
+      lower_total=CopyRates(_Symbol,S83LowerTimeframe(),1,S83LowerBars(),lower_rates);
+      if(lower_total<=0) return S83Wait("not enough "+TimeframeName(S83LowerTimeframe())+" history yet");
+     }
 
    // Labels follow the chart period, while the dashboard state stays on
    // Structure_Timeframe.
@@ -3394,8 +3675,8 @@ bool Rebuild(const bool permit_alert)
    string optimal_reason="";
    bool optimal=EvaluateOptimal(bias_ready,healthy_extension,good_volume,volume_ratio,
                                 good_momentum,momentum_ratio,optimal_reason,extension);
-   S83Update(structure_state,setup_state,ltf_state,ltf_rates,ltf_total,ltf_points,tradability,optimal,
-             optimal_reason);
+   S83Update(structure_state,setup_state,ltf_state,ltf_rates,ltf_total,ltf_points,lower_rates,lower_total,
+             tradability,optimal,optimal_reason);
 
    if(DrawingEnabled()) DrawDashboard(structure_state,BreakdownText(structure_state,points,events),
                  TradeRecommendation(structure_state,points,setup_state,ltf_state,tradability),
@@ -3496,13 +3777,15 @@ void CheckForBar()
    datetime current=iTime(_Symbol,LTFTimeframe(),0);
    datetime structure_current=iTime(_Symbol,BASETimeframe(),0);
    datetime setup_current=iTime(_Symbol,SetupTimeframe(),0);
-   if(current==0 || structure_current==0 || setup_current==0)
+   datetime lower_current=Engulfing_Confirmation?iTime(_Symbol,S83LowerTimeframe(),0):current;
+   if(current==0 || structure_current==0 || setup_current==0 || lower_current==0)
      {
-      S83Wait("no "+(structure_current==0?HTFName():setup_current==0?MTFName():LTFName())+" candles yet");
+      S83Wait("no "+(structure_current==0?HTFName():setup_current==0?MTFName():
+                     current==0?LTFName():TimeframeName(S83LowerTimeframe()))+" candles yet");
       return;
      }
    bool changed=current!=g_last_ltf_bar || structure_current!=g_last_structure_bar ||
-                setup_current!=g_last_setup_bar;
+                setup_current!=g_last_setup_bar || lower_current!=g_s83_last_lower_bar;
    if(changed)
      {
       // The first build after attaching never alerts.
@@ -3515,6 +3798,7 @@ void CheckForBar()
          g_last_ltf_bar=current;
          g_last_structure_bar=structure_current;
          g_last_setup_bar=setup_current;
+         g_s83_last_lower_bar=lower_current;
         }
      }
   }
