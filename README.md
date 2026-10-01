@@ -708,3 +708,42 @@ Differences from the EA:
     feeds.
   - The HTF and MTF MA filters each read the latest closed candle of their
     timeframe.
+
+## Fib Base for TradingView (`Fib Base.pine`)
+
+`Fib Base.pine` is a Pine Script v6 indicator with the Fibonacci retracement
+of the Smart Money Engine (v1.6.1): the grid, the OTE zone, the dashboard's
+Fibonacci section and the OTE entry alerts. It is anchored on Base's
+structure instead of the Smart Money Engine's own swings:
+
+- **Leg.** The leg runs between Base's Strong/Weak High and Strong/Weak Low.
+  The structure engine is copied unchanged from `Base.pine`, so with the same
+  `Structure (match Base)` inputs (timeframes, Swing Detection Lengths and
+  EQH/EQL Threshold) the grid spans the Strong/Weak lines Base draws. Only
+  closed candles move the leg.
+- **Levels.** Each ratio is measured along the leg from level 0. In
+  `Auto (trend)` level 0 is the high in a bullish (or undefined) trend and
+  the low in a bearish one, as in the Smart Money Engine; `Measure From` can
+  fix it to the high or the low. `Fib Levels` has 12 rows, each with its own
+  checkbox, ratio and color. The defaults are 0, 0.236, 0.382, 0.5, 0.618,
+  0.786 and 1, plus 0.705, 0.886, 1.272, -0.272 and -0.618 switched off.
+  Ratios above 1 lie beyond the other end of the leg; ratios below 0 extend
+  past level 0, as targets.
+- **Style.** `Fib Style` sets the line color (`Auto (theme)` is the Smart
+  Money Engine's faded grey; `Single Color` or `Per Level` are the other
+  options), line style and width, and the labels: text (ratio, price or
+  both), size, side and color. `Fibonacci` sets the right offset and line
+  extension.
+- **OTE zone.** A box between `OTE From` and `OTE To` (0.618 and 0.786 by
+  default), with its own fill, border color and border width.
+- **Dashboard.** The Smart Money Engine's Fibonacci section: a trend-colored
+  header, then Leg High, Leg Low and OTE (Inside, Outside or no leg). It sits
+  at the bottom right by default, clear of Base's dashboard.
+- **Alerts.** `OTE Entry Alerts` sends an alert() the first time a close is
+  inside the OTE zone (create the alert with **Any alert() function call**).
+  The alert can be plain text or webhook JSON, on the bar close or intrabar.
+  The `OTE Zone Entry` alert condition always fires.
+
+To install it, open the **Pine Editor** in TradingView, paste the contents of
+`Fib Base.pine`, save the script, and click **Add to chart**. It can run
+alongside Base or on its own.
