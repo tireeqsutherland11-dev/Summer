@@ -1,0 +1,863 @@
+//@version=6
+// Fib Base - Fibonacci retracement of Base's structure leg
+//
+// The Fibonacci grid, OTE zone, dashboard section and OTE alerts of Smart
+// Money Engine [WillyAlgoTrader] v1.6.1, anchored on Base's market structure:
+//  * The leg runs between Base's Strong/Weak High and Strong/Weak Low (the
+//    trailing extremes, see trailExtremes). The structure engine is Base.pine's
+//    own, copied unchanged, so with the same Structure settings the grid spans
+//    the Strong/Weak lines Base draws on the chart.
+//  * Levels: fibLevelCalc measures each ratio along the leg from the high in a
+//    bullish (or undefined) trend and from the low in a bearish one. Up to 12
+//    levels, each with its own ratio and color; the anchor, line and label
+//    styling are all inputs.
+//  * OTE (Optimal Trade Entry) zone: the box between two ratios (0.618-0.786
+//    by default). An OTE entry is the first candle whose close is inside it.
+//  * Dashboard: the Smart Money Engine Fibonacci section (Leg High, Leg Low,
+//    OTE) in its trend-colored table.
+//  * Only closed candles move the leg. It is an analysis tool and never
+//    places orders.
+indicator("Fib Base", shorttitle = "Fib Base", overlay = true, max_lines_count = 50, max_labels_count = 50, max_boxes_count = 5)
+
+// ---------------------------------------------------------------- inputs
+grpStruct = "Structure (match Base)"
+htfTf = input.timeframe("240", "HTF", group = grpStruct, tooltip = "Base's HTF. On an HTF chart the leg uses the HTF Swing Detection Length. Use the same timeframes and lengths as Base so the leg spans Base's Strong/Weak High and Low.")
+mtfTf = input.timeframe("60", "MTF", group = grpStruct, tooltip = "Base's MTF. On an MTF chart the leg uses the MTF Swing Detection Length.")
+ltfTf = input.timeframe("15", "LTF", group = grpStruct, tooltip = "Base's LTF. On an LTF chart the leg uses the LTF Swing Detection Length. Any other chart timeframe uses the HTF length, as in Base.")
+htfSwingLevel = input.int(3, "HTF Swing Detection Length (1-10)", minval = 1, maxval = 10, group = grpStruct, tooltip = "Size of the HTF swings, as in Base. 1 = finest, 10 = broadest. Candles on each side of a pivot: 1:1, 2:2, 3:3, 4:5, 5:7, 6:10, 7:14, 8:19, 9:26, 10:36.")
+mtfSwingLevel = input.int(5, "MTF Swing Detection Length (1-10)", minval = 1, maxval = 10, group = grpStruct, tooltip = "Size of the MTF swings, as in Base. 1 = finest, 10 = broadest. Candles on each side of a pivot: 1:1, 2:2, 3:3, 4:5, 5:7, 6:10, 7:14, 8:19, 9:26, 10:36.")
+ltfSwingLevel = input.int(7, "LTF Swing Detection Length (1-10)", minval = 1, maxval = 10, group = grpStruct, tooltip = "Size of the LTF swings, as in Base. 1 = finest, 10 = broadest. Candles on each side of a pivot: 1:1, 2:2, 3:3, 4:5, 5:7, 6:10, 7:14, 8:19, 9:26, 10:36.")
+equalThreshold = input.float(0.2, "EQH/EQL Threshold (ATR, 0 = off)", minval = 0.0, maxval = 0.5, step = 0.05, group = grpStruct, tooltip = "As in Base: a swing within this many ATR of the previous swing on its side is an equal high or low and breaks at the pair's outer edge. 0 turns it off.")
+
+grpFib = "Fibonacci"
+showFib = input.bool(true, "Show Fibonacci Retracement", group = grpFib, tooltip = "Fibonacci grid over the current leg, between Base's Strong/Weak High and Strong/Weak Low (Smart Money Engine). Bullish trend: retracement of the low-to-high leg, 0 at the high. Bearish trend: retracement of the high-to-low leg, 0 at the low. It shifts when the trailing extreme updates.")
+anchorInput = input.string("Auto (trend)", "Measure From", options = ["Auto (trend)", "High", "Low"], group = grpFib, tooltip = "The end of the leg that is level 0. Auto (trend): the high in a bullish or undefined trend, the low in a bearish one (Smart Money Engine). High: always the high, levels count down. Low: always the low, levels count up.")
+rightOffset = input.int(10, "Right Offset (candles)", minval = 0, maxval = 500, group = grpFib, tooltip = "How many candles right of the latest candle the levels, labels and OTE zone end.")
+extendInput = input.string("None", "Extend Lines", options = ["None", "Right", "Left", "Both"], group = grpFib, tooltip = "Extend the levels and the OTE zone past their ends.")
+
+grpLevels = "Fib Levels"
+LEVEL_TIP = "Show, ratio and color of the level. The ratio is measured along the leg from level 0 (see Measure From): 0 is that end, 1 the other end, 0.5 the midpoint. Above 1 lies beyond the other end; below 0 (e.g. -0.272, -0.618) extends past level 0, as a target. The color applies when Line Color is Per Level (and to labels with Label Color = Line Color)."
+show1 = input.bool(true, "", inline = "lv1", group = grpLevels)
+ratio1 = input.float(0.0, "", minval = -5.0, maxval = 5.0, step = 0.001, inline = "lv1", group = grpLevels)
+color1 = input.color(#787B86, "", inline = "lv1", group = grpLevels, tooltip = LEVEL_TIP)
+show2 = input.bool(true, "", inline = "lv2", group = grpLevels)
+ratio2 = input.float(0.236, "", minval = -5.0, maxval = 5.0, step = 0.001, inline = "lv2", group = grpLevels)
+color2 = input.color(#F23645, "", inline = "lv2", group = grpLevels, tooltip = LEVEL_TIP)
+show3 = input.bool(true, "", inline = "lv3", group = grpLevels)
+ratio3 = input.float(0.382, "", minval = -5.0, maxval = 5.0, step = 0.001, inline = "lv3", group = grpLevels)
+color3 = input.color(#FF9800, "", inline = "lv3", group = grpLevels, tooltip = LEVEL_TIP)
+show4 = input.bool(true, "", inline = "lv4", group = grpLevels)
+ratio4 = input.float(0.5, "", minval = -5.0, maxval = 5.0, step = 0.001, inline = "lv4", group = grpLevels)
+color4 = input.color(#4CAF50, "", inline = "lv4", group = grpLevels, tooltip = LEVEL_TIP)
+show5 = input.bool(true, "", inline = "lv5", group = grpLevels)
+ratio5 = input.float(0.618, "", minval = -5.0, maxval = 5.0, step = 0.001, inline = "lv5", group = grpLevels)
+color5 = input.color(#089981, "", inline = "lv5", group = grpLevels, tooltip = LEVEL_TIP)
+show6 = input.bool(false, "", inline = "lv6", group = grpLevels)
+ratio6 = input.float(0.705, "", minval = -5.0, maxval = 5.0, step = 0.001, inline = "lv6", group = grpLevels)
+color6 = input.color(#00BCD4, "", inline = "lv6", group = grpLevels, tooltip = LEVEL_TIP)
+show7 = input.bool(true, "", inline = "lv7", group = grpLevels)
+ratio7 = input.float(0.786, "", minval = -5.0, maxval = 5.0, step = 0.001, inline = "lv7", group = grpLevels)
+color7 = input.color(#2962FF, "", inline = "lv7", group = grpLevels, tooltip = LEVEL_TIP)
+show8 = input.bool(false, "", inline = "lv8", group = grpLevels)
+ratio8 = input.float(0.886, "", minval = -5.0, maxval = 5.0, step = 0.001, inline = "lv8", group = grpLevels)
+color8 = input.color(#9C27B0, "", inline = "lv8", group = grpLevels, tooltip = LEVEL_TIP)
+show9 = input.bool(true, "", inline = "lv9", group = grpLevels)
+ratio9 = input.float(1.0, "", minval = -5.0, maxval = 5.0, step = 0.001, inline = "lv9", group = grpLevels)
+color9 = input.color(#787B86, "", inline = "lv9", group = grpLevels, tooltip = LEVEL_TIP)
+show10 = input.bool(false, "", inline = "lv10", group = grpLevels)
+ratio10 = input.float(1.272, "", minval = -5.0, maxval = 5.0, step = 0.001, inline = "lv10", group = grpLevels)
+color10 = input.color(#8D6E63, "", inline = "lv10", group = grpLevels, tooltip = LEVEL_TIP)
+show11 = input.bool(false, "", inline = "lv11", group = grpLevels)
+ratio11 = input.float(-0.272, "", minval = -5.0, maxval = 5.0, step = 0.001, inline = "lv11", group = grpLevels)
+color11 = input.color(#E91E63, "", inline = "lv11", group = grpLevels, tooltip = LEVEL_TIP)
+show12 = input.bool(false, "", inline = "lv12", group = grpLevels)
+ratio12 = input.float(-0.618, "", minval = -5.0, maxval = 5.0, step = 0.001, inline = "lv12", group = grpLevels)
+color12 = input.color(#FF5722, "", inline = "lv12", group = grpLevels, tooltip = LEVEL_TIP)
+
+grpStyle = "Fib Style"
+themeInput = input.string("Auto", "Theme", options = ["Auto", "Dark", "Light"], group = grpStyle, tooltip = "Chart theme for the Auto colors and the dashboard. Auto: detects it from the chart background. Dark / Light: for dark or light chart backgrounds.")
+lineColorInput = input.string("Auto (theme)", "Line Color", options = ["Auto (theme)", "Single Color", "Per Level"], group = grpStyle, tooltip = "Auto (theme): Smart Money Engine's faded grey, lighter on dark charts. Single Color: every level in the color below. Per Level: each level in its color from Fib Levels.")
+singleColor = input.color(color.new(#9E9E9E, 50), "Single Color", group = grpStyle, tooltip = "Color of every level when Line Color is Single Color.")
+lineStyleInput = input.string("Dotted", "Line Style", options = ["Solid", "Dashed", "Dotted"], group = grpStyle, tooltip = "Style of the level lines.")
+lineWidth = input.int(1, "Line Width", minval = 1, maxval = 4, group = grpStyle, tooltip = "Width of the level lines.")
+showLabels = input.bool(true, "Show Labels", group = grpStyle, tooltip = "Name each level at the end of its line.")
+labelTextInput = input.string("Ratio", "Label Text", options = ["Ratio", "Price", "Ratio + Price"], group = grpStyle, tooltip = "Ratio: 0.618. Price: the level's price. Ratio + Price: 0.618 (price).")
+labelSizeInput = input.string("Tiny", "Label Size", options = ["Tiny", "Small", "Normal", "Large"], group = grpStyle, tooltip = "Text size of the level labels.")
+labelSideInput = input.string("Right", "Label Position", options = ["Right", "Left"], group = grpStyle, tooltip = "Right: just right of the line ends. Left: just left of where the leg begins.")
+labelColorInput = input.string("Auto (theme)", "Label Color", options = ["Auto (theme)", "Line Color", "Custom"], group = grpStyle, tooltip = "Auto (theme): Smart Money Engine's faded grey text. Line Color: the color of the level's line. Custom: the color below.")
+labelCustomColor = input.color(color.new(#BDBDBD, 30), "Custom Label Color", group = grpStyle, tooltip = "Text color of the labels when Label Color is Custom.")
+
+grpOte = "OTE Zone"
+showOte = input.bool(true, "Highlight OTE Zone", group = grpOte, tooltip = "Highlight the Optimal Trade Entry zone between the two ratios below (0.618-0.786 by default) of the current leg. It drives the dashboard's OTE row and the OTE alerts even when hidden.")
+oteFrom = input.float(0.618, "OTE From", minval = -5.0, maxval = 5.0, step = 0.001, group = grpOte, tooltip = "One edge of the OTE zone, as a ratio of the leg (0.618 by default).")
+oteTo = input.float(0.786, "OTE To", minval = -5.0, maxval = 5.0, step = 0.001, group = grpOte, tooltip = "The other edge of the OTE zone, as a ratio of the leg (0.786 by default).")
+oteColor = input.color(color.new(#FFD600, 95), "OTE Zone Color", group = grpOte, tooltip = "Fill of the OTE zone.")
+oteBorderColor = input.color(color.new(#FFD600, 80), "OTE Border Color", group = grpOte, tooltip = "Border of the OTE zone, drawn when OTE Border Width is above 0.")
+oteBorderWidth = input.int(0, "OTE Border Width", minval = 0, maxval = 4, group = grpOte, tooltip = "Width of the OTE zone's border. 0 = no border (Smart Money Engine).")
+
+grpDash = "Dashboard"
+showDash = input.bool(true, "Show Dashboard", group = grpDash, tooltip = "The Fibonacci table: the leg's high and low and whether price is inside the OTE zone.")
+dashPosStr = input.string("Bottom Right", "Dashboard Position", options = ["Top Left", "Top Right", "Bottom Left", "Bottom Right", "Middle Right"], group = grpDash, tooltip = "Screen corner where the dashboard is anchored. Bottom Right by default, clear of Base's dashboard.")
+dashFontSizeInput = input.string("Small", "Dashboard Font Size", options = ["Small", "Normal", "Large", "Huge"], group = grpDash, tooltip = "Font size of the dashboard. The section divider and the version footer are one step smaller.")
+
+grpAlert = "Alerts"
+oteAlertInput = input.bool(true, "OTE Entry Alerts", group = grpAlert, tooltip = "Dynamic alert() when the close enters the OTE zone of the current leg. It re-arms after price leaves. Controls the dynamic alert() only; the static 'OTE Zone Entry' alert condition always fires. The zone shifts when the leg extends to a new extreme, so an alert can fire because the zone moved onto price.")
+webhookInput = input.bool(false, "Webhook JSON Format", group = grpAlert, tooltip = "Send the dynamic alerts as JSON for webhook integrations (e.g. 3Commas, Autoview, custom bots). The static alert condition always uses plain text.")
+alertTimingInput = input.string("Bar Close", "Alert Timing", options = ["Bar Close", "Immediate (intrabar)"], group = grpAlert, tooltip = "Bar Close: alerts on closed candles only. Immediate: fires on the first intrabar entry; the candle is not final yet.")
+
+// ------------------------------------------------------ theme and colors
+// Smart Money Engine's palette: Auto reads the chart background's luma.
+float chartBgLuma = 0.299 * color.r(chart.bg_color) + 0.587 * color.g(chart.bg_color) + 0.114 * color.b(chart.bg_color)
+isDark = switch themeInput
+    "Dark" => true
+    "Light" => false
+    => chartBgLuma < 128
+
+TEXT_COLOR = isDark ? #E0E0E0 : #1A1A1A
+TEXT_MUTED = isDark ? color.new(#9E9E9E, 0) : color.new(#757575, 0)
+TABLE_BG = isDark ? color.new(#131722, 5) : color.new(#FFFFFF, 5)
+TABLE_BORDER = isDark ? color.new(#2A2E39, 0) : color.new(#D0D0D0, 0)
+TABLE_ROW_ALT = isDark ? color.new(#1C2030, 0) : color.new(#F0F4F8, 0)
+HEADER_BG = color.new(#2962FF, 0)
+HEADER_TEXT = #FFFFFF
+NEUTRAL_TEXT = isDark ? #FFEB3B : #F57F17
+HEADER_BG_BULL = color.new(#0F6E56, 0)
+HEADER_BG_BEAR = color.new(#A32D2D, 0)
+FIB_COLOR = isDark ? color.new(#9E9E9E, 50) : color.new(#757575, 50)
+FIB_TEXT = isDark ? color.new(#BDBDBD, 30) : color.new(#616161, 30)
+
+FIB_VERSION = "v1.0"
+SWING_ATR_LENGTH = 14
+
+// Swing Detection and Internal Structure Lengths are a 1-10 scale, not the
+// pivot's candles on each side (N) itself: swings found with N candles are
+// mostly the same swings found with N+1, so at N=10 one more candle changed
+// only 11% of the drawn labels. Each level is the N that changes about a
+// third of the drawn swing labels from the level before (27-42% on real data,
+// 23-43% on generated markets), as in Base.mq5's DetectionCandles.
+detectionCandles(int level) =>
+    level <= 1 ? 1 : level == 2 ? 2 : level == 3 ? 3 : level == 4 ? 5 : level == 5 ? 7 : level == 6 ? 10 : level == 7 ? 14 : level == 8 ? 19 : level == 9 ? 26 : 36
+
+htfSwingLength = detectionCandles(htfSwingLevel)
+mtfSwingLength = detectionCandles(mtfSwingLevel)
+ltfSwingLength = detectionCandles(ltfSwingLevel)
+
+// Kept history: enough for the last five labels and the recent breaks.
+MAX_POINTS = 80
+MAX_EVENTS = 200
+MAX_TRAP = 50
+
+// ------------------------------------------------------ structure engine
+// An equal high or low (EQH/EQL, see markEqual) keeps the role of the swing
+// it equals, and its break level is the outer edge of the pair.
+type SPoint
+    int id
+    int pivotBar
+    int pivotTime
+    float price
+    int side
+    int kind
+    bool superseded = false
+    int equalId = -1
+    float equalPrice = na
+    int equalTime = na
+    int equalBar = -1
+    float level = na
+    int levelTime = na
+    int levelBar = -1
+    // The first candle after levelBar whose wick or body reached the level
+    // (-1 until one does), tracked while the swing can still become a level.
+    int levelTouchBar = -1
+    int levelTouchTime = na
+
+type SEvent
+    int bar
+    int breakBar
+    int breakTime
+    int dir
+    bool bos
+    int swingTime
+    float level
+    int seq = 0
+    bool ls = false
+    int lsBar = -1
+    int swingBar = -1
+    // Where its line ends: the first candle that touched the level.
+    int endBar = -1
+    int endTime = na
+
+type SLevel
+    bool active = false
+    float price = na
+    int swingTime = na
+    int point = -1
+    int swingBar = -1
+    int touchBar = -1
+    int touchTime = na
+
+type SEngine
+    array<SPoint> points
+    array<SEvent> events
+    array<SEvent> trapChochs
+    array<SPoint> newPoints
+    array<SPoint> dropped
+    array<SEvent> newEvents
+    SLevel hh
+    SLevel lh
+    SLevel ll
+    SLevel hl
+    SPoint highPt
+    SPoint lowPt
+    // The previous leg's swing on each side: the one a new swing is labelled
+    // against, and the one it may equal (EQH/EQL).
+    SPoint highRefPt
+    SPoint lowRefPt
+    int nextId = 0
+    int lastSide = 0
+    bool haveHighRef = false
+    bool haveLowRef = false
+    float highRef = 0.0
+    float lowRef = 0.0
+    int dir = 0
+    bool lastBos = false
+    bool haveHigh = false
+    bool haveLow = false
+    float lastHigh = 0.0
+    float lastLow = 0.0
+    int lastHighKind = 0
+    int lastLowKind = 0
+    int lastHighTime = na
+    int lastLowTime = na
+    int chochDir = 0
+    int chochBreakBar = -1
+    int chochBreakTime = na
+    float chochLevel = na
+    int chochLevelTime = na
+    int chochLevelPoint = -1
+    int chochLevelBar = -1
+    int chochTouchBar = -1
+    int chochTouchTime = na
+    int eventTotal = 0
+    int consolidation = 0
+    int labelsFromIdx = -1
+    int trapFromIdx = -1
+    // LS watch on the latest CHoCH (see lsClose).
+    SEvent lsEvent
+    int lsSeq = -1
+    int lsDir = 0
+    float lsOrigin = na
+    float lsExtreme = na
+    int lsPriorDir = 0
+    bool lsPriorBos = false
+    bool lsTriggered = false
+    bool lsBeyond = false
+    int lsTotal = 0
+    array<SEvent> newLs
+    // Strong/Weak High/Low (see trailExtremes).
+    float trailHigh = na
+    int trailHighTime = na
+    float trailLow = na
+    int trailLowTime = na
+
+newEngine() =>
+    SEngine.new(points = array.new<SPoint>(), events = array.new<SEvent>(), trapChochs = array.new<SEvent>(), newPoints = array.new<SPoint>(), dropped = array.new<SPoint>(), newEvents = array.new<SEvent>(), hh = SLevel.new(), lh = SLevel.new(), ll = SLevel.new(), hl = SLevel.new(), newLs = array.new<SEvent>())
+
+method setLevel(SLevel lv, SPoint p) =>
+    lv.active := true
+    lv.price := p.level
+    lv.swingTime := p.levelTime
+    lv.swingBar := p.levelBar
+    lv.point := p.id
+    lv.touchBar := p.levelTouchBar
+    lv.touchTime := p.levelTouchTime
+
+// A swing is identified once the opposite leg after it has begun: no later
+// pivot can replace it, so it stays marked on the chart. Only then does it
+// become the HH/LH (or LL/HL) whose close-through is a break.
+method identifySwing(SEngine e, SPoint p) =>
+    if not na(p)
+        if p.side > 0
+            if p.kind > 0
+                e.hh.setLevel(p)
+            else if p.kind < 0
+                e.lh.setLevel(p)
+        else
+            if p.kind > 0
+                e.ll.setLevel(p)
+            else if p.kind < 0
+                e.hl.setLevel(p)
+    p
+
+method highId(SEngine e) =>
+    int id = -1
+    if not na(e.highPt)
+        id := e.highPt.id
+    id
+
+method lowId(SEngine e) =>
+    int id = -1
+    if not na(e.lowPt)
+        id := e.lowPt.id
+    id
+
+method addPoint(SEngine e, int pivotBar, int pivotTime, float price, int side, int kind) =>
+    e.nextId += 1
+    SPoint p = SPoint.new(e.nextId, pivotBar, pivotTime, price, side, kind, level = price, levelTime = pivotTime, levelBar = pivotBar)
+    e.points.push(p)
+    if e.points.size() > MAX_POINTS
+        e.points.shift()
+    e.newPoints.push(p)
+    p
+
+// A BOS that follows an event in the same direction confirms that direction
+// and ends any CHoCH trap; every other CHoCH joins the trap window.
+// e.dir is the direction of the latest event that is not an LS.
+// EQH / EQL: a swing within the EQH/EQL Threshold (ATR) of the previous swing
+// on its side (the swing its HH/LH or LL/HL label is judged against) is an
+// equal high or low. The two swings are one liquidity pool, so the new swing
+// keeps the role of the swing it equals instead of being called higher or
+// lower by a hair, and the pool's outer edge is the level a close must break.
+// An untyped first swing has no role to pass on.
+markEqual(SPoint p, SPoint ref, float tol) =>
+    if not na(ref) and tol > 0
+        if ref.kind != 0 and math.abs(p.price - ref.price) < tol
+            p.kind := ref.kind
+            p.equalId := ref.id
+            p.equalPrice := ref.price
+            p.equalTime := ref.pivotTime
+            p.equalBar := ref.pivotBar
+            if p.side > 0 ? ref.level > p.level : ref.level < p.level
+                p.level := ref.level
+                p.levelTime := ref.levelTime
+                p.levelBar := ref.levelBar
+                p.levelTouchBar := ref.levelTouchBar
+                p.levelTouchTime := ref.levelTouchTime
+    p
+
+method addEvent(SEngine e, int bar, int breakBar, int breakTime, int dir, bool bos, int swingTime, float level, int swingBar, int endBar, int endTime) =>
+    SEvent ev = SEvent.new(bar, breakBar, breakTime, dir, bos, swingTime, level, e.eventTotal, swingBar = swingBar, endBar = endBar, endTime = endTime)
+    int prevDir = e.dir
+    e.events.push(ev)
+    if e.events.size() > MAX_EVENTS
+        e.events.shift()
+    if bos and prevDir == dir
+        e.trapChochs.clear()
+    else if not bos
+        e.trapChochs.push(ev)
+        if e.trapChochs.size() > MAX_TRAP
+            e.trapChochs.shift()
+    e.newEvents.push(ev)
+    e.eventTotal += 1
+    e.dir := dir
+    e.lastBos := bos
+
+method startChoch(SEngine e, int dir, int bar, int barTime, SLevel lv) =>
+    e.chochDir := dir
+    e.chochBreakBar := bar
+    e.chochBreakTime := barTime
+    e.chochLevel := lv.price
+    e.chochLevelTime := lv.swingTime
+    e.chochLevelPoint := lv.point
+    e.chochLevelBar := lv.swingBar
+    e.chochTouchBar := lv.touchBar
+    e.chochTouchTime := lv.touchTime
+
+// Drops a candidate. While the broken LH/HL is still the latest swing on its
+// side it stays the most recent LH/HL, so a later close through it is a
+// fresh break.
+method cancelChoch(SEngine e) =>
+    if e.chochDir > 0 and e.highId() == e.chochLevelPoint
+        e.lh := SLevel.new(true, e.chochLevel, e.chochLevelTime, e.chochLevelPoint, e.chochLevelBar, e.chochTouchBar, e.chochTouchTime)
+    if e.chochDir < 0 and e.lowId() == e.chochLevelPoint
+        e.hl := SLevel.new(true, e.chochLevel, e.chochLevelTime, e.chochLevelPoint, e.chochLevelBar, e.chochTouchBar, e.chochTouchTime)
+    e.chochDir := 0
+
+// The swings after the broken LH have made an HH (bullish), or after the
+// broken HL an LL (bearish), and no LL (HH) has formed after it since. An
+// equal high or low (EQH/EQL) is neither: it did not go beyond the swing it
+// equals, so it neither confirms nor cancels a CHoCH.
+method chochComplete(SEngine e) =>
+    SPoint ext = na
+    SPoint opp = na
+    if e.chochDir > 0
+        ext := e.highPt
+        opp := e.lowPt
+    else
+        ext := e.lowPt
+        opp := e.highPt
+    bool done = false
+    if not na(ext)
+        if ext.id > e.chochLevelPoint and ext.kind > 0 and ext.equalId < 0
+            if na(opp)
+                done := true
+            else
+                done := opp.id < ext.id or opp.kind < 0 or opp.equalId >= 0
+    done
+
+// A CHoCH that reversed a trend is watched while it is the latest event: if
+// the old trend carries on instead, it was a liquidity sweep (LS).
+//  * Protected swing (origin): the swing the breaking move started from, the
+//    last low before the HH of a bullish CHoCH (the last high before the LL
+//    of a bearish one).
+//  * Extreme: the old trend's most recent identified LL (bullish CHoCH) or
+//    HH (bearish CHoCH).
+//  * Trigger: a close through the protected swing.
+//  * Confirmation: the old trend carries on beyond its extreme, by a close
+//    (which is also the old trend's BOS) or by a swing, before anything else
+//    prints. A BOS in the CHoCH's direction or an opposite CHoCH ends the
+//    watch, and the CHoCH stands.
+method confirmChoch(SEngine e, int bar) =>
+    int priorDir = e.dir
+    bool priorBos = e.lastBos
+    int direction = e.chochDir
+    e.addEvent(bar, e.chochBreakBar, e.chochBreakTime, direction, false, e.chochLevelTime, e.chochLevel, e.chochLevelBar, e.chochTouchBar, e.chochTouchTime)
+    e.chochDir := 0
+    e.lsSeq := -1
+    SPoint origin = direction > 0 ? e.lowPt : e.highPt
+    SLevel extreme = direction > 0 ? e.ll : e.hh
+    if priorDir != 0 and not na(origin) and not na(extreme.swingTime)
+        e.lsEvent := e.events.last()
+        e.lsSeq := e.lsEvent.seq
+        e.lsDir := direction
+        e.lsOrigin := origin.price
+        e.lsExtreme := extreme.price
+        e.lsPriorDir := priorDir
+        e.lsPriorBos := priorBos
+        e.lsTriggered := false
+        e.lsBeyond := false
+    e.lsSeq
+
+method lsWatching(SEngine e) =>
+    e.lsSeq >= 0 and e.lsSeq == e.eventTotal - 1
+
+// A swing on the old trend's side (side -1 low, 1 high) while watching:
+// beyond the extreme it shows the old trend carrying on. True when that
+// confirms the LS.
+method lsSwing(SEngine e, int side, float price) =>
+    bool confirm = false
+    if e.lsWatching() and e.lsDir == -side
+        if side < 0 ? price < e.lsExtreme : price > e.lsExtreme
+            e.lsBeyond := true
+        confirm := e.lsTriggered and e.lsBeyond
+    confirm
+
+// A close while watching. True when it confirms the LS.
+method lsClose(SEngine e, float c) =>
+    bool confirm = false
+    if e.lsWatching()
+        bool bullish = e.lsDir > 0
+        if bullish ? c < e.lsOrigin : c > e.lsOrigin
+            e.lsTriggered := true
+        confirm := e.lsTriggered and (e.lsBeyond or (bullish ? c < e.lsExtreme : c > e.lsExtreme))
+    confirm
+
+// The CHoCH was a liquidity sweep: it is relabelled LS and the trend it
+// changed is restored, as if it had never printed. It also leaves the CHoCH
+// trap, and any CHoCH attempt still pending ends.
+method confirmLs(SEngine e, int bar) =>
+    SEvent ev = e.lsEvent
+    ev.ls := true
+    ev.lsBar := bar
+    e.dir := e.lsPriorDir
+    e.lastBos := e.lsPriorBos
+    int t = e.trapChochs.size()
+    if t > 0
+        if e.trapChochs.get(t - 1).seq == ev.seq
+            e.trapChochs.pop()
+    e.newLs.push(ev)
+    e.lsTotal += 1
+    e.lsSeq := -1
+    e.chochDir := 0
+
+// A pivot high is accepted if it extends the current high leg or starts a new
+// high leg. It is labelled HH/LH against the previous high leg.
+method onPivotHigh(SEngine e, float v, int pivotBar, int pivotTime, float equalTol, int curBar) =>
+    int kind = 0
+    bool sameLeg = e.lastSide == 1
+    bool accepted = false
+    if sameLeg
+        if v > e.lastHigh
+            e.lastHigh := v
+            kind := e.haveHighRef ? (v > e.highRef ? 1 : -1) : 0
+            accepted := true
+    else
+        e.haveHighRef := e.haveHigh
+        e.highRef := e.lastHigh
+        kind := e.haveHigh ? (v > e.lastHigh ? 1 : -1) : 0
+        e.haveHigh := true
+        e.lastHigh := v
+        e.lastSide := 1
+        accepted := true
+    if accepted
+        // A higher pivot in the same leg replaces the leg's high; the first
+        // high of a new leg ends the low leg, identifying its low.
+        if sameLeg
+            e.highPt.superseded := true
+            e.dropped.push(e.highPt)
+        else
+            e.identifySwing(e.lowPt)
+            e.highRefPt := e.highPt
+        SPoint p = markEqual(e.addPoint(pivotBar, pivotTime, v, 1, kind), e.highRefPt, equalTol)
+        kind := p.kind
+        bool equal = p.equalId >= 0
+        e.highPt := p
+        e.lastHighKind := kind
+        e.lastHighTime := pivotTime
+        // An HH beyond the old uptrend's extreme after a failed bearish CHoCH
+        // confirms the LS; a pending CHoCH attempt ends with it.
+        if e.lsSwing(1, v)
+            e.confirmLs(curBar)
+        // Only swings formed after the breaking close can cancel a CHoCH, and
+        // an equal high never does.
+        else if e.chochDir > 0 and kind < 0 and pivotBar > e.chochBreakBar and not equal
+            e.cancelChoch()
+        else if e.chochDir < 0 and kind > 0 and pivotBar > e.chochBreakBar and not equal
+            e.cancelChoch()
+        else if e.chochDir != 0 and e.chochComplete()
+            e.confirmChoch(curBar)
+    accepted
+
+method onPivotLow(SEngine e, float v, int pivotBar, int pivotTime, float equalTol, int curBar) =>
+    int kind = 0
+    bool sameLeg = e.lastSide == -1
+    bool accepted = false
+    if sameLeg
+        if v < e.lastLow
+            e.lastLow := v
+            kind := e.haveLowRef ? (v < e.lowRef ? 1 : -1) : 0
+            accepted := true
+    else
+        e.haveLowRef := e.haveLow
+        e.lowRef := e.lastLow
+        kind := e.haveLow ? (v < e.lastLow ? 1 : -1) : 0
+        e.haveLow := true
+        e.lastLow := v
+        e.lastSide := -1
+        accepted := true
+    if accepted
+        if sameLeg
+            e.lowPt.superseded := true
+            e.dropped.push(e.lowPt)
+        else
+            e.identifySwing(e.highPt)
+            e.lowRefPt := e.lowPt
+        SPoint p = markEqual(e.addPoint(pivotBar, pivotTime, v, -1, kind), e.lowRefPt, equalTol)
+        kind := p.kind
+        bool equal = p.equalId >= 0
+        e.lowPt := p
+        e.lastLowKind := kind
+        e.lastLowTime := pivotTime
+        if e.lsSwing(-1, v)
+            e.confirmLs(curBar)
+        else if e.chochDir < 0 and kind < 0 and pivotBar > e.chochBreakBar and not equal
+            e.cancelChoch()
+        else if e.chochDir > 0 and kind > 0 and pivotBar > e.chochBreakBar and not equal
+            e.cancelChoch()
+        else if e.chochDir != 0 and e.chochComplete()
+            e.confirmChoch(curBar)
+    accepted
+
+// A structure line never clips through a candle: it ends on the first candle
+// after its swing whose wick or body reaches the level (high at or above a
+// swing high, low at or below a swing low). The candle that closes through
+// the level always touches it, so a break's line ends there at the latest.
+// The swings that can still become levels (the latest swing and the previous
+// leg's swing on each side) and the four levels record their first touch as
+// candles close; the candles between a pivot and its confirmation never
+// reach it.
+method touchLevel(SLevel lv, int side, float h, float l, int curBar, int curTime) =>
+    if lv.active and lv.touchBar < 0 and (side > 0 ? h >= lv.price : l <= lv.price)
+        lv.touchBar := curBar
+        lv.touchTime := curTime
+    lv.touchBar
+
+touchPoint(SPoint p, float h, float l, int curBar, int curTime) =>
+    if not na(p)
+        if p.levelTouchBar < 0 and (p.side > 0 ? h >= p.level : l <= p.level)
+            p.levelTouchBar := curBar
+            p.levelTouchTime := curTime
+    p
+
+// Only a candle close through an identified swing is a break; a wick is a
+// sweep.
+//  * The most recent identified LH broken while the trend is not bullish
+//    starts a bullish CHoCH (an LH broken with an HH is the CHoCH, not a BOS).
+//  * The most recent identified HH broken is a bullish BOS. Bearish mirrors
+//    both.
+method onClose(SEngine e, float c, float h, float l, int curBar, int curTime) =>
+    e.hh.touchLevel(1, h, l, curBar, curTime)
+    e.lh.touchLevel(1, h, l, curBar, curTime)
+    e.ll.touchLevel(-1, h, l, curBar, curTime)
+    e.hl.touchLevel(-1, h, l, curBar, curTime)
+    // LS first: the restored trend then decides the breaks below, so the
+    // protected swing's break is a pullback and a close beyond the old extreme
+    // is that trend's BOS.
+    if e.lsClose(c)
+        e.confirmLs(curBar)
+    if e.lh.active and c > e.lh.price
+        e.lh.active := false
+        if e.dir <= 0 and e.chochDir <= 0
+            e.cancelChoch()
+            e.startChoch(1, curBar, curTime, e.lh)
+            if e.chochComplete()
+                e.confirmChoch(curBar)
+    if e.hh.active and c > e.hh.price
+        e.hh.active := false
+        if e.chochDir <= 0
+            e.cancelChoch()
+            e.addEvent(curBar, curBar, curTime, 1, true, e.hh.swingTime, e.hh.price, e.hh.swingBar, e.hh.touchBar, e.hh.touchTime)
+    if e.hl.active and c < e.hl.price
+        e.hl.active := false
+        if e.dir >= 0 and e.chochDir >= 0
+            e.cancelChoch()
+            e.startChoch(-1, curBar, curTime, e.hl)
+            if e.chochComplete()
+                e.confirmChoch(curBar)
+    if e.ll.active and c < e.ll.price
+        e.ll.active := false
+        if e.chochDir >= 0
+            e.cancelChoch()
+            e.addEvent(curBar, curBar, curTime, -1, true, e.ll.swingTime, e.ll.price, e.ll.swingBar, e.ll.touchBar, e.ll.touchTime)
+    e.dir
+
+// Strong/Weak High/Low after one candle (Smart Money Engine): a break on this
+// candle (a new event, or an LS confirmed on it) protects the latest swing on
+// the other side of the resulting trend, then the trailing extreme on the
+// trend's side follows the candle. The protected swing is Strong, the
+// trailing extreme Weak: Strong Low / Weak High in a bullish trend, Strong
+// High / Weak Low in a bearish one.
+method trailExtremes(SEngine e, float h, float l, int curTime) =>
+    bool broke = e.newEvents.size() > 0 or e.newLs.size() > 0
+    if broke and e.dir > 0 and not na(e.lowPt)
+        e.trailLow := e.lowPt.price
+        e.trailLowTime := e.lowPt.pivotTime
+    if broke and e.dir < 0 and not na(e.highPt)
+        e.trailHigh := e.highPt.price
+        e.trailHighTime := e.highPt.pivotTime
+    if e.dir > 0 and (na(e.trailHigh) or h > e.trailHigh)
+        e.trailHigh := h
+        e.trailHighTime := curTime
+    if e.dir < 0 and (na(e.trailLow) or l < e.trailLow)
+        e.trailLow := l
+        e.trailLowTime := curTime
+    e.dir
+
+// One closed candle: the swing confirmed on it (its pivot is Swing Detection
+// Length candles back), then the candle's close, then the trailing extremes
+// and the touches of the swings that can still become levels.
+// A candle that is both a swing high and a swing low (an outside candle, about
+// 4% of swing candles at 1 candle a side) is taken in the order its price most
+// likely went: a bullish candle made its low first (lowFirst), a bearish or
+// flat one its high first.
+method step(SEngine e, bool isPh, bool isPl, float phV, float plV, int pivotBar, int pivotTime, float equalTol, float c, float h, float l, int curBar, int curTime, bool lowFirst) =>
+    e.newPoints.clear()
+    e.dropped.clear()
+    e.newEvents.clear()
+    e.newLs.clear()
+    if lowFirst and isPl
+        e.onPivotLow(plV, pivotBar, pivotTime, equalTol, curBar)
+    if isPh
+        e.onPivotHigh(phV, pivotBar, pivotTime, equalTol, curBar)
+    if isPl and not lowFirst
+        e.onPivotLow(plV, pivotBar, pivotTime, equalTol, curBar)
+    e.onClose(c, h, l, curBar, curTime)
+    e.trailExtremes(h, l, curTime)
+    touchPoint(e.highPt, h, l, curBar, curTime)
+    touchPoint(e.lowPt, h, l, curBar, curTime)
+    touchPoint(e.highRefPt, h, l, curBar, curTime)
+    touchPoint(e.lowRefPt, h, l, curBar, curTime)
+
+// A swing high must be at least as high as the L candles on its left and
+// strictly higher than the L candles on its right (a double top is one swing
+// at its latest candle). Swing lows mirror this.
+pivotHighFound(int len) =>
+    bool ok = bar_index >= 2 * len
+    if ok
+        float v = high[len]
+        for j = len + 1 to 2 * len
+            if high[j] > v
+                ok := false
+        for j = 0 to len - 1
+            if high[j] >= v
+                ok := false
+    ok
+
+pivotLowFound(int len) =>
+    bool ok = bar_index >= 2 * len
+    if ok
+        float v = low[len]
+        for j = len + 1 to 2 * len
+            if low[j] < v
+                ok := false
+        for j = 0 to len - 1
+            if low[j] <= v
+                ok := false
+    ok
+
+// Average true range over SWING_ATR_LENGTH candles (fewer at the start).
+swingAtrSeries() =>
+    float tr = ta.tr(true)
+    float avg = ta.sma(tr, SWING_ATR_LENGTH)
+    float acc = ta.cum(tr)
+    na(avg) ? acc / (bar_index + 1) : avg
+
+// ---------------------------------------------------- chart structure
+// As in Base: the chart uses the Swing Detection Length of the matching HTF,
+// MTF or LTF input (any other chart timeframe uses the HTF length), and only
+// confirmed candles are processed.
+chartSeconds = timeframe.in_seconds()
+chartTfIndex = chartSeconds == timeframe.in_seconds(htfTf) ? 0 : chartSeconds == timeframe.in_seconds(mtfTf) ? 1 : chartSeconds == timeframe.in_seconds(ltfTf) ? 2 : 0
+chartLength = chartTfIndex == 1 ? mtfSwingLength : chartTfIndex == 2 ? ltfSwingLength : htfSwingLength
+float chartAtr = swingAtrSeries()
+bool chartPh = pivotHighFound(chartLength)
+bool chartPl = pivotLowFound(chartLength)
+var SEngine chartEngine = newEngine()
+if barstate.isconfirmed
+    chartEngine.step(chartPh, chartPl, high[chartLength], low[chartLength], bar_index - chartLength, time[chartLength], equalThreshold * nz(chartAtr[chartLength]), close, high, low, bar_index, time, chartPh and chartPl and close[chartLength] > open[chartLength])
+
+// ------------------------------------------------------------ Fibonacci
+// Smart Money Engine's fibLevelCalc: the price of a ratio along the leg,
+// measured from the high (fromHigh) or from the low.
+fibLevelCalc(float ratio, bool fromHigh, float hi, float lo) =>
+    fromHigh ? hi - (hi - lo) * ratio : lo + (hi - lo) * ratio
+
+ratioText(float ratio) =>
+    str.tostring(ratio)
+
+getDashPos(string pos) =>
+    switch pos
+        "Top Left" => position.top_left
+        "Top Right" => position.top_right
+        "Bottom Left" => position.bottom_left
+        "Bottom Right" => position.bottom_right
+        "Middle Right" => position.middle_right
+        => position.bottom_right
+
+sizeFromString(string s) =>
+    s == "Tiny" ? size.tiny : s == "Small" ? size.small : s == "Normal" ? size.normal : s == "Large" ? size.large : s == "Huge" ? size.huge : size.small
+
+// One step smaller: the section divider and the version footer.
+sizeDownFromString(string s) =>
+    s == "Tiny" ? size.tiny : s == "Small" ? size.tiny : s == "Normal" ? size.small : s == "Large" ? size.normal : s == "Huge" ? size.large : size.tiny
+
+// Smart Money Engine's alert text; extraJson adds webhook fields.
+makeAlertMsg(string eventJson, string eventDisp, string dir, string extraJson = "") =>
+    webhookInput ? '{"event":"' + eventJson + '","ticker":"' + syminfo.tickerid + '","direction":"' + dir + '","price":' + str.tostring(close) + extraJson + '}' : (dir == "bull" ? "🟢" : "🔴") + " " + eventDisp + " | " + syminfo.tickerid + " | " + str.tostring(close, format.mintick)
+
+dashFontSize = sizeFromString(dashFontSizeInput)
+dashFontSizeSub = sizeDownFromString(dashFontSizeInput)
+fibLineStyle = lineStyleInput == "Solid" ? line.style_solid : lineStyleInput == "Dashed" ? line.style_dashed : line.style_dotted
+fibLabelSize = labelSizeInput == "Small" ? size.small : labelSizeInput == "Normal" ? size.normal : labelSizeInput == "Large" ? size.large : size.tiny
+fibExtend = extendInput == "Right" ? extend.right : extendInput == "Left" ? extend.left : extendInput == "Both" ? extend.both : extend.none
+string alertFreq = alertTimingInput == "Immediate (intrabar)" ? alert.freq_once_per_bar : alert.freq_once_per_bar_close
+
+// The leg: Base's Strong/Weak High and Low. Auto measures from the high
+// unless the trend is bearish (Smart Money Engine); the OTE zone also needs a
+// trend in Auto, since the trend sets its direction.
+float legHigh = chartEngine.trailHigh
+float legLow = chartEngine.trailLow
+int legDir = chartEngine.dir
+bool legValid = not na(legHigh) and not na(legLow) and legHigh != legLow
+bool fromHigh = anchorInput == "High" ? true : anchorInput == "Low" ? false : legDir != -1
+bool oteValid = legValid and (anchorInput != "Auto (trend)" or legDir != 0)
+float oteA = oteValid ? fibLevelCalc(oteFrom, fromHigh, legHigh, legLow) : na
+float oteB = oteValid ? fibLevelCalc(oteTo, fromHigh, legHigh, legLow) : na
+float oteHi = math.max(oteA, oteB)
+float oteLo = math.min(oteA, oteB)
+bool inOte = oteValid and close >= oteLo and close <= oteHi
+
+// An OTE entry is the first candle whose close is inside the zone; the
+// event is always computed, the input only gates the dynamic alert().
+bool isWarmedUp = bar_index >= math.max(chartLength * 3, 50)
+bool oteEntryEvt = isWarmedUp and inOte and not inOte[1]
+if oteEntryEvt and oteAlertInput
+    alert(makeAlertMsg("ote_entry", "OTE Entry", fromHigh ? "bull" : "bear"), alertFreq)
+
+// ---------------------------------------------------------------- drawing
+// The levels run from the leg's earlier end to Right Offset candles past the
+// latest candle, with their labels just past the line ends.
+var array<line> fibLines = array.new<line>()
+var array<label> fibLabels = array.new<label>()
+var box oteBox = na
+if barstate.islast
+    for ln in fibLines
+        line.delete(ln)
+    fibLines.clear()
+    for lb in fibLabels
+        label.delete(lb)
+    fibLabels.clear()
+    box.delete(oteBox)
+    oteBox := na
+    if showFib and legValid
+        int leftTime = math.min(chartEngine.trailHighTime, chartEngine.trailLowTime)
+        int rightTime = time + rightOffset * chartSeconds * 1000
+        array<bool> levelShow = array.from(show1, show2, show3, show4, show5, show6, show7, show8, show9, show10, show11, show12)
+        array<float> levelRatio = array.from(ratio1, ratio2, ratio3, ratio4, ratio5, ratio6, ratio7, ratio8, ratio9, ratio10, ratio11, ratio12)
+        array<color> levelColor = array.from(color1, color2, color3, color4, color5, color6, color7, color8, color9, color10, color11, color12)
+        for i = 0 to levelShow.size() - 1
+            if levelShow.get(i)
+                float ratio = levelRatio.get(i)
+                float price = fibLevelCalc(ratio, fromHigh, legHigh, legLow)
+                color lineColor = lineColorInput == "Per Level" ? levelColor.get(i) : lineColorInput == "Single Color" ? singleColor : FIB_COLOR
+                fibLines.push(line.new(leftTime, price, rightTime, price, xloc = xloc.bar_time, extend = fibExtend, color = lineColor, style = fibLineStyle, width = lineWidth))
+                if showLabels
+                    string txt = labelTextInput == "Price" ? str.tostring(price, format.mintick) : labelTextInput == "Ratio + Price" ? ratioText(ratio) + " (" + str.tostring(price, format.mintick) + ")" : ratioText(ratio)
+                    color textColor = labelColorInput == "Line Color" ? lineColor : labelColorInput == "Custom" ? labelCustomColor : FIB_TEXT
+                    bool onLeft = labelSideInput == "Left"
+                    fibLabels.push(label.new(onLeft ? leftTime : rightTime, price, txt, xloc = xloc.bar_time, yloc = yloc.price, color = color(na), textcolor = textColor, style = onLeft ? label.style_label_right : label.style_label_left, size = fibLabelSize))
+        if showOte
+            float zoneA = fibLevelCalc(oteFrom, fromHigh, legHigh, legLow)
+            float zoneB = fibLevelCalc(oteTo, fromHigh, legHigh, legLow)
+            oteBox := box.new(leftTime, math.max(zoneA, zoneB), rightTime, math.min(zoneA, zoneB), xloc = xloc.bar_time, extend = fibExtend, bgcolor = oteColor, border_color = oteBorderColor, border_width = oteBorderWidth)
+
+// ------------------------------------------------------------- dashboard
+// Smart Money Engine's Fibonacci section: trend-colored header, divider,
+// zebra rows with tooltips, version footer.
+var table dashTable = na
+if barstate.islast
+    if not na(dashTable)
+        table.delete(dashTable)
+        dashTable := na
+    if showDash
+        string trendWord = legDir > 0 ? "Bullish" : legDir < 0 ? "Bearish" : "Neutral"
+        color headerBg = legDir > 0 ? HEADER_BG_BULL : legDir < 0 ? HEADER_BG_BEAR : HEADER_BG
+        string legHiStr = na(legHigh) ? "—" : str.tostring(legHigh, format.mintick)
+        string legLoStr = na(legLow) ? "—" : str.tostring(legLow, format.mintick)
+        string oteStr = not oteValid ? "—" : inOte ? "Inside ✓" : "Outside"
+        color oteClr = not oteValid ? TEXT_MUTED : inOte ? NEUTRAL_TEXT : TEXT_COLOR
+        string oteRange = ratioText(math.min(oteFrom, oteTo)) + "–" + ratioText(math.max(oteFrom, oteTo))
+
+        dashTable := table.new(getDashPos(dashPosStr), 2, 6, bgcolor = TABLE_BG, border_color = TABLE_BORDER, border_width = 1, frame_color = TABLE_BORDER, frame_width = 1)
+        int r = 0
+        bool zeb = false
+        color rb = TABLE_BG
+
+        table.cell(dashTable, 0, r, "◆ Fib · " + trendWord, text_color = HEADER_TEXT, bgcolor = headerBg, text_size = dashFontSize, text_halign = text.align_center)
+        table.merge_cells(dashTable, 0, r, 1, r)
+        r += 1
+
+        table.cell(dashTable, 0, r, "— Fibonacci —", text_color = TEXT_MUTED, bgcolor = TABLE_ROW_ALT, text_size = dashFontSizeSub, text_halign = text.align_center)
+        table.merge_cells(dashTable, 0, r, 1, r)
+        r += 1
+        rb := zeb ? TABLE_ROW_ALT : TABLE_BG
+        table.cell(dashTable, 0, r, "Leg High", text_color = TEXT_MUTED, text_size = dashFontSize, bgcolor = rb, tooltip = "Trailing high of the current leg (fib anchor): Base's Weak High in a bullish trend, Strong High in a bearish one.")
+        table.cell(dashTable, 1, r, legHiStr, text_color = TEXT_COLOR, text_size = dashFontSize, bgcolor = rb)
+        r += 1
+        zeb := not zeb
+        rb := zeb ? TABLE_ROW_ALT : TABLE_BG
+        table.cell(dashTable, 0, r, "Leg Low", text_color = TEXT_MUTED, text_size = dashFontSize, bgcolor = rb, tooltip = "Trailing low of the current leg (fib anchor): Base's Strong Low in a bullish trend, Weak Low in a bearish one.")
+        table.cell(dashTable, 1, r, legLoStr, text_color = TEXT_COLOR, text_size = dashFontSize, bgcolor = rb)
+        r += 1
+        zeb := not zeb
+        rb := zeb ? TABLE_ROW_ALT : TABLE_BG
+        table.cell(dashTable, 0, r, "OTE", text_color = TEXT_MUTED, text_size = dashFontSize, bgcolor = rb, tooltip = "Is price inside the " + oteRange + " Optimal Trade Entry zone\nof the current leg?")
+        table.cell(dashTable, 1, r, oteStr, text_color = oteClr, text_size = dashFontSize, bgcolor = rb)
+        r += 1
+
+        table.cell(dashTable, 0, r, "Fib Base · " + FIB_VERSION, text_color = TEXT_MUTED, text_size = dashFontSizeSub, text_halign = text.align_center)
+        table.merge_cells(dashTable, 0, r, 1, r)
+
+// ---------------------------------------------------------------- alerts
+// A separate entry in TradingView's alert dialog; it fires whatever the
+// alert inputs above.
+alertcondition(oteEntryEvt, "OTE Zone Entry", "🎯 OTE Entry | {{ticker}} | {{close}}")
