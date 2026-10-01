@@ -56,7 +56,7 @@ grpProc = "Structure Bar Processing"
 barsToProcess = input.int(100, "Bars To Process", minval = 100, maxval = 100000, group = grpProc, tooltip = "How many HTF candles back structure is drawn. Other chart timeframes cover the same span of time. Structure is always calculated on all loaded history.")
 
 grpSwing = "Swing Detection"
-htfSwingLength = input.int(2, "HTF Swing Detection Length", minval = 2, maxval = 50, group = grpSwing, tooltip = "Candles on each side of a pivot for HTF swings (Smart Money Engine swing detection). It is also how many candles a swing takes to confirm. Lower = more, faster swings; higher = fewer, cleaner swings.")
+htfSwingLength = input.int(5, "HTF Swing Detection Length", minval = 2, maxval = 50, group = grpSwing, tooltip = "Candles on each side of a pivot for HTF swings (Smart Money Engine swing detection). It is also how many candles a swing takes to confirm. Lower = more, faster swings; higher = fewer, cleaner swings.")
 mtfSwingLength = input.int(9, "MTF Swing Detection Length", minval = 2, maxval = 50, group = grpSwing, tooltip = "Candles on each side of a pivot for MTF swings. Lower = more, faster swings; higher = fewer, cleaner swings.")
 ltfSwingLength = input.int(10, "LTF Swing Detection Length", minval = 2, maxval = 50, group = grpSwing, tooltip = "Candles on each side of a pivot for LTF swings. Lower = more, faster swings; higher = fewer, cleaner swings.")
 showSwingPoints = input.bool(true, "Show Swing Points", group = grpSwing, tooltip = "Display the HH/HL/LH/LL (and EQH/EQL) swing labels and the dotted lines at the latest swing high and low.")
