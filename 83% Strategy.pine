@@ -2505,17 +2505,20 @@ if barstate.islast and s83OnLtf
 
 // ---------------------------------------------------------------- dashboard
 dashPosition = dashPositionInput == "Top Left" ? position.top_left : dashPositionInput == "Bottom Left" ? position.bottom_left : dashPositionInput == "Bottom Right" ? position.bottom_right : position.top_right
-// Component names are black and bold, and only the outputs are coloured:
+// Keep the dashboard legible against either chart theme.  An opaque panel and
+// force_overlay ensure it remains visible on the main chart even if the
+// strategy is moved to a separate pane. Component names are bold, and only
+// the outputs are coloured:
 // trends green (Bullish, Bullish Transition), red (Bearish, Bearish
 // Transition) or grey (Consolidation / Undefined); tradability and conditions
-// green when they pass and red when they do not; Tradable (Early) amber. No
-// background and no borders.
-DASH_TEXT_COLOR = color.black
+// green when they pass and red when they do not; Tradable (Early) amber.
+DASH_TEXT_COLOR = chart.fg_color
+DASH_BACKGROUND_COLOR = color.new(chart.bg_color, 5)
 DASH_POSITIVE_COLOR = color.green
 DASH_NEGATIVE_COLOR = color.red
 DASH_NEUTRAL_COLOR = color.gray
 DASH_EARLY_COLOR = #FF8C00
-var table dash = table.new(dashPosition, 2, 40, bgcolor = color.new(color.white, 100), frame_width = 0, border_width = 0)
+var table dash = table.new(dashPosition, 2, 40, bgcolor = DASH_BACKGROUND_COLOR, frame_color = color.new(DASH_TEXT_COLOR, 35), frame_width = 1, border_color = color.new(DASH_TEXT_COLOR, 80), border_width = 1, force_overlay = true)
 
 trendColor(TfView v) =>
     int d = biasDirection(v)
