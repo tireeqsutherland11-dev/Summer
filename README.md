@@ -893,6 +893,55 @@ The dashboard gains these rows under Base's own:
   - A new MTF/HTF candle reaches the filters one LTF candle after it closes,
     because Base's `request.security` reads the latest closed candle.
 
+### Deriv synthetic indices
+
+Both versions are set up for Deriv's synthetic indices: Volatility (including
+the 1s versions), Crash / Boom, Jump, Step, Range Break, DEX and Drift Switch.
+
+- **Symbol Profile.** `Symbol_Profile` (`Symbol Profile` on TradingView) is
+  Auto by default.
+  - Auto recognises a synthetic index by its name, description or symbol
+    path, or by Deriv's `R_` / `1HZ` codes and the `DERIV` prefix on
+    TradingView.
+  - You can also force **Deriv Synthetic Index** or **Standard symbol**.
+  - The dashboard's new **Symbol** row shows which profile applies, and the
+    EA writes it to the Journal at start.
+- **Market Volume.** Synthetic indices tick at a fixed rate around the
+  clock, so their volume measures nothing, and on TradingView it is often
+  missing entirely.
+  - Base's Market Volume requirement is therefore not applied to them, or to
+    any symbol without volume data. The dashboard then shows
+    `PASS (not applied: ...)`.
+  - The other Optimal Conditions are unchanged.
+  - Before this change, a symbol without volume could never read OPTIMAL, so
+    the TradingView strategy took no trades.
+- **Lot size limits.** Each symbol's minimum lot, maximum lot per order and
+  total volume limit are respected.
+  - A risk-based size below the minimum is skipped. The Journal and the
+    dashboard name the minimum.
+  - With `Minimum_Lot_Max_Risk_Multiple` above 0, the minimum lot is traded
+    instead, but only if its loss at the stop is at most that many times the
+    planned risk.
+  - A size above the maximum is capped, which risks less than planned. The
+    trade's note says so.
+  - On TradingView, set `Minimum Quantity` (and the same multiple) to the
+    Deriv minimum lot.
+- **Price deviation (EA).** Synthetic indices move many points per tick, so
+  the EA allows a market order to fill up to a tenth of the LTF ATR from the
+  requested price, instead of a fixed 20 points. This avoids requotes.
+- **History messages (EA).** When the EA is waiting for history (for
+  example, a symbol with too little H4 or H1 data), it writes the reason to
+  the Journal, such as `waiting - no H4 candles yet`. A symbol that never
+  trades in the Strategy Tester shows why.
+- **Margin (TradingView).** The strategy no longer simulates margin. The
+  default 100% margin rejected the leveraged position sizes that 5% risk
+  per trade needs. To model your account's leverage instead, set the margin
+  in the strategy's Properties.
+- **Timing.**
+  - Deriv's MT5 server runs on GMT, so a trading day is a UTC day.
+  - The indices trade around the clock; the strategy keeps your Monday to
+    Saturday trading days, and `Trade_Sunday` adds Sunday.
+
 ### How it was checked
 
 Nothing here has been compiled in MetaEditor or run in TradingView. The
@@ -919,6 +968,15 @@ and Python mirrors:
   All 138 trades passed. Every one of the 450 touches of an armed setup was
   either traded or rejected for a genuine reason: Market Tradability, the
   MTF's latest structure, or a position already open.
+- **Deriv tests.** Separate tests cover:
+  - recognising synthetic indices: 18 of 18 names, codes, descriptions and
+    paths classified correctly;
+  - leaving Market Volume out on a synthetic index or a symbol without
+    volume;
+  - sizing at the minimum, maximum and total volume limits;
+  - the Journal reason while history is missing.
+
+  Half of the 20 backtest markets ran as `Volatility 75 Index`.
 - **Unit tests.** Separate tests cover:
   - the daily risk bookkeeping (losses, breakeven exits, cuts and the daily
     reset);
