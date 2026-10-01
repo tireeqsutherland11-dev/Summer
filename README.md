@@ -1018,23 +1018,32 @@ and Python mirrors:
 - **Base's behaviour is unchanged.** Base's whole test suite passes against
   the EA.
 - **Every trade follows the rules.** Tick-level backtests ran on 20
-  generated markets of 120 days each. Every trade was rechecked with
-  independent code, including:
+  generated markets of 120 days each, with the engulfing confirmation on.
+  Every trade was rechecked with independent code, including:
   - A and B are swings of the LTF candles;
   - the level is the 83% retracement;
   - the heavy-pressure rule;
   - A lies within the processed candles;
-  - the setup was not missed and no new HH/LL came first;
-  - the entry is at the first touch;
+  - the setup was not missed;
+  - the touch, then the first M15 or M30 engulfing after it, recomputed from
+    the candles, with no close through A, new HH/LL or expired wait first;
+  - the entry on the first tick after the engulfing candle closed;
   - the filters at the entry;
   - the take profit, stop and 1:2 / 1:3 choice;
   - the lot size, including the risk cuts;
   - the day and trade limits;
   - breakeven.
 
-  All 138 trades passed. Every one of the 450 touches of an armed setup was
-  either traded or rejected for a genuine reason: Market Tradability, the
-  MTF's latest structure, or a position already open.
+  All 42 trades passed. Every one of the 244 engulfing confirmations was
+  either traded or rejected for a genuine reason:
+  - Market Tradability: 25;
+  - the MTF's latest structure: 134;
+  - too far from the 83% level for a stop behind A: 45.
+
+  With the confirmation off, the same markets gave 138 touch entries,
+  which all passed the touch-entry checks (the first touch, no new HH/LL
+  first). The confirmation therefore takes far fewer trades. The generated
+  markets are random, so they say nothing about whether it trades better.
 - **Deriv tests.** Separate tests cover:
   - recognising synthetic indices: 18 of 18 names, codes, descriptions and
     paths classified correctly;
@@ -1051,7 +1060,10 @@ and Python mirrors:
   - the LTF drawings.
 - **The EA and the Pine strategy agree.** The EA's setup scan was compared,
   setup by setup, with a Python mirror of the Pine strategy's setup logic on
-  14 generated markets. These covered several swing levels, windows and
-  pressure settings, at both forex and gold price scales. All 2,361 setups
-  matched: A, B, the level, the outcome, and when the setup was armed and
-  ended.
+  19 generated markets. These covered several swing levels, windows and
+  pressure settings, at both forex and gold price scales, and the
+  confirmation on and off, with the M15 or M30 engulfing alone and waits of
+  1 to 8 candles. All 3,588 setups matched: A, B, the level, the outcome,
+  when the setup was armed, touched, confirmed (and on which timeframe) and
+  ended, and why it ended. 292 of them were confirmed and 424 failed while
+  waiting for their engulfing.
