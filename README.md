@@ -747,3 +747,186 @@ structure instead of the Smart Money Engine's own swings:
 To install it, open the **Pine Editor** in TradingView, paste the contents of
 `Fib Base.pine`, save the script, and click **Add to chart**. It can run
 alongside Base or on its own.
+
+## 83% Strategy (`83% Strategy.mq5` and `83% Strategy.pine`)
+
+The 83% Strategy trades the 83% retracement of a heavy lower-timeframe
+impulse in the direction of an established trend. It is built on Base: the
+EA is `Base.mq5` (v2.43) with the strategy added, and the TradingView
+strategy is `Base.pine` with the same addition. Both keep Base's structure
+engine, labels and dashboard unchanged. Both use Fib Base's Fibonacci engine
+(`fibLevelCalc`) for the levels.
+
+### The rules
+
+Buys (bullish market):
+
+1. **Market filters.** The dashboard's Market Tradability reads **Tradable**
+   (bullish) and the Optimal Conditions read **OPTIMAL**.
+   `Allow_Tradable_Early_Entries` also accepts Tradable (Early); it is off by
+   default.
+2. **MTF trend.** The most recent MTF structure is a bullish BOS (the break of
+   an HH that makes a new HH). It must not be a CHoCH or Consolidation /
+   Undefined.
+3. **LTF setup.** The LTF is M30 with LTF Swing Detection level 3 (3 candles
+   each side) by default. The setup is searched within the last
+   `LTF_Bars_To_Process` (the LTF Independent Processed Bars, 25) closed LTF
+   candles.
+   - **A** is the most recent HL from which there was heavy buying pressure.
+   - **B** is the HH that move formed.
+   - The Fibonacci runs from B (0%) back to A (100%).
+4. **Entry.** Price touches the 83% level (`Entry_Level`, 0.83).
+5. **Invalid.** If price makes a new HH (trades above B) before reaching 83%,
+   the setup is dead and its HL is used up. A new setup needs a new HL.
+
+Sells mirror this: an LH with heavy selling pressure, the LL it formed, a
+sell at the 83% retracement, and invalidation on a new LL.
+
+How the rules are made exact:
+
+- **Heavy pressure.** Within `Impulse_Candles` (3) candles of A, counting A's
+  own candle, a candle closes at least `Impulse_Min_ATR` (2.0) LTF ATR beyond
+  A. The ATR is the 14-candle ATR at A. On real data (an index on M15 and
+  M30, EURUSD H1 and five stocks D1), 2.0 selected the strongest 43% of
+  HL-to-HH legs. Set it to 0 to accept every leg.
+- **HL and HH labels.** A must be an HL (or an EQL with an HL's role). B must
+  be a true HH, not an EQH.
+- **When a setup becomes known.** A setup exists once B is a confirmed swing,
+  3 candles after it. If price already reached 83% during those candles, the
+  setup is **missed** and is not traded late.
+- **The processed bars.** A must lie within the processed candles. A setup
+  whose A leaves them **expires**. On the LTF chart, Base's structure is also
+  drawn over just those candles.
+
+### Risk management (all adjustable)
+
+- **Trading days.** Monday to Saturday (`Trade_Monday` ... `Trade_Sunday`).
+- **Trades per day.** At most `Max_Trades_Per_Day` (5) entries a day, with
+  one position open at a time.
+- **Risk per trade.** `Risk_Percent` (5%) of the balance is lost at the stop.
+  - After every `Losses_Before_Risk_Cut` (2) consecutive losses within a day,
+    the risk is multiplied by `Risk_Cut_Factor` (0.5): 5%, then 2.5% after two
+    losses, then 1.25% after two more.
+  - A win, or an exit at breakeven, ends a run of losses, but the risk stays
+    cut until the day ends. It resets at the start of the next day.
+  - The EA reads the day's trades and losses back from the deal history, so
+    a restart keeps them.
+- **Lot size.** Balance x risk % / the loss of one lot at the stop. This is
+  the strategy's `(Balance x Risk %) / Stop Loss in points` rule, using MT5's
+  tick value so it works on any symbol. TradingView uses
+  `quantity = balance x risk % / (stop distance x point value)`.
+- **Take profit.** `TP_Buffer_ATR` (0.1) LTF ATR before B, the HH (LL) of the
+  Fibonacci's 0%.
+- **Stop loss and reward-to-risk.**
+  - A stop `SL_Buffer_ATR` (0.5) LTF ATR behind A gives the position's
+    natural reward-to-risk.
+  - The trade uses whichever of 1:2 and 1:3 (`Reward_Risk_Low`,
+    `Reward_Risk_High`) is closer, and moves the stop to match while keeping
+    the take profit. For example, 1:2.4 uses 1:2.
+  - With 0.5 ATR, the natural ratio fell between 1:2.2 and 1:3.0 for 80% of
+    the real-data setups, as the strategy describes. The adjusted stop is
+    always behind A.
+- **Breakeven.** The stop moves to the entry price once price has covered
+  `Breakeven_At_Percent` (60%) of the way to the take profit.
+
+### What you see on the LTF chart
+
+On the LTF chart, each setup within the processed candles is drawn as in the
+strategy's examples:
+
+- **Fibonacci levels.** Fib Base's levels: 0% at B, 100% at A, and the entry
+  level in orange.
+  - Labels read `0.00%`, `83.00%` and `100.00%`. They can show ratios or
+    prices instead.
+  - Four optional levels (0.5, 0.618, 0.705, 0.886) can be switched on, and
+    every level's ratio and colour can be changed.
+- **Points.** A, B and C (the entry).
+- **Position zones.** The target zone (blue, entry to take profit) and the
+  stop zone (red, entry to stop loss), drawn from C.
+  - An armed setup shows its planned zones from the latest candle.
+  - Failed setups are drawn dotted with their reason: invalidated, expired,
+    or missed.
+
+The dashboard gains these rows under Base's own:
+
+- **83% Strategy.** Waiting, a buy or sell setup armed, or a position open.
+- **Setup.** A, B and the 83% price.
+- **Entry Filters.** PASS, or BLOCKED with the reason.
+- **Risk Today.** Trades taken out of the maximum, the current risk %, and
+  losses in a row.
+- **Last Setup.** What happened to the latest setup that reached its level:
+  traded, or the reason it was not.
+
+### MetaTrader 5
+
+- **Installing and testing.** Install `83% Strategy.mq5` in `MQL5/Experts`,
+  compile it in MetaEditor, and attach it to a chart. To backtest it, open
+  the Strategy Tester (Ctrl+R) and select **83% Strategy**, the symbol and a
+  date range. Use **Every tick** or **Every tick based on real ticks**
+  modelling, since entries happen on the first tick at the level.
+- **Viewing the trades.** Choose the M30 chart in visual mode to watch the
+  setups. Non-visual runs and optimisation skip all drawing.
+- **Trade Mode.** `Trade_Mode` is **Strategy Tester only** by default, so a
+  chart running the EA for analysis never places orders. Choose **Strategy
+  Tester and live charts** deliberately.
+- **Entries.** The EA enters at the market on the first tick at which the
+  chart price (bid) touches the level. It invalidates a setup on the first
+  tick beyond B.
+  - The take profit and stop of a sell include the spread, because they
+    trigger on the ask.
+  - Each untraded touch is written to the Journal once, with its reason.
+- **Alerts.** `Enable_Popup_Alerts` and `Enable_Push_Notifications` also
+  announce armed setups and entries.
+
+### TradingView
+
+- **Installing.** Paste `83% Strategy.pine` into the Pine Editor, save it,
+  and add it to an M30 chart (the LTF). Setups, orders and drawings follow
+  that chart; on any other chart the dashboard asks for the LTF chart.
+- **Entries.** Entries are limit orders at the level, placed at a candle's
+  close. A buy and a sell order cancel each other.
+- **Differences from the EA:**
+  - A limit order fills at the level, or better on a gap.
+  - Breakeven is checked at candle closes.
+  - Pine has no spread.
+  - Days follow the exchange time zone.
+  - A new MTF/HTF candle reaches the filters one LTF candle after it closes,
+    because Base's `request.security` reads the latest closed candle.
+
+### How it was checked
+
+Nothing here has been compiled in MetaEditor or run in TradingView. The
+checks used the test harness (MQL5 compiled as C++ against a mock terminal)
+and Python mirrors:
+
+- **Base's behaviour is unchanged.** Base's whole test suite passes against
+  the EA.
+- **Every trade follows the rules.** Tick-level backtests ran on 20
+  generated markets of 120 days each. Every trade was rechecked with
+  independent code, including:
+  - A and B are swings of the LTF candles;
+  - the level is the 83% retracement;
+  - the heavy-pressure rule;
+  - A lies within the processed candles;
+  - the setup was not missed and no new HH/LL came first;
+  - the entry is at the first touch;
+  - the filters at the entry;
+  - the take profit, stop and 1:2 / 1:3 choice;
+  - the lot size, including the risk cuts;
+  - the day and trade limits;
+  - breakeven.
+
+  All 138 trades passed. Every one of the 450 touches of an armed setup was
+  either traded or rejected for a genuine reason: Market Tradability, the
+  MTF's latest structure, or a position already open.
+- **Unit tests.** Separate tests cover:
+  - the daily risk bookkeeping (losses, breakeven exits, cuts and the daily
+    reset);
+  - the daily trade limit and excluded days;
+  - the LTF drawings.
+- **The EA and the Pine strategy agree.** The EA's setup scan was compared,
+  setup by setup, with a Python mirror of the Pine strategy's setup logic on
+  14 generated markets. These covered several swing levels, windows and
+  pressure settings, at both forex and gold price scales. All 2,361 setups
+  matched: A, B, the level, the outcome, and when the setup was armed and
+  ended.
