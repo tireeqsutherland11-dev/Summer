@@ -180,6 +180,13 @@ impulseCandles = input.int(3, "Heavy Pressure: Candles After The HL/LH", minval 
 impulseMinAtr = input.float(2.0, "Heavy Pressure: Minimum Move (LTF ATR)", minval = 0.0, step = 0.1, group = grpS83, tooltip = "How far beyond A that close must be, in 14-candle LTF ATR measured at A. On real data 2.0 selected the strongest 43% of HL-to-HH legs. 0 accepts every leg.")
 allowEarlyEntries = input.bool(false, "Also Trade When Tradable (Early)", group = grpS83, tooltip = "Off: Market Tradability must read Tradable. On: Tradable (Early) is accepted too.")
 
+grpS83Conf = "83% Strategy - Entry Confirmation"
+engulfConfirm = input.bool(true, "Wait For An Engulfing After The 83% Touch", group = grpS83Conf, tooltip = "On: once price touches the entry level, the trade waits for an engulfing candle in the trade direction (bullish for buys, bearish for sells) on the lower timeframe or the LTF, on the touching candle or later, and enters at its close. Off: a limit order at the entry level.")
+useLowerEngulf = input.bool(true, "Engulfing On The Lower Timeframe", inline = "lower", group = grpS83Conf)
+engulfLowerTf = input.timeframe("15", "", inline = "lower", group = grpS83Conf, tooltip = "The lower timeframe (M15 by default). Its candles inside each LTF candle are read with request.security_lower_tf; the entry is placed at the close of the LTF candle that contains the engulfing.")
+useLtfEngulf = input.bool(true, "Engulfing On The LTF", group = grpS83Conf, tooltip = "An engulfing of the LTF candles (M30 by default) also confirms the entry.")
+confirmWindow = input.int(4, "LTF Candles To Wait For The Engulfing", minval = 1, maxval = 50, group = grpS83Conf, tooltip = "The engulfing must close within this many LTF candles, the touching candle included. The setup also fails if a candle closes through A or price makes a new HH (LL) first.")
+
 grpS83Risk = "83% Strategy - Risk Management"
 riskPercent = input.float(5.0, "Risk (%) Per Trade", minval = 0.01, maxval = 100.0, step = 0.1, group = grpS83Risk, tooltip = "Share of the balance (initial capital plus net profit) lost at the stop. Quantity = balance x risk % / 100 / (stop distance x point value).")
 maxTradesPerDay = input.int(5, "Number Of Trades Per Day (Max)", minval = 1, group = grpS83Risk, tooltip = "At most this many entries per day (exchange time zone).")
@@ -1847,6 +1854,9 @@ S83_INVALID = 2
 S83_EXPIRED = 3
 S83_MISSED = 4
 S83_REPLACED = 5
+S83_WAITING = 6
+S83_CONFIRMED = 7
+S83_FAILED = 8
 
 // One setup: A (the HL/LH the heavy move started from), B (the HH/LL it
 // formed), the entry level between them, its state and its drawings.
@@ -1871,6 +1881,12 @@ type S83Setup
     float tp = na
     float rr = na
     int entryTime = na
+    // Engulfing confirmation: the touch, then the engulfing candle.
+    int touchBar = na
+    int touchTime = na
+    int confirmTime = na
+    int confirmSecs = 0
+    float confirmPrice = na
     array<line> lines
     array<label> levelLabels
     array<label> labels
@@ -1892,7 +1908,9 @@ alignDown(float p) =>
 alignUp(float p) =>
     math.ceil(p / syminfo.mintick - 1e-8) * syminfo.mintick
 
-// Take profit, stop loss and reward-to-risk for an entry at `entry`.
+// Take profit, stop loss and reward-to-risk for an entry at `entry`, and
+// whether that stop is behind A (an entry well past the entry level after a
+// strong engulfing can leave a 1:2 / 1:3 stop in front of A).
 s83Plan(S83Setup s, float entry, float atr) =>
     float tp = s.dir > 0 ? alignDown(s.bPrice - tpBufferAtr * atr) : alignUp(s.bPrice + tpBufferAtr * atr)
     float reward = s.dir > 0 ? tp - entry : entry - tp
@@ -1901,7 +1919,20 @@ s83Plan(S83Setup s, float entry, float atr) =>
     bool ok = reward > 0 and atrRisk > 0 and atr > 0
     float rr = ok and reward / atrRisk < 0.5 * (rrLow + rrHigh) ? rrLow : rrHigh
     float sl = s.dir > 0 ? alignDown(entry - reward / rr) : alignUp(entry + reward / rr)
-    [tp, sl, rr, ok]
+    bool behind = s.dir > 0 ? sl < s.aPrice : sl > s.aPrice
+    [tp, sl, rr, ok, behind]
+
+// Engulfing (body): the previous candle closed against the setup's direction,
+// this one with it, closing beyond the previous open from an open at or
+// beyond the previous close.
+s83Engulf(int d, float pO, float pC, float cO, float cC) =>
+    d > 0 ? pC < pO and cC > cO and cC > pO and cO <= pC : pC > pO and cC < cO and cC < pO and cO >= pC
+
+s83Live(S83Setup s) =>
+    s.state == S83_ARMED or s.state == S83_WAITING
+
+s83TfText(int secs) =>
+    secs % 3600 == 0 ? "H" + str.tostring(secs / 3600) : "M" + str.tostring(secs / 60)
 
 // Heavy pressure: the furthest close beyond A within Impulse Candles candles
 // of it, in LTF ATR at A.
@@ -1950,6 +1981,20 @@ bool s83Synthetic = symbolProfile == "Deriv Synthetic Index" or (symbolProfile =
 bool s83NoVolume = ta.cum(nz(volume)) == 0
 bool s83VolumeNA = s83Synthetic or s83NoVolume
 string s83VolumeNote = s83Synthetic ? "synthetic index" : s83NoVolume ? "no volume data" : ""
+
+// ------------------------------------------------- engulfing confirmation
+// The lower-timeframe candles (M15) of each LTF candle, for the touch, the
+// failures and the lower-timeframe engulfing in their own order. On a chart
+// that is not above the lower timeframe the chart's own candles are used
+// (the strategy only trades on the LTF chart anyway).
+string s83LowerReq = timeframe.in_seconds(engulfLowerTf) < timeframe.in_seconds() ? engulfLowerTf : timeframe.period
+int s83LowerSecs = timeframe.in_seconds(s83LowerReq)
+[s83LwT, s83LwO, s83LwH, s83LwL, s83LwC] = request.security_lower_tf(syminfo.tickerid, s83LowerReq, [time, open, high, low, close])
+var float s83PrevO = na
+var float s83PrevC = na
+s83ConfirmText() =>
+    string lowerName = tfName(s83LowerReq)
+    useLowerEngulf and useLtfEngulf and lowerName != tfName(ltfTf) ? lowerName + " or " + tfName(ltfTf) : useLowerEngulf ? lowerName : tfName(ltfTf)
 
 // ------------------------------------------------- market filters per candle
 // The latest closed LTF candle is the chart's own when the chart is the LTF.
@@ -2003,6 +2048,9 @@ var float s83PlannedTpSell = na
 var float s83PlannedRrSell = na
 var string s83LastNote = ""
 var bool s83Breakeven = false
+// The setup of the order placed for each side, matched to its fill.
+var S83Setup s83PendingBuy = na
+var S83Setup s83PendingSell = na
 // The entry filters behind the pending orders, for the dashboard.
 var int s83FilterDir = 0
 var string s83FilterNow = ""
@@ -2067,23 +2115,34 @@ method s83Delete(S83Setup s) =>
         for bx in s.boxes
             box.delete(bx)
 
+// The traded position, as in the strategy's examples: the target zone (entry
+// to take profit) and stop zone (entry to stop loss) from the entry.
+method s83DrawTrade(S83Setup s) =>
+    if showPositionBoxes and not na(s.boxes)
+        int boxEnd = s.entryTime + positionBoxCandles * chartSeconds * 1000
+        s.boxes.push(box.new(s.entryTime, math.max(s.entry, s.tp), boxEnd, math.min(s.entry, s.tp), xloc = xloc.bar_time, bgcolor = targetZoneColor, border_width = 0))
+        s.boxes.push(box.new(s.entryTime, math.max(s.entry, s.sl), boxEnd, math.min(s.entry, s.sl), xloc = xloc.bar_time, bgcolor = stopZoneColor, border_width = 0))
+        s.labels.push(label.new(boxEnd, s.tp, "1:" + str.tostring(s.rr, "0") + "  TP " + priceText(s.tp) + "  SL " + priceText(s.sl), xloc = xloc.bar_time, yloc = yloc.price, color = color(na), style = label.style_label_left, textcolor = chart.fg_color, size = labelSize))
+
 // A finished setup: its levels end Fib Right Offset candles after the
-// candle that ended it. A touched one gets C and, when traded, the target
-// zone (entry to take profit) and stop zone (entry to stop loss) from C as in
-// the strategy's examples; a failed one is dotted with its reason.
+// candle that ended it. A touched one (with confirmation: its touch and the
+// engulfing) gets C, and its position once traded; a failed one is dotted
+// with its reason.
 method s83Finish(S83Setup s) =>
     s.s83Extend(s.endTime + fibRightOffset * chartSeconds * 1000)
     color pc = s.dir > 0 ? bullSetupColor : bearSetupColor
-    if s.state == S83_TOUCHED
+    if showSetupPoints and not na(s.touchTime) and (s.state != S83_FAILED or showFailedSetups)
+        s.labels.push(label.new(s.touchTime, s.level, "touch", xloc = xloc.bar_time, yloc = yloc.price, color = color(na), style = s.dir > 0 ? label.style_label_up : label.style_label_down, textcolor = pc, size = size.small))
+    if s.state == S83_TOUCHED or s.state == S83_CONFIRMED
+        float cPrice = s.state == S83_CONFIRMED ? s.confirmPrice : s.level
         if showSetupPoints
-            s.labels.push(label.new(s.endTime, s.level, "C", xloc = xloc.bar_time, yloc = yloc.price, color = color(na), style = s.dir > 0 ? label.style_label_up : label.style_label_down, textcolor = pc, size = size.normal))
-        if s.traded and showPositionBoxes
-            int boxEnd = s.entryTime + positionBoxCandles * chartSeconds * 1000
-            s.boxes.push(box.new(s.entryTime, math.max(s.entry, s.tp), boxEnd, math.min(s.entry, s.tp), xloc = xloc.bar_time, bgcolor = targetZoneColor, border_width = 0))
-            s.boxes.push(box.new(s.entryTime, math.max(s.entry, s.sl), boxEnd, math.min(s.entry, s.sl), xloc = xloc.bar_time, bgcolor = stopZoneColor, border_width = 0))
-            s.labels.push(label.new(boxEnd, s.tp, "1:" + str.tostring(s.rr, "0") + "  TP " + priceText(s.tp) + "  SL " + priceText(s.sl), xloc = xloc.bar_time, yloc = yloc.price, color = color(na), style = label.style_label_left, textcolor = chart.fg_color, size = labelSize))
-        else if not s.traded
-            s.labels.push(label.new(s.endTime, s.level, s.note, xloc = xloc.bar_time, yloc = yloc.price, color = color(na), style = label.style_label_right, textcolor = color.gray, size = labelSize))
+            s.labels.push(label.new(s.endTime, cPrice, "C", xloc = xloc.bar_time, yloc = yloc.price, color = color(na), style = s.dir > 0 ? label.style_label_up : label.style_label_down, textcolor = pc, size = size.normal))
+            if s.state == S83_CONFIRMED
+                s.labels.push(label.new(s.endTime, cPrice, s83TfText(s.confirmSecs) + " engulfing", xloc = xloc.bar_time, yloc = yloc.price, color = color(na), style = s.dir > 0 ? label.style_label_down : label.style_label_up, textcolor = pc, size = size.small))
+        if s.traded
+            s.s83DrawTrade()
+        else if s.note != ""
+            s.labels.push(label.new(s.endTime, cPrice, s.note, xloc = xloc.bar_time, yloc = yloc.price, color = color(na), style = label.style_label_right, textcolor = color.gray, size = labelSize))
     else if not showFailedSetups
         s.s83Delete()
     else
@@ -2099,9 +2158,52 @@ s83Ends(S83Setup s, int st, string why) =>
         s.note := why
     s.s83Finish()
 
+// Ends a setup without drawing yet (its candle time `t`).
+s83End(S83Setup s, int st, int t, string why) =>
+    s.state := st
+    s.endBar := bar_index
+    s.endTime := t
+    s.note := why
+
+// One candle of a live setup (see 83% Strategy.mq5's S83Step): the LTF candle
+// itself, or with Engulfing Confirmation each lower-timeframe candle in turn.
+//  * Armed: a touch of the entry level makes it touched (waiting for an
+//    engulfing with confirmation); otherwise going beyond B invalidates it.
+//  * Waiting: a close beyond A (the HL/LH broke) or going beyond B fails it;
+//    otherwise a lower-timeframe engulfing in its direction, on the touching
+//    candle or later, confirms it at that candle's close.
+s83Step(S83Setup s, int cT, float cO, float cH, float cL, float cC, bool isLower) =>
+    int d = s.dir
+    if s.state == S83_ARMED
+        if d > 0 ? cL <= s.level : cH >= s.level
+            if engulfConfirm
+                s.state := S83_WAITING
+                s.touchBar := bar_index
+                s.touchTime := cT
+            else
+                s.state := S83_TOUCHED
+                s.endBar := bar_index
+                s.endTime := time
+        else if d > 0 ? cH > s.bPrice : cL < s.bPrice
+            s83End(s, S83_INVALID, isLower ? cT : time, "invalidated: a new " + (d > 0 ? "HH" : "LL") + " first")
+    if s.state == S83_WAITING
+        if d > 0 ? cC < s.aPrice : cC > s.aPrice
+            s83End(s, S83_FAILED, cT, "failed: a close through A before an engulfing")
+        else if d > 0 ? cH > s.bPrice : cL < s.bPrice
+            s83End(s, S83_FAILED, cT, "failed: a new " + (d > 0 ? "HH" : "LL") + " before an engulfing")
+        else if isLower and useLowerEngulf and not na(s83PrevO) and s83Engulf(d, s83PrevO, s83PrevC, cO, cC)
+            s83End(s, S83_CONFIRMED, cT, "")
+            s.confirmTime := cT + s83LowerSecs * 1000
+            s.confirmSecs := s83LowerSecs
+            s.confirmPrice := cC
+    s.state
+
 // One closed LTF candle (see 83% Strategy.mq5's S83ScanSetups):
-//  1. each armed setup is touched, invalidated (beyond B) or expired (A left
-//     the processed candles), in that order;
+//  1. each live setup steps through the candle (with Engulfing Confirmation,
+//     through each lower-timeframe candle inside it, in order; see s83Step).
+//     Then a setup waiting for its engulfing is confirmed by an LTF
+//     engulfing, or fails once the wait runs out; a live setup whose A left
+//     the processed candles expires (armed) or fails (waiting);
 //  2. each swing confirmed on the candle that is an HH (LL), not an EQH/EQL,
 //     starts a setup with the swing before it on the other side when that is
 //     an HL (LH) not used before, within the processed candles, with heavy
@@ -2122,8 +2224,8 @@ if barstate.isconfirmed and s83OnLtf
         bool isLong = k < strategy.closedtrades ? strategy.closedtrades.size(k) > 0 : strategy.opentrades.size(k - strategy.closedtrades) > 0
         s83TradeRisk.push(isLong ? s83PlannedRiskBuy : s83PlannedRiskSell)
         s83TradesToday += 1
-        S83Setup s = isLong ? s83Buy : s83Sell
-        if not na(s) and s.state == S83_ARMED
+        S83Setup s = isLong ? s83PendingBuy : s83PendingSell
+        if not na(s) and not s.traded and (s.state == S83_ARMED or s.state == S83_CONFIRMED)
             s.traded := true
             s.entry := k < strategy.closedtrades ? strategy.closedtrades.entry_price(k) : strategy.opentrades.entry_price(k - strategy.closedtrades)
             s.sl := isLong ? s83PlannedSlBuy : s83PlannedSlSell
@@ -2132,6 +2234,9 @@ if barstate.isconfirmed and s83OnLtf
             s.entryTime := time
             s83Breakeven := false
             s83LastNote := (isLong ? "buy at " : "sell at ") + priceText(s.entry) + ", SL " + priceText(s.sl) + ", TP " + priceText(s.tp) + " (1:" + str.tostring(s.rr, "0") + ")"
+            // A confirmed setup was drawn when it was confirmed; its position now.
+            if s.state == S83_CONFIRMED
+                s.s83DrawTrade()
             if s83Alerts
                 alert("83% Strategy " + syminfo.ticker + ": " + s83LastNote, alert.freq_once_per_bar_close)
         s83KnownTrades += 1
@@ -2150,29 +2255,61 @@ if barstate.isconfirmed and s83OnLtf
             s83LossesInRow := 0
         s83KnownClosed += 1
 
-    // 1. Armed setups on this candle.
-    if not na(s83Buy) and s83Buy.state == S83_ARMED
-        if low <= s83Buy.level
-            s83Ends(s83Buy, S83_TOUCHED, s83Buy.traded ? "" : s83LevelText() + " touched; not traded: " + s83Buy.note)
-            if not s83Buy.traded
-                s83LastNote := s83Buy.note
-        else if high > s83Buy.bPrice
-            s83Ends(s83Buy, S83_INVALID, "invalidated: a new HH first")
-        else if s83Buy.aBar < bar_index - ltfBarsToProcess + 1
-            s83Ends(s83Buy, S83_EXPIRED, "expired: A left the processed candles")
-        if s83Buy.state != S83_ARMED
-            s83UsedBuy.push(s83Buy.aTime)
-    if not na(s83Sell) and s83Sell.state == S83_ARMED
-        if high >= s83Sell.level
-            s83Ends(s83Sell, S83_TOUCHED, s83Sell.traded ? "" : s83LevelText() + " touched; not traded: " + s83Sell.note)
-            if not s83Sell.traded
-                s83LastNote := s83Sell.note
-        else if low < s83Sell.bPrice
-            s83Ends(s83Sell, S83_INVALID, "invalidated: a new LL first")
-        else if s83Sell.aBar < bar_index - ltfBarsToProcess + 1
-            s83Ends(s83Sell, S83_EXPIRED, "expired: A left the processed candles")
-        if s83Sell.state != S83_ARMED
-            s83UsedSell.push(s83Sell.aTime)
+    // 1. Live setups through this candle: the candle itself, or with Engulfing
+    //    Confirmation each of its lower-timeframe candles in turn. Then, at the
+    //    LTF close, a waiting setup is confirmed by an LTF engulfing (on the
+    //    touching candle or later) or fails when Confirmation Window LTF
+    //    candles have closed since the touch; a live setup whose A left the
+    //    processed candles expires.
+    bool buyWasLive = not na(s83Buy) and s83Live(s83Buy)
+    bool sellWasLive = not na(s83Sell) and s83Live(s83Sell)
+    if engulfConfirm
+        int nLower = s83LwT.size()
+        if nLower > 0
+            for j = 0 to nLower - 1
+                int cT = s83LwT.get(j)
+                float cO = s83LwO.get(j)
+                float cH = s83LwH.get(j)
+                float cL = s83LwL.get(j)
+                float cC = s83LwC.get(j)
+                if not na(s83Buy) and s83Live(s83Buy)
+                    s83Step(s83Buy, cT, cO, cH, cL, cC, true)
+                if not na(s83Sell) and s83Live(s83Sell)
+                    s83Step(s83Sell, cT, cO, cH, cL, cC, true)
+                s83PrevO := cO
+                s83PrevC := cC
+    else
+        if not na(s83Buy) and s83Live(s83Buy)
+            s83Step(s83Buy, time, open, high, low, close, false)
+        if not na(s83Sell) and s83Live(s83Sell)
+            s83Step(s83Sell, time, open, high, low, close, false)
+    for side = 0 to 1
+        S83Setup s = side == 0 ? s83Buy : s83Sell
+        bool wasLive = side == 0 ? buyWasLive : sellWasLive
+        if wasLive
+            if s.state == S83_WAITING
+                if useLtfEngulf and bar_index >= s.touchBar and s83Engulf(s.dir, open[1], close[1], open, close)
+                    s83End(s, S83_CONFIRMED, time, "")
+                    s.confirmTime := time + chartSeconds * 1000
+                    s.confirmSecs := chartSeconds
+                    s.confirmPrice := close
+                else if bar_index - s.touchBar + 1 >= confirmWindow
+                    s83End(s, S83_FAILED, time, "failed: no " + s83ConfirmText() + " engulfing within " + str.tostring(confirmWindow) + " " + tfName(ltfTf) + " candles")
+            if s83Live(s) and s.aBar < bar_index - ltfBarsToProcess + 1
+                s83End(s, s.state == S83_ARMED ? S83_EXPIRED : S83_FAILED, time, "expired: A left the processed candles")
+            if not s83Live(s)
+                if side == 0
+                    s83UsedBuy.push(s.aTime)
+                else
+                    s83UsedSell.push(s.aTime)
+                // A touched (limit) setup: traded on this candle, or why not.
+                if s.state == S83_TOUCHED
+                    s.note := s.traded ? "" : s83LevelText() + " touched; not traded: " + s.note
+                    if not s.traded
+                        s83LastNote := s.note
+                // A confirmed setup is drawn once its entry is decided below.
+                if s.state != S83_CONFIRMED
+                    s.s83Finish()
     while s83UsedBuy.size() > 200
         s83UsedBuy.shift()
     while s83UsedSell.size() > 200
@@ -2215,7 +2352,7 @@ if barstate.isconfirmed and s83OnLtf
                                 s83UsedSell.push(a.pivotTime)
                         else
                             S83Setup old = dir > 0 ? s83Buy : s83Sell
-                            if not na(old) and old.state == S83_ARMED
+                            if not na(old) and s83Live(old)
                                 s83Ends(old, S83_REPLACED, "replaced by a newer setup")
                             if dir > 0
                                 s83Buy := s
@@ -2228,7 +2365,7 @@ if barstate.isconfirmed and s83OnLtf
     // profit, the stop moves to the entry from the next candle.
     if strategy.position_size != 0 and breakevenPercent > 0 and not s83Breakeven
         bool isLong = strategy.position_size > 0
-        S83Setup s = isLong ? s83Buy : s83Sell
+        S83Setup s = isLong ? s83PendingBuy : s83PendingSell
         // Not on the entry candle itself: its high (low) may have come before the fill.
         if not na(s) and s.traded and strategy.opentrades.entry_bar_index(0) < bar_index
             float progress = isLong ? high - s.entry : s.entry - low
@@ -2236,67 +2373,111 @@ if barstate.isconfirmed and s83OnLtf
                 s83Breakeven := true
                 strategy.exit(isLong ? "83% buy exit" : "83% sell exit", from_entry = isLong ? "83% buy" : "83% sell", stop = s.entry, limit = s.tp, comment_loss = "BE", comment_profit = "TP")
 
-    s83FilterDir := not na(s83Buy) and s83Buy.state == S83_ARMED ? 1 : not na(s83Sell) and s83Sell.state == S83_ARMED ? -1 : biasDirection(mtfView)
+    s83FilterDir := not na(s83Buy) and s83Live(s83Buy) ? 1 : not na(s83Sell) and s83Live(s83Sell) ? -1 : biasDirection(mtfView)
     s83FilterNow := s83FilterDir == 0 ? "the " + tfName(mtfTf) + " has no trend" : s83FilterText(s83FilterDir)
 
-    // Orders for the next candle: a limit order at the entry level of each
-    // armed setup whose filters pass, one-cancels-the-other between the two.
+    // Orders for the next candle.
     int nextDay = dayofweek(time_close)
     bool flat = strategy.position_size == 0
     int nextDayKey = year(time_close) * 10000 + month(time_close) * 100 + dayofmonth(time_close)
     int tradesNextDay = nextDayKey == s83Day ? s83TradesToday : 0
-    for side = 0 to 1
-        S83Setup s = side == 0 ? s83Buy : s83Sell
-        string id = side == 0 ? "83% buy" : "83% sell"
-        bool live = not na(s) and s.state == S83_ARMED
-        string why = ""
-        if live
-            if not flat
-                why := "a position is already open"
-            else if not s83TradingDay(nextDay)
-                why := s83DayName(nextDay) + " is not a trading day"
-            else if tradesNextDay >= maxTradesPerDay
-                why := "the maximum of " + str.tostring(maxTradesPerDay) + " trades today is reached"
-            else
-                why := s83FilterText(s.dir)
-        float tp = na
-        float sl = na
-        float rr = na
-        float qty = na
-        if live and why == ""
-            [ptp, psl, prr, pok] = s83Plan(s, s.level, chartAtr)
-            float balance = strategy.initial_capital + strategy.netprofit
-            float riskCash = balance * s83RiskPct() / 100
-            float dist = math.abs(s.level - psl)
-            qty := pok and dist > 0 ? math.floor(riskCash / (dist * syminfo.pointvalue) / qtyStep) * qtyStep : 0.0
-            // Below the symbol's minimum quantity: no trade, or the minimum
-            // when it risks at most Minimum Quantity Max Risk times the plan.
-            if pok and minQty > 0 and qty < minQty
-                qty := minQtyRiskMultiple > 0 and minQty * dist * syminfo.pointvalue <= minQtyRiskMultiple * riskCash ? minQty : 0.0
-            tp := ptp
-            sl := psl
-            rr := prr
-            if not pok
-                why := "the take profit is not beyond the entry"
-            else if qty <= 0
-                why := minQty > 0 ? "the position size is below the minimum quantity of " + str.tostring(minQty) : "the position size rounds to zero"
-        if live and why == ""
-            strategy.entry(id, side == 0 ? strategy.long : strategy.short, qty = qty, limit = s.level, oca_name = "83% entry", oca_type = strategy.oca.cancel, comment = id)
-            strategy.exit(id + " exit", from_entry = id, stop = sl, limit = tp, comment_loss = "SL", comment_profit = "TP")
-            if side == 0
-                s83PlannedRiskBuy := math.abs(s.level - sl)
-                s83PlannedSlBuy := sl
-                s83PlannedTpBuy := tp
-                s83PlannedRrBuy := rr
-            else
-                s83PlannedRiskSell := math.abs(s.level - sl)
-                s83PlannedSlSell := sl
-                s83PlannedTpSell := tp
-                s83PlannedRrSell := rr
-        else
-            strategy.cancel(id)
+    // With Engulfing Confirmation: a market order at this candle's close for
+    // each setup confirmed during it (the EA enters on the first tick after
+    // the engulfing candle closes, which may be an M15 candle mid-way through
+    // this one).
+    if engulfConfirm
+        for side = 0 to 1
+            S83Setup s = side == 0 ? s83Buy : s83Sell
+            string id = side == 0 ? "83% buy" : "83% sell"
+            if not na(s) and s.state == S83_CONFIRMED and s.endBar == bar_index
+                string event = s83TfText(s.confirmSecs) + " engulfing after the " + s83LevelText() + " touch"
+                string why = not flat ? "a position is already open" : not s83TradingDay(nextDay) ? s83DayName(nextDay) + " is not a trading day" : tradesNextDay >= maxTradesPerDay ? "the maximum of " + str.tostring(maxTradesPerDay) + " trades today is reached" : s83FilterText(s.dir)
+                [ptp, psl, prr, pok, pbehind] = s83Plan(s, close, chartAtr)
+                float balance = strategy.initial_capital + strategy.netprofit
+                float riskCash = balance * s83RiskPct() / 100
+                float dist = math.abs(close - psl)
+                float qty = pok and dist > 0 ? math.floor(riskCash / (dist * syminfo.pointvalue) / qtyStep) * qtyStep : 0.0
+                if pok and minQty > 0 and qty < minQty
+                    qty := minQtyRiskMultiple > 0 and minQty * dist * syminfo.pointvalue <= minQtyRiskMultiple * riskCash ? minQty : 0.0
+                if why == ""
+                    why := not pok ? "the take profit is not beyond the entry" : not pbehind ? "the price is too far from the " + s83LevelText() + " level: a 1:" + str.tostring(prr, "0") + " stop would not be behind " + (s.dir > 0 ? "the HL" : "the LH") : qty <= 0 ? (minQty > 0 ? "the position size is below the minimum quantity of " + str.tostring(minQty) : "the position size rounds to zero") : ""
+                if why == ""
+                    strategy.entry(id, side == 0 ? strategy.long : strategy.short, qty = qty, comment = id)
+                    strategy.exit(id + " exit", from_entry = id, stop = psl, limit = ptp, comment_loss = "SL", comment_profit = "TP")
+                    flat := false
+                    if side == 0
+                        s83PendingBuy := s
+                        s83PlannedRiskBuy := dist
+                        s83PlannedSlBuy := psl
+                        s83PlannedTpBuy := ptp
+                        s83PlannedRrBuy := prr
+                    else
+                        s83PendingSell := s
+                        s83PlannedRiskSell := dist
+                        s83PlannedSlSell := psl
+                        s83PlannedTpSell := ptp
+                        s83PlannedRrSell := prr
+                else
+                    s.note := event + "; not traded: " + why
+                    s83LastNote := s.note
+                s.s83Finish()
+    // Without confirmation: a limit order at the entry level of each armed
+    // setup whose filters pass, one-cancels-the-other between the two.
+    if not engulfConfirm
+        for side = 0 to 1
+            S83Setup s = side == 0 ? s83Buy : s83Sell
+            string id = side == 0 ? "83% buy" : "83% sell"
+            bool live = not na(s) and s.state == S83_ARMED
+            string why = ""
             if live
-                s.note := why
+                if not flat
+                    why := "a position is already open"
+                else if not s83TradingDay(nextDay)
+                    why := s83DayName(nextDay) + " is not a trading day"
+                else if tradesNextDay >= maxTradesPerDay
+                    why := "the maximum of " + str.tostring(maxTradesPerDay) + " trades today is reached"
+                else
+                    why := s83FilterText(s.dir)
+            float tp = na
+            float sl = na
+            float rr = na
+            float qty = na
+            if live and why == ""
+                [ptp, psl, prr, pok, pbehind] = s83Plan(s, s.level, chartAtr)
+                float balance = strategy.initial_capital + strategy.netprofit
+                float riskCash = balance * s83RiskPct() / 100
+                float dist = math.abs(s.level - psl)
+                qty := pok and dist > 0 ? math.floor(riskCash / (dist * syminfo.pointvalue) / qtyStep) * qtyStep : 0.0
+                // Below the symbol's minimum quantity: no trade, or the minimum
+                // when it risks at most Minimum Quantity Max Risk times the plan.
+                if pok and minQty > 0 and qty < minQty
+                    qty := minQtyRiskMultiple > 0 and minQty * dist * syminfo.pointvalue <= minQtyRiskMultiple * riskCash ? minQty : 0.0
+                tp := ptp
+                sl := psl
+                rr := prr
+                if not pok
+                    why := "the take profit is not beyond the entry"
+                else if qty <= 0
+                    why := minQty > 0 ? "the position size is below the minimum quantity of " + str.tostring(minQty) : "the position size rounds to zero"
+            if live and why == ""
+                strategy.entry(id, side == 0 ? strategy.long : strategy.short, qty = qty, limit = s.level, oca_name = "83% entry", oca_type = strategy.oca.cancel, comment = id)
+                strategy.exit(id + " exit", from_entry = id, stop = sl, limit = tp, comment_loss = "SL", comment_profit = "TP")
+                if side == 0
+                    s83PendingBuy := s
+                    s83PlannedRiskBuy := math.abs(s.level - sl)
+                    s83PlannedSlBuy := sl
+                    s83PlannedTpBuy := tp
+                    s83PlannedRrBuy := rr
+                else
+                    s83PendingSell := s
+                    s83PlannedRiskSell := math.abs(s.level - sl)
+                    s83PlannedSlSell := sl
+                    s83PlannedTpSell := tp
+                    s83PlannedRrSell := rr
+            else
+                strategy.cancel(id)
+                if live
+                    s.note := why
 
 // The latest armed setups: their levels reach Fib Right Offset candles past
 // the latest candle, with the planned position from it.
@@ -2312,10 +2493,10 @@ if barstate.islast and s83OnLtf
     int rightTime = time + fibRightOffset * chartSeconds * 1000
     for side = 0 to 1
         S83Setup s = side == 0 ? s83Buy : s83Sell
-        if not na(s) and s.state == S83_ARMED
+        if not na(s) and s83Live(s)
             s.s83Extend(rightTime)
-            if showPositionBoxes
-                [ptp, psl, prr, pok] = s83Plan(s, s.level, chartAtr)
+            if showPositionBoxes and s.state == S83_ARMED
+                [ptp, psl, prr, pok, pbehind] = s83Plan(s, s.level, chartAtr)
                 if pok
                     int boxEnd = time + positionBoxCandles * chartSeconds * 1000
                     s83PlanBoxes.push(box.new(time, math.max(s.level, ptp), boxEnd, math.min(s.level, ptp), xloc = xloc.bar_time, bgcolor = color.new(targetZoneColor, 90), border_width = 0))
@@ -2429,13 +2610,14 @@ if barstate.islast
     // pending orders, today's risk and the latest outcome.
     dashRow(row, " ", " ", DASH_TEXT_COLOR, "")
     row += 1
-    bool buyArmed = not na(s83Buy) and s83Buy.state == S83_ARMED
-    bool sellArmed = not na(s83Sell) and s83Sell.state == S83_ARMED
-    string s83State = not s83OnLtf ? "Open a " + tfName(ltfTf) + " chart to trade" : strategy.position_size > 0 ? "Buy position open" : strategy.position_size < 0 ? "Sell position open" : buyArmed and sellArmed ? "Buy and sell setups armed" : buyArmed ? "Buy setup armed" : sellArmed ? "Sell setup armed" : "Waiting for a setup"
+    bool buyArmed = not na(s83Buy) and s83Live(s83Buy)
+    bool sellArmed = not na(s83Sell) and s83Live(s83Sell)
+    string waitText = ": waiting for a " + s83ConfirmText() + " engulfing"
+    string s83State = not s83OnLtf ? "Open a " + tfName(ltfTf) + " chart to trade" : strategy.position_size > 0 ? "Buy position open" : strategy.position_size < 0 ? "Sell position open" : buyArmed and sellArmed ? "Buy and sell setups live" : buyArmed ? (s83Buy.state == S83_WAITING ? "Buy setup touched" + waitText : "Buy setup armed") : sellArmed ? (s83Sell.state == S83_WAITING ? "Sell setup touched" + waitText : "Sell setup armed") : "Waiting for a setup"
     color s83Color = not s83OnLtf ? DASH_NEGATIVE_COLOR : strategy.position_size > 0 or (buyArmed and not sellArmed) ? DASH_POSITIVE_COLOR : strategy.position_size < 0 or (sellArmed and not buyArmed) ? DASH_NEGATIVE_COLOR : DASH_NEUTRAL_COLOR
     dashRow(row, "Symbol:", s83Synthetic ? "Deriv synthetic index" : "Standard symbol", DASH_TEXT_COLOR, s83Synthetic ? "Generated prices with a fixed tick rate: Market Volume is not applied." : "Set Symbol Profile to Deriv Synthetic Index if this is one.")
     row += 1
-    dashRow(row, "83% Strategy (" + tfName(ltfTf) + "):", s83State, s83Color, "Buys (sells) at the " + s83LevelText() + " retracement of the latest " + tfName(ltfTf) + " HL-to-HH (LH-to-LL) leg with heavy pressure, within the last " + str.tostring(ltfBarsToProcess) + " " + tfName(ltfTf) + " candles.")
+    dashRow(row, "83% Strategy (" + tfName(ltfTf) + "):", s83State, s83Color, "Buys (sells) at the " + s83LevelText() + " retracement of the latest " + tfName(ltfTf) + " HL-to-HH (LH-to-LL) leg with heavy pressure, within the last " + str.tostring(ltfBarsToProcess) + " " + tfName(ltfTf) + " candles" + (engulfConfirm ? ", once a " + s83ConfirmText() + " engulfing in the trade direction follows the touch." : "."))
     row += 1
     if buyArmed
         dashRow(row, "Setup:", wrapText(s83SetupText(s83Buy)), DASH_TEXT_COLOR, "Heavy pressure " + str.tostring(s83Buy.impulse, "0.0") + " " + tfName(ltfTf) + " ATR")
