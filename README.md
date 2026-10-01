@@ -210,28 +210,52 @@ Base prints every structure event from closed candles only. A wick beyond a
 swing is a liquidity sweep, never a break; a candle must close beyond it. The
 label of the swing that is broken decides the event.
 
-- **Swings.** A swing high is a pivot of the timeframe's Swing Detection
-  Length: at least as high as that many candles on its left
-  and strictly higher than as many on its right. It is also how many candles
-  it takes to confirm the swing. Equal highs (a double top) form one swing at
-  the latest of the equal candles. Swing lows mirror this. Swings alternate
-  high, low, high, low: several highs confirmed before the next low are one
-  leg, and only its highest high is kept (likewise the lowest low). This is
-  the swing detection of WillyAlgoTrader's Smart Money Engine (SME).
-- **Swing Detection Length (2-50), one per timeframe.**
-  `HTF_Swing_Length`, `MTF_Swing_Length` and `LTF_Swing_Length` (defaults
-  HTF 2, MTF 9, LTF 10) set the swing size of each timeframe. The chart's own labels use the
-  length of the timeframe the chart is on, or the HTF length on any other
-  chart period. Lower it for more, faster swings; raise it for fewer, cleaner
-  ones. It replaces the Swing Sensitivity (0-100) of v2.37 and earlier,
-  which blended a 2-4 candle strength with a 1-3 ATR size filter; at length
-  10 a size filter removes almost nothing, so there is none.
+- **Swings.** A swing high is a pivot of N candles on each side (set by the
+  timeframe's Swing Detection Length, below): at least as high as the N
+  candles on its left and strictly higher than the N on its right. It is
+  also how many candles it takes to confirm the swing. Equal highs (a double
+  top) form one swing at the latest of the equal candles. Swing lows mirror
+  this. Swings alternate high, low, high, low: several highs confirmed
+  before the next low are one leg, and only its highest high is kept
+  (likewise the lowest low). A candle that is both a swing high and a swing
+  low (an outside candle, about 4% of swing candles at level 1) is taken in
+  the order its price most likely went: a bullish candle made its low
+  first, a bearish or flat one its high first. This is the swing detection
+  of WillyAlgoTrader's Smart Money Engine (SME).
+- **Swing Detection Length (1-10), one per timeframe.**
+  `HTF_Swing_Level`, `MTF_Swing_Level` and `LTF_Swing_Level` (defaults 4, 6
+  and 6) set the swing size of each timeframe on a 1-10 scale, 1 finest and
+  10 broadest. The chart's own labels use the level of the timeframe the
+  chart is on, or the HTF level on any other chart period.
 
-  On real market data (EURUSD H1, an index on M1 and M5, the S&P 500 on M1,
-  and six stocks on D1; about 60,000 candles), length 10 compared with the
-  old default (Swing Sensitivity 50) as follows:
+  The scale is not N itself. Swings found with N candles are mostly the
+  same swings found with N+1, so with N as the input one step at 10 changed
+  only 11% of the drawn labels, and nothing much seemed to happen until a
+  jump such as 10 to 5 (half the labels). Each level is the N that changes
+  about a third of the drawn labels from the level before. Measured on real
+  data (EURUSD H1, an index on M1 and M5, the S&P 500 on M1, six stocks on
+  D1; about 60,000 candles):
 
-  | | Sensitivity 50 (v2.37) | Length 10 (v2.38) |
+  | Level | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 |
+  |---|---|---|---|---|---|---|---|---|---|---|
+  | Candles each side (N) | 1 | 2 | 3 | 5 | 7 | 10 | 14 | 19 | 26 | 36 |
+  | Swing labels per 1,000 candles | 317 | 195 | 144 | 93 | 70 | 50 | 36 | 27 | 20 | 15 |
+  | Labels changed from the level before | | 42% | 29% | 38% | 28% | 30% | 30% | 27% | 27% | 30% |
+  | BOS/CHoCH/LS per 1,000 candles | 99 | 68 | 52 | 35 | 27 | 19 | 14 | 11 | 8 | 6 |
+
+  Generated markets gave the same picture (23-43% per step), and on the
+  EA's own H4 chart every step changed 27-56% of the drawn labels. A swing
+  confirms N candles after its pivot, so higher levels also react later.
+  The defaults keep the earlier lengths: level 4 is 5 candles and level 6
+  is 10 (the MTF's 9 became 10, which changes about 11% of its labels).
+
+  Swing detection by length replaced the Swing Sensitivity (0-100) of v2.37
+  and earlier, which blended a 2-4 candle strength with a 1-3 ATR size
+  filter; at 10 candles a size filter removes almost nothing, so there is
+  none. On the same real data, 10 candles compared with the old default
+  (Swing Sensitivity 50) as follows:
+
+  | | Sensitivity 50 (v2.37) | 10 candles (level 6) |
   |---|---|---|
   | BOS/CHoCH/LS per 1,000 candles | 36.9 | 19.3 |
   | BOS follow-through (1 ATR before a close back) | 71.3% | 77.7% |
@@ -242,7 +266,8 @@ label of the swing that is broken decides the event.
   So about half as many breaks, each more reliable, and half as many trend
   flips. The trade-off is that each swing confirms 10 candles after its
   pivot instead of 3, so trend changes are recognised later (see
-  `Roadmap.txt`). Length 5 is close to the old default in count and speed.
+  `Roadmap.txt`). Level 4 (5 candles) is close to the old default in count
+  and speed.
 - **HH / LH / LL / HL.** Each swing is compared with the extreme of the
   previous leg on its side: a higher high is HH, otherwise LH; a lower low is
   LL, otherwise HL. Every accepted swing inside the displayed window is
@@ -372,8 +397,11 @@ trend:
 ## Internal Structure
 
 Also from SME: minor structure inside the swings, from shorter pivots of the
-timeframe's Internal Structure Length (`HTF_Internal_Length`,
-`MTF_Internal_Length`, `LTF_Internal_Length`, 2-50, default 5). It shows
+timeframe's Internal Structure Length (`HTF_Internal_Level`,
+`MTF_Internal_Level`, `LTF_Internal_Level`, 1-10, default 4 = 5 candles; the
+same scale as the Swing Detection Length, with internal breaks per 1,000
+candles of 117, 79, 62, 42, 32, 24, 18, 13, 10 and 8 from level 1 to 10 on
+the real data above). It shows
 what price is doing between the swings. It never changes the Market Trend
 or alerts; its only effect on the rest of the dashboard is Tradable (Early),
 which requires the internal structure to agree (see Reading the dashboard).
@@ -387,12 +415,13 @@ which requires the internal structure to agree (see Reading the dashboard).
   each line ends on the first candle that touches its level and its caption
   is centred on it. Where the internal pivot is also a swing of the main structure,
   only the main structure draws that level, so the chart does not double up.
-- Keep it shorter than the Swing Detection Length to see internal breaks on
-  the chart. At or above it, almost every internal pivot is also a main
-  swing, so almost nothing is drawn. With the default HTF Swing Detection
-  Length of 2, the HTF internal structure (5) is slower than the HTF swings:
-  an HTF chart shows few internal breaks, while its dashboard row and
-  Tradable (Early) still use it.
+- Keep its level below the timeframe's Swing Detection Length to see
+  internal breaks on the chart. At or above it, almost every internal pivot
+  is also a main swing, so almost nothing is drawn. With the defaults the
+  HTF's two levels are equal (both 4), so an HTF chart shows few internal
+  breaks, while its dashboard row and Tradable (Early) still use it; set
+  the HTF Internal Structure Length to 3 or lower, or the HTF Swing
+  Detection Length to 5 or higher, to see them.
 - `Show_Internal_Structure` hides the chart drawings and
   `Show_Internal_On_Dashboard` its dashboard rows.
 
@@ -554,7 +583,7 @@ The black text is made for a light chart background.
   candles, price moved on in the trend's direction on the generated markets
   (+0.8 ATR after 20 candles) but not on the real data, where moves were no
   better than chance. So Tradable (Early) marks the stronger transitions,
-  not confirmed trends. At the v2.41 defaults (HTF 2, MTF 9) the gap held:
+  not confirmed trends. With HTF swings of 2 candles and MTF swings of 9 the gap held:
   57% of 77 against 43% of 127 on real data (90% interval +3 to +26
   points), 56% against 41% on the generated markets.
 - **Healthy Extension.** Until v2.40 it passed only from 0 to 3 LTF ATR
@@ -592,8 +621,10 @@ The black text is made for a light chart background.
   CHoCH-to-BOS confirmation and the LS rate stayed within noise of the
   version without EQH/EQL (see `Roadmap.txt`).
 - **Swing Detection and Internal Structure.** Each timeframe has its own
-  Swing Detection Length (defaults HTF 2, MTF 9, LTF 10) and Internal
-  Structure Length (default 5), both 2 to 50. The Real Time Swing Structure (LuxAlgo) of v2.36-v2.37
+  Swing Detection Length (defaults HTF 4, MTF 6, LTF 6) and Internal
+  Structure Length (default 4), both on the 1-10 scale above. Settings saved
+  before v2.42 (2-50 candles) do not carry over: the inputs were renamed so
+  that an old 9 is not read as level 9 (26 candles). The Real Time Swing Structure (LuxAlgo) of v2.36-v2.37
   was removed: SME's Strong/Weak High/Low and Internal Structure replace it.
 - **MA filters.** `MA Filter (HTF)` compares the latest closed HTF candle
   with an MA of the HTF (default EMA 50). `MA Filter (MTF)` compares the latest
@@ -629,9 +660,9 @@ chart and never places orders.
 To install it, open the **Pine Editor** in TradingView, paste the contents of
 `Base.pine`, save the script, and click **Add to chart**.
 
-The engine was checked bar by bar against the EA's engine on 30 generated
-markets. The check covered Swing Detection Lengths 2, 3, 5, 10, 15 and 20,
-Internal Structure Lengths 2, 3, 5, 8 and 15, and both forex and gold price
+The engine was checked bar by bar against the EA's engine on 38 generated
+markets. The check covered swings and internal swings of 1 to 36 candles
+each side (levels 1 to 10), and both forex and gold price
 scales. The labels (including EQH/EQL), BOS/CHoCH/LS events, trend,
 Consolidation / Undefined flags, break levels, Strong/Weak High/Low, the
 internal trend, where every BOS/CHoCH/LS line ends, and the drawn internal
