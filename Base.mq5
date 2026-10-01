@@ -28,7 +28,7 @@ input group "Structure Bar Processing"
 input int Bars_To_Process=100;
 
 input group "Swing Detection"
-input int HTF_Swing_Length=2; // HTF Swing Detection Length
+input int HTF_Swing_Length=5; // HTF Swing Detection Length
 input int MTF_Swing_Length=9; // MTF Swing Detection Length
 input int LTF_Swing_Length=10; // LTF Swing Detection Length
 input bool Show_Swing_Points=true;
