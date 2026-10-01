@@ -101,19 +101,36 @@ Result
 2. SWING-DETECTION AND STRUCTURE SYSTEM
 ---------------------------------------
 
-HTF_Swing_Length, MTF_Swing_Length, LTF_Swing_Length
-(defaults HTF 2, MTF 9, LTF 10; valid 2..50)
+HTF_Swing_Level, MTF_Swing_Level, LTF_Swing_Level ("Swing Detection Length
+(1-10)"; defaults 4, 6, 6; valid 1..10)
   Swing detection of WillyAlgoTrader's Smart Money Engine (SME). Each
-  timeframe's replay uses its own length (N). The chart's own labels use the
-  length of the timeframe the chart is on, or the HTF length on any other
-  chart period.
+  timeframe's replay uses its own pivot length N, set by its level
+  (DetectionCandles). The chart's own labels use the level of the timeframe
+  the chart is on, or the HTF level on any other chart period.
+      level  1  2  3  4  5  6   7   8   9  10
+      N      1  2  3  5  7  10  14  19  26  36
+  Why a scale: swings found with N candles are mostly the same swings found
+  with N+1, so as a raw input one step changed 42% of the drawn labels at
+  N=1->2 but 20% at 4->5, 11% at 9->10 and under 5% beyond about 20, and
+  nothing much seemed to change until a jump like 10->5. Each level is the N
+  that changes about a third of the drawn swing labels from the level before
+  (real data, about 60,000 candles: 42, 29, 38, 28, 30, 30, 27, 27, 30%;
+  generated markets 23-43%; on the EA's own H4 chart 27-56%). Swing labels
+  per 1,000 real candles: 317, 195, 144, 93, 70, 50, 36, 27, 20, 15. The
+  defaults keep the earlier lengths (5 and 10 candles). The inputs were
+  renamed in v2.42 so settings saved as candle counts are not read as
+  levels.
     * A pivot high must be at least as high as every high in the N bars
       before it and strictly higher than every high in the N bars after it;
       pivot lows mirror this. Equal highs or lows (a double top or bottom)
       form one swing owned by the latest equal candle. N future closed bars
       are required, so confirmation is delayed by N bars.
+    * A candle that is both a swing high and a swing low (an outside candle:
+      about 4% of swing candles at N=1, 0.2% at N=5) is taken in the order its
+      price most likely went: a bullish candle (close above open) made its low
+      first, a bearish or flat one its high first.
     * There is no swing size (ATR) filter: at N=10 it removed almost nothing.
-  Lower values give more, smaller and faster swings; higher values fewer,
+  Lower levels give more, smaller and faster swings; higher levels fewer,
   cleaner and slower ones.
   They replace the Swing Sensitivity (0..100) of v2.37 and earlier, which
   blended a Sensitive set (N=2, 1.0 ATR size) and a Smooth set (N=4, 3.0 ATR),
@@ -548,8 +565,10 @@ Show_Strong_Weak_High_Low (default true, input group "Swing Detection")
 Internal Structure (input group "Internal Structure")
 Show_Internal_Structure (default true)
 Show_Internal_On_Dashboard (default true)
-HTF_Internal_Length, MTF_Internal_Length, LTF_Internal_Length (default 5 each;
-valid 2..50)
+HTF_Internal_Level, MTF_Internal_Level, LTF_Internal_Level ("Internal
+Structure Length (1-10)"; default 4 = 5 candles each; valid 1..10; the same
+scale as the swings, internal breaks per 1,000 real candles 117, 79, 62, 42,
+32, 24, 18, 13, 10, 8)
 Internal_Bullish_Color (default C'8,153,129') / Internal_Bearish_Color
 (default C'242,54,69')
   SME's internal structure (ReplayInternalStructure): minor structure inside
@@ -570,11 +589,11 @@ Internal_Bullish_Color (default C'8,153,129') / Internal_Bearish_Color
     line like the main captions. A break is drawn when its closing candle is
     inside the drawn window. An internal pivot that is also a swing of the
     main structure is skipped, because the main structure draws that level.
-    Keep the length below the Swing Detection Length to see internal breaks:
-    at or above it almost every internal pivot is a main swing and almost
-    nothing is drawn. With the default HTF Swing Detection Length of 2 the
-    HTF internal structure (5) is slower than the HTF swings; its dashboard
-    row and Tradable (Early) still use it.
+    Keep its level below the timeframe's Swing Detection Length to see
+    internal breaks: at or above it almost every internal pivot is a main
+    swing and almost nothing is drawn. With the defaults the HTF's levels
+    are equal (both 4), so an HTF chart shows few internal breaks; its
+    dashboard row and Tradable (Early) still use it.
   * Show_Internal_On_Dashboard adds an Internal Structure row under each
     Market Trend (section 10).
 

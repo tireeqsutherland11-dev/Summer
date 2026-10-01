@@ -1,5 +1,5 @@
 #property copyright "Market Trend Analyser conversion"
-#property version   "2.41"
+#property version   "2.42"
 #property strict
 #property description "BASE: MT5 port of the Market Trend Analyser Pine Script."
 #property description "Signal/visualisation EA only; the source indicator contains no trading rules."
@@ -28,18 +28,18 @@ input group "Structure Bar Processing"
 input int Bars_To_Process=100;
 
 input group "Swing Detection"
-input int HTF_Swing_Length=5; // HTF Swing Detection Length
-input int MTF_Swing_Length=9; // MTF Swing Detection Length
-input int LTF_Swing_Length=10; // LTF Swing Detection Length
+input int HTF_Swing_Level=4; // HTF Swing Detection Length (1-10)
+input int MTF_Swing_Level=6; // MTF Swing Detection Length (1-10)
+input int LTF_Swing_Level=6; // LTF Swing Detection Length (1-10)
 input bool Show_Swing_Points=true;
 input bool Show_Strong_Weak_High_Low=true; // Show Strong/Weak High/Low
 
 input group "Internal Structure"
 input bool Show_Internal_Structure=true; // Show Internal Structure
 input bool Show_Internal_On_Dashboard=true; // Show Internal Structure On Dashboard
-input int HTF_Internal_Length=5; // HTF Internal Structure Length
-input int MTF_Internal_Length=5; // MTF Internal Structure Length
-input int LTF_Internal_Length=5; // LTF Internal Structure Length
+input int HTF_Internal_Level=4; // HTF Internal Structure Length (1-10)
+input int MTF_Internal_Level=4; // MTF Internal Structure Length (1-10)
+input int LTF_Internal_Level=4; // LTF Internal Structure Length (1-10)
 input color Internal_Bullish_Color=C'8,153,129'; // Internal Bullish Color
 input color Internal_Bearish_Color=C'242,54,69'; // Internal Bearish Color
 
@@ -125,15 +125,48 @@ const int Momentum_Average_Length=20;
 const double Momentum_Minimum_Ratio=0.50;
 const double Momentum_Maximum_Ratio=2.00;
 
-// Swing detection (Smart Money Engine): a swing high is a pivot of the
-// timeframe's Swing Detection Length candles on each side (see PivotHigh),
-// which is also how many candles it takes to confirm.  A lower length finds
-// more, faster swings; a higher length fewer, cleaner ones.  The internal
-// structure uses the same pivots with the shorter Internal Structure Length.
+// Swing detection (Smart Money Engine): a swing high is a pivot of N candles
+// on each side (see PivotHigh), which is also how many candles it takes to
+// confirm.  A smaller N finds more, faster swings; a larger N fewer, cleaner
+// ones.  The internal structure uses the same pivots with its own, shorter N.
 // The 14-candle ATR sizes the EQH/EQL threshold and the CHoCH trap area.
-const int MIN_SWING_LENGTH=2;
-const int MAX_SWING_LENGTH=50;
+//
+// Swing Detection and Internal Structure Lengths are a 1-10 scale, not N
+// itself: swings found with N candles are mostly the same swings found with
+// N+1, so at N=10 one more candle changed only 11% of the drawn labels.  Each
+// level is the N that changes about a third of the drawn swing labels from
+// the level before (27-42% on real data, 23-43% on generated markets):
+//   level      1   2   3   4   5   6   7   8   9  10
+//   N          1   2   3   5   7  10  14  19  26  36
+const int MIN_DETECTION_LEVEL=1;
+const int MAX_DETECTION_LEVEL=10;
 const int SWING_ATR_LENGTH=14;
+
+// Candles on each side of a pivot (N) for a Swing Detection or Internal
+// Structure level.
+int DetectionCandles(const int level)
+  {
+   switch(MathMax(MIN_DETECTION_LEVEL,MathMin(MAX_DETECTION_LEVEL,level)))
+     {
+      case 1: return 1;
+      case 2: return 2;
+      case 3: return 3;
+      case 4: return 5;
+      case 5: return 7;
+      case 6: return 10;
+      case 7: return 14;
+      case 8: return 19;
+      case 9: return 26;
+     }
+   return 36;
+  }
+
+int HTFSwingLength() { return DetectionCandles(HTF_Swing_Level); }
+int MTFSwingLength() { return DetectionCandles(MTF_Swing_Level); }
+int LTFSwingLength() { return DetectionCandles(LTF_Swing_Level); }
+int HTFInternalLength() { return DetectionCandles(HTF_Internal_Level); }
+int MTFInternalLength() { return DetectionCandles(MTF_Internal_Level); }
+int LTFInternalLength() { return DetectionCandles(LTF_Internal_Level); }
 
 // The bias is Consolidation / Undefined when either condition holds:
 //  * sporadic structure: the BOS/CHoCH breaks since the oldest of the last
@@ -257,18 +290,18 @@ string TimeframeName(const ENUM_TIMEFRAMES timeframe)
 // lengths.
 int ChartSwingLength(const ENUM_TIMEFRAMES timeframe)
   {
-   if(timeframe==BASETimeframe()) return HTF_Swing_Length;
-   if(timeframe==SetupTimeframe()) return MTF_Swing_Length;
-   if(timeframe==LTFTimeframe()) return LTF_Swing_Length;
-   return HTF_Swing_Length;
+   if(timeframe==BASETimeframe()) return HTFSwingLength();
+   if(timeframe==SetupTimeframe()) return MTFSwingLength();
+   if(timeframe==LTFTimeframe()) return LTFSwingLength();
+   return HTFSwingLength();
   }
 
 int ChartInternalLength(const ENUM_TIMEFRAMES timeframe)
   {
-   if(timeframe==BASETimeframe()) return HTF_Internal_Length;
-   if(timeframe==SetupTimeframe()) return MTF_Internal_Length;
-   if(timeframe==LTFTimeframe()) return LTF_Internal_Length;
-   return HTF_Internal_Length;
+   if(timeframe==BASETimeframe()) return HTFInternalLength();
+   if(timeframe==SetupTimeframe()) return MTFInternalLength();
+   if(timeframe==LTFTimeframe()) return LTFInternalLength();
+   return HTFInternalLength();
   }
 
 int StructureBars()
@@ -285,7 +318,7 @@ int ChartStructureBars(const ENUM_TIMEFRAMES timeframe)
    int wanted=StructureBars();
    if(structure_seconds>0 && chart_seconds>0)
       wanted=(int)MathCeil((double)StructureBars()*structure_seconds/chart_seconds);
-   int longest=MathMax(HTF_Swing_Length,MathMax(MTF_Swing_Length,LTF_Swing_Length));
+   int longest=MathMax(HTFSwingLength(),MathMax(MTFSwingLength(),LTFSwingLength()));
    return MathMax(2*longest+2,MathMin(wanted,100000));
   }
 
@@ -822,74 +855,85 @@ bool ReplayStructure(const MqlRates &rates[],const int total,const int length,
      {
       int before=ArraySize(events);
       int pivot=i-length;
-      if(PivotHigh(rates,total,pivot,length))
+      bool pivot_high=PivotHigh(rates,total,pivot,length);
+      bool pivot_low=PivotLow(rates,total,pivot,length);
+      // A candle that is both a swing high and a swing low (an outside candle,
+      // about 4% of swing candles at 1 candle a side) is taken in the order
+      // its price most likely went: a bullish candle made its low first, a
+      // bearish or flat one its high first.
+      bool low_first=pivot_high && pivot_low && rates[pivot].close>rates[pivot].open;
+      for(int pass=0;pass<2;pass++)
         {
-         int kind=0;
-         bool same_leg=last_side==1;
-         if(AcceptStructureHigh(rates[pivot].high,state.have_high,state.last_high,last_side,
-                                have_high_reference,high_reference,kind))
+         bool high_pass=(pass==0)!=low_first;
+         if(high_pass && pivot_high)
            {
-            // A higher pivot in the same leg replaces the leg's high; the
-            // first high of a new leg ends the low leg, identifying its low.
-            if(same_leg) points[high_point].superseded=true;
-            else
+            int kind=0;
+            bool same_leg=last_side==1;
+            if(AcceptStructureHigh(rates[pivot].high,state.have_high,state.last_high,last_side,
+                                   have_high_reference,high_reference,kind))
               {
-               IdentifySwing(ll,hl,points,low_point);
-               high_reference_point=high_point;
+               // A higher pivot in the same leg replaces the leg's high; the
+               // first high of a new leg ends the low leg, identifying its low.
+               if(same_leg) points[high_point].superseded=true;
+               else
+                 {
+                  IdentifySwing(ll,hl,points,low_point);
+                  high_reference_point=high_point;
+                 }
+               high_point=AddStructurePoint(points,pivot,i,rates[pivot],1,kind);
+               MarkEqualSwing(points,high_point,high_reference_point,atr[pivot]);
+               kind=points[high_point].kind;
+               bool equal=points[high_point].equal>=0;
+               state.last_high_kind=kind;
+               state.last_high_time=rates[pivot].time;
+               // An HH beyond the old uptrend's extreme after a failed bearish
+               // CHoCH confirms the LS; a pending CHoCH attempt ends with it.
+               if(LSSwing(watch,events,1,rates[pivot].high))
+                 {
+                  ConfirmLS(events,state,watch,i);
+                  choch.direction=0;
+                 }
+               // Only swings formed after the breaking close can cancel a CHoCH,
+               // and an equal high never does.
+               else if(choch.direction>0 && kind<0 && pivot>choch.break_bar && !equal)
+                  CancelCHoCH(choch,lh,hl,high_point,low_point);   // the break made only an LH
+               else if(choch.direction<0 && kind>0 && pivot>choch.break_bar && !equal)
+                  CancelCHoCH(choch,lh,hl,high_point,low_point);   // an HH before the LL
+               else if(choch.direction!=0 && CHoCHComplete(choch,points,high_point,low_point))
+                  ConfirmCHoCH(events,state,i,choch,watch,points,high_point,low_point,hh,ll);             // LH broken, then an HH
               }
-            high_point=AddStructurePoint(points,pivot,i,rates[pivot],1,kind);
-            MarkEqualSwing(points,high_point,high_reference_point,atr[pivot]);
-            kind=points[high_point].kind;
-            bool equal=points[high_point].equal>=0;
-            state.last_high_kind=kind;
-            state.last_high_time=rates[pivot].time;
-            // An HH beyond the old uptrend's extreme after a failed bearish
-            // CHoCH confirms the LS; a pending CHoCH attempt ends with it.
-            if(LSSwing(watch,events,1,rates[pivot].high))
-              {
-               ConfirmLS(events,state,watch,i);
-               choch.direction=0;
-              }
-            // Only swings formed after the breaking close can cancel a CHoCH,
-            // and an equal high never does.
-            else if(choch.direction>0 && kind<0 && pivot>choch.break_bar && !equal)
-               CancelCHoCH(choch,lh,hl,high_point,low_point);   // the break made only an LH
-            else if(choch.direction<0 && kind>0 && pivot>choch.break_bar && !equal)
-               CancelCHoCH(choch,lh,hl,high_point,low_point);   // an HH before the LL
-            else if(choch.direction!=0 && CHoCHComplete(choch,points,high_point,low_point))
-               ConfirmCHoCH(events,state,i,choch,watch,points,high_point,low_point,hh,ll);             // LH broken, then an HH
            }
-        }
-      if(PivotLow(rates,total,pivot,length))
-        {
-         int kind=0;
-         bool same_leg=last_side==-1;
-         if(AcceptStructureLow(rates[pivot].low,state.have_low,state.last_low,last_side,
-                               have_low_reference,low_reference,kind))
+         if(!high_pass && pivot_low)
            {
-            if(same_leg) points[low_point].superseded=true;
-            else
+            int kind=0;
+            bool same_leg=last_side==-1;
+            if(AcceptStructureLow(rates[pivot].low,state.have_low,state.last_low,last_side,
+                                  have_low_reference,low_reference,kind))
               {
-               IdentifySwing(hh,lh,points,high_point);
-               low_reference_point=low_point;
+               if(same_leg) points[low_point].superseded=true;
+               else
+                 {
+                  IdentifySwing(hh,lh,points,high_point);
+                  low_reference_point=low_point;
+                 }
+               low_point=AddStructurePoint(points,pivot,i,rates[pivot],-1,kind);
+               MarkEqualSwing(points,low_point,low_reference_point,atr[pivot]);
+               kind=points[low_point].kind;
+               bool equal=points[low_point].equal>=0;
+               state.last_low_kind=kind;
+               state.last_low_time=rates[pivot].time;
+               if(LSSwing(watch,events,-1,rates[pivot].low))
+                 {
+                  ConfirmLS(events,state,watch,i);
+                  choch.direction=0;
+                 }
+               else if(choch.direction<0 && kind<0 && pivot>choch.break_bar && !equal)
+                  CancelCHoCH(choch,lh,hl,high_point,low_point);   // the break made only an HL
+               else if(choch.direction>0 && kind>0 && pivot>choch.break_bar && !equal)
+                  CancelCHoCH(choch,lh,hl,high_point,low_point);   // an LL before the HH
+               else if(choch.direction!=0 && CHoCHComplete(choch,points,high_point,low_point))
+                  ConfirmCHoCH(events,state,i,choch,watch,points,high_point,low_point,hh,ll);             // HL broken, then an LL
               }
-            low_point=AddStructurePoint(points,pivot,i,rates[pivot],-1,kind);
-            MarkEqualSwing(points,low_point,low_reference_point,atr[pivot]);
-            kind=points[low_point].kind;
-            bool equal=points[low_point].equal>=0;
-            state.last_low_kind=kind;
-            state.last_low_time=rates[pivot].time;
-            if(LSSwing(watch,events,-1,rates[pivot].low))
-              {
-               ConfirmLS(events,state,watch,i);
-               choch.direction=0;
-              }
-            else if(choch.direction<0 && kind<0 && pivot>choch.break_bar && !equal)
-               CancelCHoCH(choch,lh,hl,high_point,low_point);   // the break made only an HL
-            else if(choch.direction>0 && kind>0 && pivot>choch.break_bar && !equal)
-               CancelCHoCH(choch,lh,hl,high_point,low_point);   // an LL before the HH
-            else if(choch.direction!=0 && CHoCHComplete(choch,points,high_point,low_point))
-               ConfirmCHoCH(events,state,i,choch,watch,points,high_point,low_point,hh,ll);             // HL broken, then an LL
            }
         }
 
@@ -1270,9 +1314,10 @@ string InternalAgreementText(const BASE_INTERNAL_STRUCTURE &internal,const BASE_
   }
 
 string InternalStructureTooltip(const BASE_INTERNAL_STRUCTURE &internal,const BASE_STRUCTURE_STATE &state,
-                                const string name,const int length)
+                                const string name,const int level)
   {
-   string text="Internal structure ("+(string)length+"-candle swings)\nInternal trend: ";
+   string text="Internal structure (level "+(string)level+": "+(string)DetectionCandles(level)+
+               "-candle swings)\nInternal trend: ";
    if(internal.trend==0) text+="no internal level broken yet";
    else text+=(internal.trend>0?"Bullish":"Bearish")+" since a "+TrendWord(internal.trend)+" "+
               (internal.last_choch?"CHoCH":"BOS")+" through "+PriceText(internal.break_level);
@@ -1986,13 +2031,13 @@ color PassColor(const bool pass)
 // The internal structure under its timeframe's Market Trend, indented; the
 // tooltip gives its latest break and how it relates to the Market Trend.
 void AddInternalStructureRow(BASE_DASHBOARD_ROW &rows[],const BASE_INTERNAL_STRUCTURE &internal,
-                             const BASE_STRUCTURE_STATE &state,const string name,const int length)
+                             const BASE_STRUCTURE_STATE &state,const string name,const int level)
   {
    if(!Show_Internal_On_Dashboard) return;
    color clr=internal.trend>0?DASHBOARD_POSITIVE_COLOR:internal.trend<0?DASHBOARD_NEGATIVE_COLOR:
              DASHBOARD_NEUTRAL_COLOR;
    AddDashboardRow(rows,"Internal Structure:",InternalTrendText(internal),clr,
-                   InternalStructureTooltip(internal,state,name,length),true,DASHBOARD_INDENT);
+                   InternalStructureTooltip(internal,state,name,level),true,DASHBOARD_INDENT);
   }
 
 // Each selected timeframe's Market Trend (its breakdown is the tooltip),
@@ -2016,19 +2061,19 @@ void DrawDashboard(const BASE_STRUCTURE_STATE &htf,const string htf_breakdown,
      {
       AddDashboardRow(rows,"HTF Market Trend ("+HTFName()+"):",BiasText(htf),TrendColor(htf),
                       htf_breakdown);
-      AddInternalStructureRow(rows,htf_internal,htf,HTFName(),HTF_Internal_Length);
+      AddInternalStructureRow(rows,htf_internal,htf,HTFName(),HTF_Internal_Level);
      }
    if(Use_MTF)
      {
       AddDashboardRow(rows,"MTF Market Trend ("+MTFName()+"):",BiasText(mtf),TrendColor(mtf),
                       mtf_breakdown);
-      AddInternalStructureRow(rows,mtf_internal,mtf,MTFName(),MTF_Internal_Length);
+      AddInternalStructureRow(rows,mtf_internal,mtf,MTFName(),MTF_Internal_Level);
      }
    if(Use_LTF)
      {
       AddDashboardRow(rows,"LTF Market Trend ("+LTFName()+"):",BiasText(ltf),TrendColor(ltf),
                       ltf_breakdown);
-      AddInternalStructureRow(rows,ltf_internal,ltf,LTFName(),LTF_Internal_Length);
+      AddInternalStructureRow(rows,ltf_internal,ltf,LTFName(),LTF_Internal_Level);
      }
    AddDashboardRow(rows,"Market Tradability:",
                    tradability==BASE_TRADABLE?"Tradable":tradability==BASE_TRADABLE_EARLY?"Tradable (Early)":
@@ -2065,7 +2110,7 @@ bool Rebuild(const bool permit_alert)
   {
    ENUM_TIMEFRAMES timeframe=BASETimeframe();
    ENUM_TIMEFRAMES chart_timeframe=(ENUM_TIMEFRAMES)_Period;
-   int length=HTF_Swing_Length;
+   int length=HTFSwingLength();
    int displayed=StructureBars();
    MqlRates rates[];
    ArraySetAsSeries(rates,false);
@@ -2086,10 +2131,10 @@ bool Rebuild(const bool permit_alert)
    BASE_STRUCTURE_POINT setup_points[],ltf_points[];
    BASE_STRUCTURE_EVENT setup_events[],ltf_events[];
    if(!AnalyseStructure(SetupTimeframe(),ReplayBars(ChartStructureBars(SetupTimeframe())),
-                        MTF_Swing_Length,setup_state,setup_rates,setup_points,setup_events))
+                        MTFSwingLength(),setup_state,setup_rates,setup_points,setup_events))
       return false;
    if(!AnalyseStructure(LTFTimeframe(),ReplayBars(ChartStructureBars(LTFTimeframe())),
-                        LTF_Swing_Length,ltf_state,ltf_rates,ltf_points,ltf_events))
+                        LTFSwingLength(),ltf_state,ltf_rates,ltf_points,ltf_events))
       return false;
    int ltf_total=ArraySize(ltf_rates);
 
@@ -2115,9 +2160,9 @@ bool Rebuild(const bool permit_alert)
    // Tradable (Early).
    BASE_INTERNAL_STRUCTURE htf_internal,mtf_internal,ltf_internal;
    BASE_BREAK_MARK unused[];
-   ReplayInternalStructure(rates,total,HTF_Internal_Length,htf_internal,unused);
-   ReplayInternalStructure(setup_rates,ArraySize(setup_rates),MTF_Internal_Length,mtf_internal,unused);
-   ReplayInternalStructure(ltf_rates,ltf_total,LTF_Internal_Length,ltf_internal,unused);
+   ReplayInternalStructure(rates,total,HTFInternalLength(),htf_internal,unused);
+   ReplayInternalStructure(setup_rates,ArraySize(setup_rates),MTFInternalLength(),mtf_internal,unused);
+   ReplayInternalStructure(ltf_rates,ltf_total,LTFInternalLength(),ltf_internal,unused);
 
    // The MTF MA line, if shown, over the drawn MTF candles.
    MqlRates mtf_rates[];
@@ -2135,7 +2180,7 @@ bool Rebuild(const bool permit_alert)
    ObjectsDeleteAll(0,g_prefix);
    if(anchored)
       DrawChart(rates,total,MathMax(0,total-displayed),structure_state,points,events,
-                HTF_Internal_Length,timeframe);
+                HTFInternalLength(),timeframe);
    else
      {
       BASE_STRUCTURE_STATE chart_state;
@@ -2212,16 +2257,16 @@ bool Rebuild(const bool permit_alert)
 bool ValidInputs()
   {
    string problem="";
-   if(HTF_Swing_Length<MIN_SWING_LENGTH || HTF_Swing_Length>MAX_SWING_LENGTH ||
-      MTF_Swing_Length<MIN_SWING_LENGTH || MTF_Swing_Length>MAX_SWING_LENGTH ||
-      LTF_Swing_Length<MIN_SWING_LENGTH || LTF_Swing_Length>MAX_SWING_LENGTH)
-      problem="each Swing Detection Length must be between "+(string)MIN_SWING_LENGTH+" and "+
-              (string)MAX_SWING_LENGTH;
-   else if(HTF_Internal_Length<MIN_SWING_LENGTH || HTF_Internal_Length>MAX_SWING_LENGTH ||
-           MTF_Internal_Length<MIN_SWING_LENGTH || MTF_Internal_Length>MAX_SWING_LENGTH ||
-           LTF_Internal_Length<MIN_SWING_LENGTH || LTF_Internal_Length>MAX_SWING_LENGTH)
-      problem="each Internal Structure Length must be between "+(string)MIN_SWING_LENGTH+" and "+
-              (string)MAX_SWING_LENGTH;
+   if(HTF_Swing_Level<MIN_DETECTION_LEVEL || HTF_Swing_Level>MAX_DETECTION_LEVEL ||
+      MTF_Swing_Level<MIN_DETECTION_LEVEL || MTF_Swing_Level>MAX_DETECTION_LEVEL ||
+      LTF_Swing_Level<MIN_DETECTION_LEVEL || LTF_Swing_Level>MAX_DETECTION_LEVEL)
+      problem="each Swing Detection Length must be between "+(string)MIN_DETECTION_LEVEL+" and "+
+              (string)MAX_DETECTION_LEVEL;
+   else if(HTF_Internal_Level<MIN_DETECTION_LEVEL || HTF_Internal_Level>MAX_DETECTION_LEVEL ||
+           MTF_Internal_Level<MIN_DETECTION_LEVEL || MTF_Internal_Level>MAX_DETECTION_LEVEL ||
+           LTF_Internal_Level<MIN_DETECTION_LEVEL || LTF_Internal_Level>MAX_DETECTION_LEVEL)
+      problem="each Internal Structure Length must be between "+(string)MIN_DETECTION_LEVEL+" and "+
+              (string)MAX_DETECTION_LEVEL;
    else if(Bars_To_Process<100)
       problem="Bars_To_Process must be at least 100";
    else if(HTF_MA_Length<1 || MTF_MA_Length<1 || ADX_Length<1 || ATR_Length<1)

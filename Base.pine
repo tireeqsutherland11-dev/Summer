@@ -1,5 +1,5 @@
 //@version=6
-// Base - Market Structure (TradingView port of Base.mq5 v2.41)
+// Base - Market Structure (TradingView port of Base.mq5 v2.42)
 //
 // Reads market structure from closed candles only:
 //  * HH/HL/LH/LL swings: pivots of each timeframe's Swing Detection Length
@@ -56,20 +56,36 @@ grpProc = "Structure Bar Processing"
 barsToProcess = input.int(100, "Bars To Process", minval = 100, maxval = 100000, group = grpProc, tooltip = "How many HTF candles back structure is drawn. Other chart timeframes cover the same span of time. Structure is always calculated on all loaded history.")
 
 grpSwing = "Swing Detection"
-htfSwingLength = input.int(5, "HTF Swing Detection Length", minval = 2, maxval = 50, group = grpSwing, tooltip = "Candles on each side of a pivot for HTF swings (Smart Money Engine swing detection). It is also how many candles a swing takes to confirm. Lower = more, faster swings; higher = fewer, cleaner swings.")
-mtfSwingLength = input.int(9, "MTF Swing Detection Length", minval = 2, maxval = 50, group = grpSwing, tooltip = "Candles on each side of a pivot for MTF swings. Lower = more, faster swings; higher = fewer, cleaner swings.")
-ltfSwingLength = input.int(10, "LTF Swing Detection Length", minval = 2, maxval = 50, group = grpSwing, tooltip = "Candles on each side of a pivot for LTF swings. Lower = more, faster swings; higher = fewer, cleaner swings.")
+htfSwingLevel = input.int(4, "HTF Swing Detection Length (1-10)", minval = 1, maxval = 10, group = grpSwing, tooltip = "Size of the HTF swings (Smart Money Engine swing detection). 1 = finest, 10 = broadest; each step changes about a third of the drawn swings. Candles on each side of a pivot (also how many candles a swing takes to confirm): 1:1, 2:2, 3:3, 4:5, 5:7, 6:10, 7:14, 8:19, 9:26, 10:36.")
+mtfSwingLevel = input.int(6, "MTF Swing Detection Length (1-10)", minval = 1, maxval = 10, group = grpSwing, tooltip = "Size of the MTF swings. 1 = finest, 10 = broadest; each step changes about a third of the drawn swings. Candles on each side of a pivot (also how many candles a swing takes to confirm): 1:1, 2:2, 3:3, 4:5, 5:7, 6:10, 7:14, 8:19, 9:26, 10:36.")
+ltfSwingLevel = input.int(6, "LTF Swing Detection Length (1-10)", minval = 1, maxval = 10, group = grpSwing, tooltip = "Size of the LTF swings. 1 = finest, 10 = broadest; each step changes about a third of the drawn swings. Candles on each side of a pivot (also how many candles a swing takes to confirm): 1:1, 2:2, 3:3, 4:5, 5:7, 6:10, 7:14, 8:19, 9:26, 10:36.")
 showSwingPoints = input.bool(true, "Show Swing Points", group = grpSwing, tooltip = "Display the HH/HL/LH/LL (and EQH/EQL) swing labels and the dotted lines at the latest swing high and low.")
 showStrongWeak = input.bool(true, "Show Strong/Weak High/Low", group = grpSwing, tooltip = "Display Strong/Weak High/Low. Each break protects the latest swing on the other side (Strong); the trend's running extreme is Weak, the next target.")
 
 grpInternal = "Internal Structure"
 showInternal = input.bool(true, "Show Internal Structure", group = grpInternal, tooltip = "Display the internal BOS/CHoCH: minor breaks inside the swings, drawn as dashed lines with faded captions.")
 showInternalOnDashboard = input.bool(true, "Show Internal Structure On Dashboard", group = grpInternal, tooltip = "Show each timeframe's internal trend under its Market Trend on the dashboard.")
-htfInternalLength = input.int(5, "HTF Internal Structure Length", minval = 2, maxval = 50, group = grpInternal, tooltip = "Candles on each side of a pivot for the HTF internal structure. Keep it below the Swing Detection Length.")
-mtfInternalLength = input.int(5, "MTF Internal Structure Length", minval = 2, maxval = 50, group = grpInternal, tooltip = "Candles on each side of a pivot for the MTF internal structure. Keep it below the Swing Detection Length.")
-ltfInternalLength = input.int(5, "LTF Internal Structure Length", minval = 2, maxval = 50, group = grpInternal, tooltip = "Candles on each side of a pivot for the LTF internal structure. Keep it below the Swing Detection Length.")
+htfInternalLevel = input.int(4, "HTF Internal Structure Length (1-10)", minval = 1, maxval = 10, group = grpInternal, tooltip = "Size of the HTF internal swings. Keep it below the timeframe's Swing Detection Length: at or above it, almost every internal pivot is also a main swing and almost nothing is drawn. 1 = finest, 10 = broadest; each step changes about a third of the drawn swings. Candles on each side of a pivot (also how many candles a swing takes to confirm): 1:1, 2:2, 3:3, 4:5, 5:7, 6:10, 7:14, 8:19, 9:26, 10:36.")
+mtfInternalLevel = input.int(4, "MTF Internal Structure Length (1-10)", minval = 1, maxval = 10, group = grpInternal, tooltip = "Size of the MTF internal swings. Keep it below the timeframe's Swing Detection Length: at or above it, almost every internal pivot is also a main swing and almost nothing is drawn. 1 = finest, 10 = broadest; each step changes about a third of the drawn swings. Candles on each side of a pivot (also how many candles a swing takes to confirm): 1:1, 2:2, 3:3, 4:5, 5:7, 6:10, 7:14, 8:19, 9:26, 10:36.")
+ltfInternalLevel = input.int(4, "LTF Internal Structure Length (1-10)", minval = 1, maxval = 10, group = grpInternal, tooltip = "Size of the LTF internal swings. Keep it below the timeframe's Swing Detection Length: at or above it, almost every internal pivot is also a main swing and almost nothing is drawn. 1 = finest, 10 = broadest; each step changes about a third of the drawn swings. Candles on each side of a pivot (also how many candles a swing takes to confirm): 1:1, 2:2, 3:3, 4:5, 5:7, 6:10, 7:14, 8:19, 9:26, 10:36.")
 internalBullColor = input.color(#089981, "Internal Bullish Color", group = grpInternal, tooltip = "Color of bullish internal BOS/CHoCH lines and captions.")
 internalBearColor = input.color(#F23645, "Internal Bearish Color", group = grpInternal, tooltip = "Color of bearish internal BOS/CHoCH lines and captions.")
+
+// Swing Detection and Internal Structure Lengths are a 1-10 scale, not the
+// pivot's candles on each side (N) itself: swings found with N candles are
+// mostly the same swings found with N+1, so at N=10 one more candle changed
+// only 11% of the drawn labels. Each level is the N that changes about a
+// third of the drawn swing labels from the level before (27-42% on real data,
+// 23-43% on generated markets), as in Base.mq5's DetectionCandles.
+detectionCandles(int level) =>
+    level <= 1 ? 1 : level == 2 ? 2 : level == 3 ? 3 : level == 4 ? 5 : level == 5 ? 7 : level == 6 ? 10 : level == 7 ? 14 : level == 8 ? 19 : level == 9 ? 26 : 36
+
+htfSwingLength = detectionCandles(htfSwingLevel)
+mtfSwingLength = detectionCandles(mtfSwingLevel)
+ltfSwingLength = detectionCandles(ltfSwingLevel)
+htfInternalLength = detectionCandles(htfInternalLevel)
+mtfInternalLength = detectionCandles(mtfInternalLevel)
+ltfInternalLength = detectionCandles(ltfInternalLevel)
 
 grpBos = "BOS Display"
 showBos = input.bool(true, "Show BOS Labels", group = grpBos, tooltip = "Display BOS (break of structure): a close through the latest HH (bullish) or LL (bearish) that continues the trend.")
@@ -678,14 +694,20 @@ method trailExtremes(SEngine e, float h, float l, int curTime) =>
 // One closed candle: the swing confirmed on it (its pivot is Swing Detection
 // Length candles back), then the candle's close, then the trailing extremes
 // and the touches of the swings that can still become levels.
-method step(SEngine e, bool isPh, bool isPl, float phV, float plV, int pivotBar, int pivotTime, float equalTol, float c, float h, float l, int curBar, int curTime) =>
+// A candle that is both a swing high and a swing low (an outside candle, about
+// 4% of swing candles at 1 candle a side) is taken in the order its price most
+// likely went: a bullish candle made its low first (lowFirst), a bearish or
+// flat one its high first.
+method step(SEngine e, bool isPh, bool isPl, float phV, float plV, int pivotBar, int pivotTime, float equalTol, float c, float h, float l, int curBar, int curTime, bool lowFirst) =>
     e.newPoints.clear()
     e.dropped.clear()
     e.newEvents.clear()
     e.newLs.clear()
+    if lowFirst and isPl
+        e.onPivotLow(plV, pivotBar, pivotTime, equalTol, curBar)
     if isPh
         e.onPivotHigh(phV, pivotBar, pivotTime, equalTol, curBar)
-    if isPl
+    if isPl and not lowFirst
         e.onPivotLow(plV, pivotBar, pivotTime, equalTol, curBar)
     e.onClose(c, h, l, curBar, curTime)
     e.trailExtremes(h, l, curTime)
@@ -867,7 +889,7 @@ structureRequest(int length) =>
     float atrS = swingAtrSeries()
     bool ph = pivotHighFound(length)
     bool pl = pivotLowFound(length)
-    e.step(ph, pl, high[length], low[length], bar_index - length, time[length], equalThreshold * nz(atrS[length]), close, high, low, bar_index, time)
+    e.step(ph, pl, high[length], low[length], bar_index - length, time[length], equalThreshold * nz(atrS[length]), close, high, low, bar_index, time, ph and pl and close[length] > open[length])
     e.classify(atrS)
     [labelsCode, rangeLo, rangeHi, breaksCode, breaksCount, trapCode, trapCount, trap1, trap2, trap3, trap4, latestCode, latestLevel, newCode, hhV, lhV, llV, hlV] = e.summary()
     // Flags cross request.security as 0/1 so a missing value is simply 0.
@@ -1123,7 +1145,7 @@ var array<int> internalSwingTimes = array.new<int>()
 MAX_INTERNAL_KEPT = 120
 
 if barstate.isconfirmed
-    chartEngine.step(chartPh, chartPl, high[chartLength], low[chartLength], bar_index - chartLength, time[chartLength], equalThreshold * nz(chartAtr[chartLength]), close, high, low, bar_index, time)
+    chartEngine.step(chartPh, chartPl, high[chartLength], low[chartLength], bar_index - chartLength, time[chartLength], equalThreshold * nz(chartAtr[chartLength]), close, high, low, bar_index, time, chartPh and chartPl and close[chartLength] > open[chartLength])
     int droppedCount = chartEngine.dropped.size()
     if droppedCount > 0
         for i = 0 to droppedCount - 1
@@ -1423,8 +1445,8 @@ internalAgreementText(InternalView iv, TfView v, string name) =>
         s := "Opposes the " + name + " Market Trend: a " + trendWord(iv.trend) + " move inside the " + trendWord(d) + " trend (a pullback until the swing structure breaks)."
     s
 
-internalTooltip(InternalView iv, TfView v, string name, int length) =>
-    string t = "Internal structure (" + str.tostring(length) + "-candle swings)\nInternal trend: "
+internalTooltip(InternalView iv, TfView v, string name, int level) =>
+    string t = "Internal structure (level " + str.tostring(level) + ": " + str.tostring(detectionCandles(level)) + "-candle swings)\nInternal trend: "
     t := t + (iv.trend == 0 ? "no internal level broken yet" : (iv.trend > 0 ? "Bullish" : "Bearish") + " since a " + trendWord(iv.trend) + " " + (iv.lastChoch ? "CHoCH" : "BOS") + " through " + priceText(iv.level))
     t + "\n" + internalAgreementText(iv, v, name)
 
@@ -1752,19 +1774,19 @@ if barstate.islast
         dashRow(row, "HTF Market Trend (" + tfName(htfTf) + "):", biasText(htfView), trendColor(htfView), breakdownText(htfView))
         row += 1
         if showInternalOnDashboard
-            dashRow(row, "Internal Structure:", internalTrendText(htfInternal), internalColor(htfInternal), internalTooltip(htfInternal, htfView, tfName(htfTf), htfInternalLength))
+            dashRow(row, "Internal Structure:", internalTrendText(htfInternal), internalColor(htfInternal), internalTooltip(htfInternal, htfView, tfName(htfTf), htfInternalLevel))
             row += 1
     if useMtf
         dashRow(row, "MTF Market Trend (" + tfName(mtfTf) + "):", biasText(mtfView), trendColor(mtfView), breakdownText(mtfView))
         row += 1
         if showInternalOnDashboard
-            dashRow(row, "Internal Structure:", internalTrendText(mtfInternal), internalColor(mtfInternal), internalTooltip(mtfInternal, mtfView, tfName(mtfTf), mtfInternalLength))
+            dashRow(row, "Internal Structure:", internalTrendText(mtfInternal), internalColor(mtfInternal), internalTooltip(mtfInternal, mtfView, tfName(mtfTf), mtfInternalLevel))
             row += 1
     if useLtf
         dashRow(row, "LTF Market Trend (" + tfName(ltfTf) + "):", biasText(ltfView), trendColor(ltfView), breakdownText(ltfView))
         row += 1
         if showInternalOnDashboard
-            dashRow(row, "Internal Structure:", internalTrendText(ltfInternal), internalColor(ltfInternal), internalTooltip(ltfInternal, ltfView, tfName(ltfTf), ltfInternalLength))
+            dashRow(row, "Internal Structure:", internalTrendText(ltfInternal), internalColor(ltfInternal), internalTooltip(ltfInternal, ltfView, tfName(ltfTf), ltfInternalLevel))
             row += 1
     dashRow(row, "Market Tradability:", tradability == 2 ? "Tradable" : early ? "Tradable (Early)" : "Not Tradable", early ? DASH_EARLY_COLOR : passColor(tradability == 2), entryFilterTooltip())
     row += 1
