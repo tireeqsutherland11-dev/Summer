@@ -47,37 +47,55 @@ through a level is intentionally not a break; the candle must close beyond it.
 1. GENERAL / REFRESH SYSTEM
 ---------------------------
 
-Structure_Timeframe (default PERIOD_H4)
+Structure_Timeframe (default PERIOD_H1)
   The fixed timeframe used for the HTF swings, BOS/CHoCH, HTF Market Trend,
-  Market Tradability, HTF MA, ADX, ATR, dashboard close, and alerts.
+  Market Tradability (with the HTF internal structure and, by default, the
+  Hurst exponent), HTF MA, ADX, ATR, dashboard close, and alerts.
   Changing the chart period does not change these results. PERIOD_CURRENT
   remains available as an explicit opt-in to chart-dependent analysis.
 
-Setup_Entry_Timeframe (default PERIOD_H1)
-  Drives the independent MTF/setup trend used in timeframe correlation, the
-  MTF MA filter, and Healthy Extension (its latest swings and 14-candle
-  ATR).
+Setup_Entry_Timeframe (default PERIOD_M30)
+  Drives the independent MTF/setup trend used by Market Tradability when Use
+  MTF is selected, the MTF MA filter, and Healthy Extension (its latest
+  swings and 14-candle ATR).
 
 LTF_Timeframe (default PERIOD_M15)
   Supplies the LTF trend for timeframe correlation, plus the close, volume
   and true range used by the Optimal Conditions Meter.
 
 Trend Analysis Timeframes: Use_HTF (Use HTF, default true), Use_MTF (Use MTF,
-default true), Use_LTF (Use LTF, default false)
+default false), Use_LTF (Use LTF, default false)
   Independently select which timeframe trends are shown on the dashboard and
   used by Market Tradability and the correlation component of Optimal
   Conditions.
-  * Enabled trends must be directional and agree.
-  * When LTF is enabled, its latest break must also be a BOS.
+  * Enabled trends must be established (latest break a BOS), agree with the
+    HTF, and show progressive swings (section 9).
   * At least one timeframe must be enabled; initialization rejects a
     configuration with all three disabled.
 
-Allow_Early_Tradability (Allow Tradable (Early), default true)
+Allow_Early_Tradability (Allow Tradable (Early), default false)
   Shows Tradable (Early) when the selected timeframes agree but the HTF (or a
-  selected LTF) is only in transition and the internal structure agrees
-  (section 9). Off: such a market is Not Tradable, as before v2.40.
+  selected MTF or LTF) is only in transition and the internal structure
+  agrees (section 9). It does not check the swings or the Hurst exponent.
+  Off: such a market is Not Tradable.
   * A timeframe's Market Trend row is omitted when it is disabled.
-  * The established HTF prerequisite applies even if HTF is not selected.
+  * The HTF conditions apply even if HTF is not selected.
+
+Hurst Exponent (Trend Persistence): Hurst_Timeframe (default HTF; HTF, MTF
+or LTF), Hurst_Candles (default 100; valid 50..400), Hurst_Minimum (default
+0.55; valid 0 to below 1)
+  The Hurst exponent H of the last Hurst_Candles closed candles of the Hurst
+  timeframe (HurstOf). Market Tradability needs H above Hurst_Minimum
+  (section 9). With x = ln(close), for each lag tau from 2 to 20 candles,
+  sigma(tau) is the root mean square of x[t+tau] - x[t] over the window, and
+  H is the least-squares slope of ln sigma(tau) against ln tau (the
+  generalized Hurst exponent with q = 2). A random walk gives about 0.5, a
+  trending market more (a steady drift, which is not subtracted, or
+  momentum in the moves), a mean-reverting one less. With the standard
+  deviation instead, a steady trend read about 0.41, like a random walk. On
+  real data (EURUSD H1/H4, an index M5/M30, five stocks D1) H was above 0.55
+  in about 13-30% of 100-candle windows. Fewer closed candles than the
+  window, or prices that do not move, give no value (Not Tradable).
 
 Bars_To_Process (default 100; valid 100..100000)
   Number of closed Structure_Timeframe candles drawn on every rebuild. Each
@@ -598,19 +616,29 @@ Internal_Bullish_Color (default C'8,153,129') / Internal_Bearish_Color
   * Show_Internal_On_Dashboard adds an Internal Structure row under each
     Market Trend (section 10).
 
-Market Tradability (EvaluateTradability) prints Tradable when:
-  * the HTF trend is established (Bullish or Bearish, latest break a BOS, not
-    Consolidation / Undefined). This applies even when HTF is not selected for
-    correlation;
-  * every selected trend timeframe has a direction and they all agree;
-  * a selected LTF is itself established. A selected MTF may be transitional.
-It prints Tradable (Early), in amber, when Allow_Early_Tradability is on and
-the only thing missing is confirmation:
+Market Tradability (EvaluateTradability, v2.44) prints Tradable when all of
+these line up in one direction:
+  1. Market Trend: the HTF trend and the trend of every selected trend
+     timeframe are Bullish (or all Bearish): established by a BOS, not a
+     transition and not Consolidation / Undefined. The HTF applies even when
+     it is not selected.
+  2. Progressive structure on the HTF and each selected timeframe
+     (ReadSwings): bullish, a Higher High (Current_Swing_High >
+     Previous_Swing_High) and a Higher Low (Current_Swing_Low >
+     Previous_Swing_Low); bearish, a Lower Low and a Lower High. The
+     previous swing is the previous leg's; a more extreme swing within the
+     same leg replaces it.
+  3. The HTF Internal Structure in that direction, its latest break a BOS
+     (not a CHoCH).
+  4. The Hurst exponent above Hurst_Minimum (0.55).
+It prints Tradable (Early), in amber, when Allow_Early_Tradability is on (off
+by default) and the only thing missing is confirmation:
   * the HTF has a direction and every selected timeframe has the same one;
-  * the HTF and/or a selected LTF is only in transition (a CHoCH not yet
-    confirmed by a BOS);
+  * the HTF and/or a selected MTF or LTF is only in transition (a CHoCH not
+    yet confirmed by a BOS);
   * the internal trend (Internal Structure) of the HTF and of every selected
     timeframe is that direction.
+  It does not check conditions 2 to 4.
 Otherwise it prints Not Tradable.
   Why a separate state: with Base's defaults, HTF transitions with the MTF
   agreeing were followed until they reached their confirming BOS or failed
@@ -625,26 +653,35 @@ Otherwise it prints Not Tradable.
   against 21%. After Tradable (Early) candles price moved on in the trend's
   direction on generated markets (+0.8 MTF ATR after 20 candles) but not on
   real data. So it marks the stronger transitions, not confirmed trends.
-The Tradability Reason row is one sentence that names the timeframes (H4,
-H1, M15 for the defaults):
-  Tradable          "H4 and H1 are both bullish, and the H4 trend is
-                    confirmed by a BOS." (with LTF selected: "..., as is the
-                    M15 trend.")
-  Tradable (Early)  "H4 and H1 are both bearish and their internal structure
-                    agrees, but the H4 trend is only a transition (a CHoCH
-                    not yet confirmed by a BOS)." (or "... the H4 and M15
-                    trends are only transitions ...")
-  No break yet      "H4 has no structure break yet."
-  Consolidation     "H4 is ranging (breaks in both directions over its last 5
+The Tradability Reason row is one sentence that names the timeframes (H1,
+M30, M15 for the defaults):
+  Tradable          "H1 is bullish (BOS) with HH + HL, the H1 internal
+                    structure is bullish (BOS), and the Hurst exponent 0.62
+                    is above 0.55." (with MTF selected: "H1 and M30 are both
+                    bullish (BOS) ...")
+  Trend in place,   "H1 is bearish (BOS), but " and every failing condition,
+  others missing    separated by "; ": "the H1 swings are LH + HL (bearish
+                    needs LL + LH)", "the H1 has no two swing lows yet",
+                    "the H1 internal structure is bullish (CHoCH), not
+                    bearish (BOS)", "the H1 internal structure has no break
+                    yet", "the Hurst exponent 0.48 is not above 0.55 (random
+                    walk)", "the Hurst exponent needs 100 closed H1 candles
+                    (80 so far)".
+  Tradable (Early)  "H1 and M30 are both bearish and their internal structure
+                    agrees, but the H1 trend is only a transition (a CHoCH
+                    not yet confirmed by a BOS)."
+  No break yet      "H1 has no structure break yet."
+  Consolidation     "H1 is ranging (breaks in both directions over its last 5
                     swings)." or "... (repeated CHoCHs in one area with no
                     BOS)." It checks the HTF, then the MTF, then the LTF.
-  HTF transitional  "H4 is only in a bullish transition (a CHoCH not yet
+  HTF transitional  "H1 is only in a bullish transition (a CHoCH not yet
                     confirmed by a BOS)."
-  Conflict          "H4 is bullish but H1 is bearish."
-  LTF transitional  "M15 is only in a bearish transition (...)."
+  Conflict          "H1 is bullish but M30 is bearish."
+  MTF or LTF        "M15 is only in a bearish transition (...)."
+  transitional
   Internals behind  a transition that would be Tradable (Early) but for the
-                    internal structure adds which timeframes lag: "H4 is only
-                    in a bearish transition (...), and the H1 internal
+                    internal structure adds which timeframes lag: "H1 is only
+                    in a bearish transition (...), and the M30 internal
                     structure is not bearish yet."
 Optimal Conditions remains a separate quality meter and does not override
 tradability.
@@ -662,6 +699,12 @@ coloured. Rows, top to bottom:
                                 Transition (red), or Consolidation / Undefined
                                 (grey). The row's tooltip is its breakdown
                                 (below).
+  Swing Structure               indented under each Market Trend: the latest
+                                swing high against the previous one (HH, LH
+                                or EQH) and the same for lows (LL, HL or
+                                EQL), e.g. "HH + HL": green for HH + HL, red
+                                for LL + LH, grey otherwise. The tooltip
+                                gives the prices.
   Internal Structure            indented under each Market Trend when
                                 Show_Internal_On_Dashboard is on: Bullish
                                 (green), Bearish (red) or Undefined (grey),
@@ -669,6 +712,10 @@ coloured. Rows, top to bottom:
                                 "Bullish (CHoCH)". The tooltip gives the break
                                 that set the internal trend and whether it
                                 agrees with the Market Trend (section 9).
+  Hurst Exponent                "H 0.62 (trending)": trending above 0.55,
+                                random walk from 0.45 to 0.55, mean-reverting
+                                below; green above Hurst_Minimum, red
+                                otherwise, grey when not available.
   Market Tradability            Tradable (green), Tradable (Early) (amber) or
                                 Not Tradable (red). The tooltip holds the
                                 entry-filter diagnostics.
@@ -682,10 +729,13 @@ coloured. Rows, top to bottom:
                                 that decides it (below). When the HTF trend is
                                 established but a selected lower timeframe
                                 holds Tradable back, it names that timeframe
-                                instead: "H4 is bullish, but wait for H1 to
+                                instead: "H1 is bullish, but wait for M30 to
                                 turn bullish before buying." or "... wait for
-                                M15 to confirm with a bullish BOS before
-                                buying." Tradable (Early): "Early sells only,
+                                M30 to confirm with a bullish BOS before
+                                buying."; when another condition holds it
+                                back: "... wait for Market Tradability (see
+                                Tradability Reason) before buying." Tradable
+                                (Early): "Early sells only,
                                 while price holds below LH <price>; a close
                                 below LL <price> (bearish BOS) confirms the
                                 trend." (with an established HTF and a
@@ -693,9 +743,11 @@ coloured. Rows, top to bottom:
                                 internal structure agrees: early sells are
                                 possible before M15 confirms with a bearish
                                 BOS.")
-  Optimal Conditions            OPTIMAL (green) or NOT OPTIMAL (red), then one
-                                row per selected requirement with PASS (green)
-                                or BLOCKED (red). The tooltip is the reason.
+  Optimal Conditions            only when at least one requirement is
+                                selected (none by default): OPTIMAL (green)
+                                or NOT OPTIMAL (red), then one row per
+                                selected requirement with PASS (green) or
+                                BLOCKED (red). The tooltip is the reason.
 Disabled timeframes and optimal-condition requirements are omitted rather
 than displayed as inactive rows.
 
@@ -737,11 +789,11 @@ qualified; the filters never change structure, trend, tradability or alerts.
 
 The **Optimal Conditions** input group exposes one Use_*_For_Optimal switch
 for each of the four requirements below. OPTIMAL is printed only when every
-selected requirement passes, and at least one switch must remain enabled.
-Unselected requirements neither affect the result nor appear on the
-dashboard. Tuning values are internal and hidden from the Inputs dialog.
+selected requirement passes. All four are off by default, and with none
+selected the meter is left off the dashboard. Unselected requirements
+neither affect the result nor appear on the dashboard. Tuning values are internal and hidden from the Inputs dialog.
 
-Timeframe Correlation (Use_Timeframe_Correlation_For_Optimal, default true)
+Timeframe Correlation (Use_Timeframe_Correlation_For_Optimal, default false)
   Passes whenever Market Tradability is Tradable or Tradable (Early) (section
   9): in both, every selected timeframe agrees on the direction.
 
@@ -773,7 +825,7 @@ Healthy Extension (Use_Healthy_Extension_For_Optimal, default false)
   14. The generated markets have no mean reversion (their most extended
   candles did best), so they could not set the limit.
 
-Good Market Volume (Use_Market_Volume_For_Optimal, default true)
+Good Market Volume (Use_Market_Volume_For_Optimal, default false)
   The newest closed LTF candle's tick volume is divided by the average of the
   preceding Volume_Average_Length candles (20). It passes from
   Volume_Minimum_Ratio (0.50) through Volume_Maximum_Ratio (2.00), inclusive.
