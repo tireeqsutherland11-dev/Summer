@@ -2,9 +2,9 @@
 // 83% Strategy - Base market structure (Base.pine v2.43) with Fib Base's
 // Fibonacci engine, as a TradingView strategy. Same rules as 83% Strategy.mq5.
 //
-// Bullish (buys only): Market Tradability reads Tradable (the Market Trend
-// and the Internal Structure of every selected timeframe are bullish, a
-// Transition, BOS or CHoCH alike); on the LTF (M30, Swing Detection level 3, 40 independent processed
+// Bullish (buys only): Market Tradability reads Tradable (the HTF 50 EMA is
+// above the HTF 200 EMA and the MTF's latest swing high is above the
+// previous one, an HH); on the LTF (M30, Swing Detection level 3, 40 independent processed
 // bars), once a candle has closed above the swing high before the most
 // recent HL with heavy buying pressure (the break of structure), the
 // Fibonacci runs from the highest high since that HL (0%, B, which follows
@@ -64,13 +64,14 @@ strategy("83% Strategy", shorttitle = "83%", overlay = true, initial_capital = 1
 // ---------------------------------------------------------------- inputs
 grpTf = "Timeframes"
 htfTf = input.timeframe("240", "HTF", group = grpTf, tooltip = "Higher timeframe (HTF). Its structure sets the main trend, Market Tradability, the HTF MA, ADX, ATR and session filters, and the alerts.")
-mtfTf = input.timeframe("60", "MTF", group = grpTf, tooltip = "Middle timeframe (MTF). Its Market Trend and Internal Structure must agree with the other timeframes for Market Tradability, and it drives the MTF MA filter.")
-ltfTf = input.timeframe("30", "LTF", group = grpTf, tooltip = "Lower timeframe (LTF), the chart the 83% Strategy trades on. Its Market Trend and Internal Structure must agree with the other timeframes for Market Tradability.")
+mtfTf = input.timeframe("60", "MTF", group = grpTf, tooltip = "Middle timeframe (MTF). Its swings decide Market Tradability with the HTF EMAs: an HH (latest swing high above the previous) for buys, an LL for sells. It also drives the MTF MA filter.")
+ltfTf = input.timeframe("30", "LTF", group = grpTf, tooltip = "Lower timeframe (LTF), the chart the 83% Strategy trades on: its setups, entries and drawings.")
 
-grpTrend = "Trend Analysis Timeframes"
-useHtf = input.bool(true, "Use HTF", group = grpTrend, tooltip = "Show the HTF Market Trend and require it to agree with the other selected timeframes for Market Tradability. An established HTF trend is always required.")
-useMtf = input.bool(true, "Use MTF", group = grpTrend, tooltip = "Show the MTF Market Trend and require it to agree with the other selected timeframes for Market Tradability. It may be in transition.")
-useLtf = input.bool(false, "Use LTF", group = grpTrend, tooltip = "Show the LTF Market Trend and require it to agree for Market Tradability. A selected LTF trend must itself be established (latest break a BOS).")
+// Base's Trend Analysis Timeframes are fixed: the 83% Strategy's trend is the
+// HTF EMAs and the MTF swings (see evaluateTradability).
+useHtf = true
+useMtf = true
+useLtf = false
 
 grpProc = "Structure Bar Processing"
 barsToProcess = input.int(100, "Bars To Process", minval = 100, maxval = 100000, group = grpProc, tooltip = "How many HTF candles back structure is drawn. Other chart timeframes cover the same span of time. Structure is always calculated on all loaded history.")
@@ -83,8 +84,8 @@ showSwingPoints = input.bool(true, "Show Swing Points", group = grpSwing, toolti
 showStrongWeak = input.bool(true, "Show Strong/Weak High/Low", group = grpSwing, tooltip = "Display Strong/Weak High/Low. Each break protects the latest swing on the other side (Strong); the trend's running extreme is Weak, the next target.")
 
 grpInternal = "Internal Structure"
-showInternal = input.bool(true, "Show Internal Structure", group = grpInternal, tooltip = "Display the internal BOS/CHoCH: minor breaks inside the swings, drawn as dashed lines with faded captions.")
-showInternalOnDashboard = input.bool(true, "Show Internal Structure On Dashboard", group = grpInternal, tooltip = "Show each timeframe's internal trend under its Market Trend on the dashboard.")
+showInternal = input.bool(false, "Show Internal Structure", group = grpInternal, tooltip = "Display the internal BOS/CHoCH on the chart: minor breaks inside the swings, drawn as dashed lines with faded captions. It is only drawn; it plays no part in Market Tradability.")
+showInternalOnDashboard = false
 htfInternalLevel = input.int(4, "HTF Internal Structure Length (1-10)", minval = 1, maxval = 10, group = grpInternal, tooltip = "Size of the HTF internal swings. Keep it below the timeframe's Swing Detection Length: at or above it, almost every internal pivot is also a main swing and almost nothing is drawn. 1 = finest, 10 = broadest; each step changes about a third of the drawn swings. Candles on each side of a pivot (also how many candles a swing takes to confirm): 1:1, 2:2, 3:3, 4:5, 5:7, 6:10, 7:14, 8:19, 9:26, 10:36.")
 mtfInternalLevel = input.int(4, "MTF Internal Structure Length (1-10)", minval = 1, maxval = 10, group = grpInternal, tooltip = "Size of the MTF internal swings. Keep it below the timeframe's Swing Detection Length: at or above it, almost every internal pivot is also a main swing and almost nothing is drawn. 1 = finest, 10 = broadest; each step changes about a third of the drawn swings. Candles on each side of a pivot (also how many candles a swing takes to confirm): 1:1, 2:2, 3:3, 4:5, 5:7, 6:10, 7:14, 8:19, 9:26, 10:36.")
 ltfInternalLevel = input.int(4, "LTF Internal Structure Length (1-10)", minval = 1, maxval = 10, group = grpInternal, tooltip = "Size of the LTF internal swings. Keep it below the timeframe's Swing Detection Length: at or above it, almost every internal pivot is also a main swing and almost nothing is drawn. 1 = finest, 10 = broadest; each step changes about a third of the drawn swings. Candles on each side of a pivot (also how many candles a swing takes to confirm): 1:1, 2:2, 3:3, 4:5, 5:7, 6:10, 7:14, 8:19, 9:26, 10:36.")
@@ -167,6 +168,10 @@ enableAlerts = input.bool(false, "Alert On Structure-Timeframe BOS / CHoCH / LS"
 grpS83Sym = "83% Strategy - Symbol (Deriv Synthetic Indices)"
 minQty = input.float(0.0, "Minimum Quantity (0 = none)", minval = 0.0, group = grpS83Sym, tooltip = "The symbol's minimum order size, e.g. the Deriv minimum lot. A smaller risk-based size is not traded, unless the option below allows the minimum.")
 minQtyRiskMultiple = input.float(0.0, "Trade The Minimum If It Risks At Most N x The Plan (0 = skip)", minval = 0.0, step = 0.5, group = grpS83Sym, tooltip = "When the risk-based size is below the minimum quantity, trade the minimum only if its loss at the stop is at most this many times the planned risk.")
+
+grpS83Trend = "83% Strategy - Trend (HTF EMAs + MTF Swings)"
+htfFastEma = input.int(50, "HTF Fast EMA", minval = 1, maxval = 1000, group = grpS83Trend, tooltip = "Bullish when the HTF fast EMA is above the slow EMA on the latest closed HTF candle and the MTF's latest swing high is above the previous one (an HH). Bearish when it is below and the MTF's latest swing low is below the previous one (an LL).")
+htfSlowEma = input.int(200, "HTF Slow EMA", minval = 2, maxval = 2000, group = grpS83Trend, tooltip = "The slow HTF EMA (200 by default). It must be longer than the fast EMA.")
 
 grpS83 = "83% Strategy - Setup (LTF)"
 ltfBarsToProcess = input.int(40, "LTF Independent Processed Bars", minval = 5, maxval = 400, group = grpS83, tooltip = "How many LTF candles the setup is looked for in, and how far back Base's structure is drawn on the LTF chart. A (the HL or LH) must lie within them; a setup whose A leaves them expires.")
@@ -275,10 +280,10 @@ MAX_TRAP = 50
 HIGH_LABEL_COLOR = #CD5C5C
 LOW_LABEL_COLOR = #008080
 
-if not useHtf and not useMtf and not useLtf
-    runtime.error("Enable at least one trend analysis timeframe")
 if rrHigh < rrLow
     runtime.error("The second standard R:R must be at least the first")
+if htfSlowEma <= htfFastEma
+    runtime.error("The HTF Slow EMA must be longer than the HTF Fast EMA")
 
 // ------------------------------------------------------ structure engine
 // An equal high or low (EQH/EQL, see markEqual) keeps the role of the swing
@@ -977,7 +982,7 @@ structureRequest(int length) =>
     e.classify(atrS)
     [labelsCode, rangeLo, rangeHi, breaksCode, breaksCount, trapCode, trapCount, trap1, trap2, trap3, trap4, latestCode, latestLevel, newCode, hhV, lhV, llV, hlV] = e.summary()
     // Flags cross request.security as 0/1 so a missing value is simply 0.
-    [e.dir, e.lastBos ? 1 : 0, e.consolidation, labelsCode, rangeLo, rangeHi, breaksCode, breaksCount, trapCode, trapCount, trap1, trap2, trap3, trap4, latestCode, latestLevel, newCode, hhV, lhV, llV, hlV, e.eventTotal + e.lsTotal, e.lastHigh, e.lastHighKind, e.haveHigh ? 1 : 0, e.lastLow, e.lastLowKind, e.haveLow ? 1 : 0, e.trailHigh, e.trailLow]
+    [e.dir, e.lastBos ? 1 : 0, e.consolidation, labelsCode, rangeLo, rangeHi, breaksCode, breaksCount, trapCode, trapCount, trap1, trap2, trap3, trap4, latestCode, latestLevel, newCode, hhV, lhV, llV, hlV, e.eventTotal + e.lsTotal, e.lastHigh, e.lastHighKind, e.haveHigh ? 1 : 0, e.lastLow, e.lastLowKind, e.haveLow ? 1 : 0, e.trailHigh, e.trailLow, e.haveHighRef ? e.highRef : na, e.haveLowRef ? e.lowRef : na]
 
 // ----------------------------------------------- internal structure
 // Internal Structure (Smart Money Engine): minor structure inside the swings,
@@ -1107,7 +1112,7 @@ sessionOk() =>
 // Each request returns the state after the last closed candle of its
 // timeframe ([1] with lookahead on), so nothing repaints.
 htfRequest() =>
-    [d, b, cons, lc, rlo, rhi, bc, bn, tc, tn, t1, t2, t3, t4, lcd, llv, nc, vhh, vlh, vll, vhl, et, hp, hk, hv, lp, lk, lv, th, tl] = structureRequest(htfSwingLength)
+    [d, b, cons, lc, rlo, rhi, bc, bn, tc, tn, t1, t2, t3, t4, lcd, llv, nc, vhh, vlh, vll, vhl, et, hp, hk, hv, lp, lk, lv, th, tl, ph, pl] = structureRequest(htfSwingLength)
     float maE = ta.ema(close, htfMaLength)
     float maS = ta.sma(close, htfMaLength)
     float maV = htfMaType == "EMA" ? maE : maS
@@ -1118,13 +1123,13 @@ htfRequest() =>
     [d[1], b[1], cons[1], lc[1], rlo[1], rhi[1], bc[1], bn[1], tc[1], tn[1], t1[1], t2[1], t3[1], t4[1], lcd[1], llv[1], nc[1], vhh[1], vlh[1], vll[1], vhl[1], et[1], close[1], open[1], maV[1], adxV[1], atrV[1], sess[1], th[1], tl[1], iT[1], iC[1], iL[1]]
 
 mtfRequest() =>
-    [d, b, cons, lc, rlo, rhi, bc, bn, tc, tn, t1, t2, t3, t4, lcd, llv, nc, vhh, vlh, vll, vhl, et, hp, hk, hv, lp, lk, lv, th, tl] = structureRequest(mtfSwingLength)
+    [d, b, cons, lc, rlo, rhi, bc, bn, tc, tn, t1, t2, t3, t4, lcd, llv, nc, vhh, vlh, vll, vhl, et, hp, hk, hv, lp, lk, lv, th, tl, ph, pl] = structureRequest(mtfSwingLength)
     [iT, iC, iL] = internalRequest(mtfInternalLength)
     float atrS = swingAtrSeries()
-    [d[1], b[1], cons[1], lc[1], rlo[1], rhi[1], bc[1], bn[1], tc[1], tn[1], t1[1], t2[1], t3[1], t4[1], lcd[1], llv[1], vhh[1], vlh[1], vll[1], vhl[1], th[1], tl[1], iT[1], iC[1], iL[1], hp[1], hv[1], lp[1], lv[1], atrS[1]]
+    [d[1], b[1], cons[1], lc[1], rlo[1], rhi[1], bc[1], bn[1], tc[1], tn[1], t1[1], t2[1], t3[1], t4[1], lcd[1], llv[1], vhh[1], vlh[1], vll[1], vhl[1], th[1], tl[1], iT[1], iC[1], iL[1], hp[1], hv[1], lp[1], lv[1], atrS[1], ph[1], pl[1]]
 
 ltfRequest() =>
-    [d, b, cons, lc, rlo, rhi, bc, bn, tc, tn, t1, t2, t3, t4, lcd, llv, nc, vhh, vlh, vll, vhl, et, hp, hk, hv, lp, lk, lv, th, tl] = structureRequest(ltfSwingLength)
+    [d, b, cons, lc, rlo, rhi, bc, bn, tc, tn, t1, t2, t3, t4, lcd, llv, nc, vhh, vlh, vll, vhl, et, hp, hk, hv, lp, lk, lv, th, tl, ph, pl] = structureRequest(ltfSwingLength)
     float trL = ta.tr(true)
     float volAvg = nz(ta.sma(volume, VOLUME_AVERAGE_LENGTH)[1])
     float volRatio = volAvg > 0 ? nz(volume) / volAvg : 0.0
@@ -1140,7 +1145,9 @@ mtfMaRequest() =>
     [m[1], open[1], close[1]]
 
 [hDir, hBos, hCons, hLabels, hRangeLo, hRangeHi, hBreaks, hBreaksN, hTrap, hTrapN, hT1, hT2, hT3, hT4, hLatest, hLatestLv, hNew, hHH, hLH, hLL, hHL, hEvents, hClose, hOpen, hMa, hAdx, hAtr, hSession, hTrailHigh, hTrailLow, hInTrend, hInChoch, hInLevel] = request.security(syminfo.tickerid, htfTf, htfRequest(), lookahead = barmerge.lookahead_on)
-[mDir, mBos, mCons, mLabels, mRangeLo, mRangeHi, mBreaks, mBreaksN, mTrap, mTrapN, mT1, mT2, mT3, mT4, mLatest, mLatestLv, mHH, mLH, mLL, mHL, mTrailHigh, mTrailLow, mInTrend, mInChoch, mInLevel, mLastHigh, mHaveHigh, mLastLow, mHaveLow, mAtr] = request.security(syminfo.tickerid, mtfTf, mtfRequest(), lookahead = barmerge.lookahead_on)
+[mDir, mBos, mCons, mLabels, mRangeLo, mRangeHi, mBreaks, mBreaksN, mTrap, mTrapN, mT1, mT2, mT3, mT4, mLatest, mLatestLv, mHH, mLH, mLL, mHL, mTrailHigh, mTrailLow, mInTrend, mInChoch, mInLevel, mLastHigh, mHaveHigh, mLastLow, mHaveLow, mAtr, mPrevHigh, mPrevLow] = request.security(syminfo.tickerid, mtfTf, mtfRequest(), lookahead = barmerge.lookahead_on)
+// 83% Strategy trend: the HTF EMAs on the latest closed HTF candle.
+[s83EmaFast, s83EmaSlow] = request.security(syminfo.tickerid, htfTf, [ta.ema(close, htfFastEma)[1], ta.ema(close, htfSlowEma)[1]], lookahead = barmerge.lookahead_on)
 [lDir, lBos, lCons, lLabels, lRangeLo, lRangeHi, lBreaks, lBreaksN, lTrap, lTrapN, lT1, lT2, lT3, lT4, lLatest, lLatestLv, lHH, lLH, lLL, lHL, lClose, lVolAvg, lVolRatio, lTrAvg, lMomRatio, lTrailHigh, lTrailLow, lInTrend, lInChoch, lInLevel] = request.security(syminfo.tickerid, ltfTf, ltfRequest(), lookahead = barmerge.lookahead_on)
 [mtfMaValue, mtfMaOpen, mtfMaClose] = request.security(syminfo.tickerid, mtfTf, mtfMaRequest(), lookahead = barmerge.lookahead_on)
 
@@ -1606,29 +1613,48 @@ joinNames(array<string> names) =>
             r := r + (i == 0 ? "" : i == count - 1 ? " and " : ", ") + names.get(i)
     r
 
-// Market Tradability (83% Strategy; 2 Tradable, 0 Not Tradable): Tradable
-// when the Market Trend and the Internal Structure of every selected
-// timeframe point the same way, bullish or bearish. A Transition counts as
-// its direction, and it does not matter whether the latest break was a BOS
-// or a CHoCH. There is no Tradable (Early). The reason names the first
-// timeframe that does not agree.
-tradableCheck(string name, TfView v, InternalView iv, int d) =>
-    int t = biasDirection(v)
-    t == 0 ? noTrendText(name, v) : t != d ? name + " is " + trendWord(t) + ", not " + trendWord(d) + "." : iv.trend != d ? "The " + name + " internal structure is " + (iv.trend == 0 ? "undefined" : trendWord(iv.trend)) + ", not " + trendWord(d) + "." : ""
+// Market Tradability (83% Strategy; 2 Tradable, 0 Not Tradable): trend
+// identification from the HTF EMA trend filter and the MTF structural
+// progression (see 83% Strategy.mq5's EvaluateTradability).
+//  * Bullish: the HTF fast EMA (50) is above the slow EMA (200) on the latest
+//    closed HTF candle, and the MTF's latest swing high is above the
+//    previous swing high (an HH, upward expansion).
+//  * Bearish: the fast EMA is below the slow EMA, and the MTF's latest swing
+//    low is below the previous swing low (an LL, downward expansion).
+//  * Not Tradable otherwise; the reason names the missing condition.
+// The MTF swings are its structure swings (MTF Swing Detection Length); the
+// previous swing high is the previous leg's (a higher high within the same
+// leg replaces it). The Internal Structure plays no part.
+s83SwingTag(int side, float cur, float prev) =>
+    side > 0 ? (cur > prev ? "HH" : cur < prev ? "LH" : "EQH") : (cur < prev ? "LL" : cur > prev ? "HL" : "EQL")
 
-evaluateTradability(TfView htf, TfView mtf, TfView ltf, InternalView hi, InternalView mi, InternalView li) =>
-    int d = useHtf ? biasDirection(htf) : useMtf ? biasDirection(mtf) : biasDirection(ltf)
+s83EmaText() =>
+    tfName(htfTf) + " " + str.tostring(htfFastEma) + "/" + str.tostring(htfSlowEma) + " EMA"
+
+// The HTF EMA direction: 1 fast above slow, -1 below, 0 equal or unavailable.
+s83EmaDirection() =>
+    na(s83EmaFast) or na(s83EmaSlow) ? 0 : s83EmaFast > s83EmaSlow ? 1 : s83EmaFast < s83EmaSlow ? -1 : 0
+
+evaluateTradability() =>
+    int d = s83EmaDirection()
+    bool haveHighs = nz(mHaveHigh) == 1 and not na(mPrevHigh)
+    bool haveLows = nz(mHaveLow) == 1 and not na(mPrevLow)
+    string ema = tfName(htfTf) + " " + str.tostring(htfFastEma) + " EMA is " + (d > 0 ? "above" : "below") + " the " + str.tostring(htfSlowEma) + " EMA"
+    float cur = d > 0 ? mLastHigh : mLastLow
+    float prev = d > 0 ? mPrevHigh : mPrevLow
     string reason = ""
-    if useHtf
-        reason := tradableCheck(tfName(htfTf), htf, hi, d)
-    if reason == "" and useMtf
-        reason := tradableCheck(tfName(mtfTf), mtf, mi, d)
-    if reason == "" and useLtf
-        reason := tradableCheck(tfName(ltfTf), ltf, li, d)
-    int state = reason == "" and d != 0 ? 2 : 0
-    int selected = (useHtf ? 1 : 0) + (useMtf ? 1 : 0) + (useLtf ? 1 : 0)
-    if state == 2
-        reason := trendTimeframesText() + (selected == 1 ? " is " : selected == 2 ? " are both " : " are all ") + trendWord(d) + ", in their Market Trend and Internal Structure."
+    int state = 0
+    if na(s83EmaFast) or na(s83EmaSlow)
+        reason := "The " + s83EmaText() + " is not available yet (not enough " + tfName(htfTf) + " history)."
+    else if d == 0
+        reason := "The " + tfName(htfTf) + " " + str.tostring(htfFastEma) + " and " + str.tostring(htfSlowEma) + " EMAs are equal."
+    else if not (d > 0 ? haveHighs : haveLows)
+        reason := ema + ", but the " + tfName(mtfTf) + " has no two swing " + (d > 0 ? "highs" : "lows") + " yet."
+    else if d > 0 ? cur <= prev : cur >= prev
+        reason := ema + ", but the " + tfName(mtfTf) + "'s latest swing " + (d > 0 ? "high " : "low ") + priceText(cur) + " is not " + (d > 0 ? "above" : "below") + " the previous one " + priceText(prev) + " (" + s83SwingTag(d, cur, prev) + ", no " + (d > 0 ? "upward" : "downward") + " expansion)."
+    else
+        state := 2
+        reason := ema + ", and the " + tfName(mtfTf) + " made " + (d > 0 ? "an HH" : "an LL") + " (" + priceText(cur) + (d > 0 ? " above " : " below ") + priceText(prev) + ")."
     [state, reason]
 
 // Tradable (Early): early entries in the trend's direction while the
@@ -1737,8 +1763,8 @@ entryFilterTooltip() =>
 // market filters, and Fib Base's Fibonacci engine for the levels. Same rules as
 // 83% Strategy.mq5:
 //  * Bullish (buys only): Market Tradability reads Tradable (bullish): the
-//    Market Trend and the Internal Structure of every selected timeframe are
-//    bullish (a Transition counts, BOS or CHoCH alike). On the LTF chart (M30, Swing Detection level 3
+//    HTF 50 EMA is above the HTF 200 EMA and the MTF's latest swing high is
+//    above the previous one (an HH). On the LTF chart (M30, Swing Detection level 3
 //    by default), within the last LTF Independent Processed Bars (40)
 //    candles, A is the most recent HL with heavy buying pressure; once a
 //    candle closes above the swing high before A, B is the highest high
@@ -1866,14 +1892,14 @@ s83DayName(int d) =>
 // ------------------------------------------------- market filters per candle
 // The latest closed LTF candle is the chart's own when the chart is the LTF.
 bool s83OnLtf = timeframe.in_seconds() == timeframe.in_seconds(ltfTf)
-[s83Tradability, s83TradabilityWhy] = evaluateTradability(htfView, mtfView, ltfView, htfInternal, mtfInternal, ltfInternal)
-int s83MarketDir = useHtf ? biasDirection(htfView) : useMtf ? biasDirection(mtfView) : biasDirection(ltfView)
+[s83Tradability, s83TradabilityWhy] = evaluateTradability()
+int s83MarketDir = s83EmaDirection()
 
 // Why an armed setup in direction `dir` cannot be entered on the next candle,
 // or "" when it can (market filters only).
 // The market filter of an entry: Market Tradability reads Tradable in its
-// direction: every selected timeframe's Market Trend and Internal Structure
-// agree (see evaluateTradability).
+// direction: the HTF EMA trend and the MTF swings agree (see
+// evaluateTradability).
 s83FilterText(int dir) =>
     string r = ""
     if s83Tradability != 2
@@ -2219,8 +2245,8 @@ if barstate.isconfirmed and s83OnLtf
                 s83Breakeven := true
                 strategy.exit(isLong ? "83% buy exit" : "83% sell exit", from_entry = isLong ? "83% buy" : "83% sell", stop = s.entry, limit = s.tp, comment_loss = "BE", comment_profit = "TP")
 
-    s83FilterDir := not na(s83Buy) and s83Live(s83Buy) ? 1 : not na(s83Sell) and s83Live(s83Sell) ? -1 : biasDirection(mtfView)
-    s83FilterNow := s83FilterDir == 0 ? "the " + tfName(mtfTf) + " has no trend" : s83FilterText(s83FilterDir)
+    s83FilterDir := not na(s83Buy) and s83Live(s83Buy) ? 1 : not na(s83Sell) and s83Live(s83Sell) ? -1 : s83MarketDir
+    s83FilterNow := s83FilterText(s83FilterDir)
 
     // Orders for the next candle.
     int nextDay = dayofweek(time_close)
@@ -2359,34 +2385,25 @@ wrapText(string s) =>
 
 // The dashboard: on the last closed candle too (see the strong/weak lines).
 if barstate.islast or barstate.islastconfirmedhistory
-    [tradability, tradeReason] = evaluateTradability(htfView, mtfView, ltfView, htfInternal, mtfInternal, ltfInternal)
-    bool early = tradability == 1
+    [tradability, tradeReason] = evaluateTradability()
     table.clear(dash, 0, 0, 1, 39)
     int row = 0
-    // Each Market Trend with its Internal Structure below it.
-    if useHtf
-        dashRow(row, "HTF Market Trend (" + tfName(htfTf) + "):", biasText(htfView), trendColor(htfView), breakdownText(htfView))
-        row += 1
-        if showInternalOnDashboard
-            dashRow(row, "Internal Structure:", internalTrendText(htfInternal), internalColor(htfInternal), internalTooltip(htfInternal, htfView, tfName(htfTf), htfInternalLevel))
-            row += 1
-    if useMtf
-        dashRow(row, "MTF Market Trend (" + tfName(mtfTf) + "):", biasText(mtfView), trendColor(mtfView), breakdownText(mtfView))
-        row += 1
-        if showInternalOnDashboard
-            dashRow(row, "Internal Structure:", internalTrendText(mtfInternal), internalColor(mtfInternal), internalTooltip(mtfInternal, mtfView, tfName(mtfTf), mtfInternalLevel))
-            row += 1
-    if useLtf
-        dashRow(row, "LTF Market Trend (" + tfName(ltfTf) + "):", biasText(ltfView), trendColor(ltfView), breakdownText(ltfView))
-        row += 1
-        if showInternalOnDashboard
-            dashRow(row, "Internal Structure:", internalTrendText(ltfInternal), internalColor(ltfInternal), internalTooltip(ltfInternal, ltfView, tfName(ltfTf), ltfInternalLevel))
-            row += 1
-    dashRow(row, "Market Tradability:", tradability == 2 ? "Tradable" : early ? "Tradable (Early)" : "Not Tradable", early ? DASH_EARLY_COLOR : passColor(tradability == 2), entryFilterTooltip())
+    // Trend: the HTF EMAs and the MTF swings, then Market Tradability.
+    int emaDir = s83EmaDirection()
+    bool emaReady = not na(s83EmaFast) and not na(s83EmaSlow)
+    string emaTip = emaReady ? str.tostring(htfFastEma) + " EMA " + priceText(s83EmaFast) + ", " + str.tostring(htfSlowEma) + " EMA " + priceText(s83EmaSlow) + " (latest closed " + tfName(htfTf) + " candle)" : "Not enough " + tfName(htfTf) + " history yet"
+    dashRow(row, "HTF Trend (" + s83EmaText() + "):", not emaReady ? "Not available" : emaDir > 0 ? "Bullish (" + str.tostring(htfFastEma) + " above " + str.tostring(htfSlowEma) + ")" : emaDir < 0 ? "Bearish (" + str.tostring(htfFastEma) + " below " + str.tostring(htfSlowEma) + ")" : "Flat (EMAs equal)", emaDir > 0 ? DASH_POSITIVE_COLOR : emaDir < 0 ? DASH_NEGATIVE_COLOR : DASH_NEUTRAL_COLOR, emaTip)
+    row += 1
+    bool haveHighs = nz(mHaveHigh) == 1 and not na(mPrevHigh)
+    bool haveLows = nz(mHaveLow) == 1 and not na(mPrevLow)
+    bool upExp = haveHighs and mLastHigh > mPrevHigh
+    bool downExp = haveLows and mLastLow < mPrevLow
+    string swingTip = "Latest swing high " + (haveHighs ? priceText(mLastHigh) + " vs previous " + priceText(mPrevHigh) : "-") + "; latest swing low " + (haveLows ? priceText(mLastLow) + " vs previous " + priceText(mPrevLow) : "-")
+    dashRow(row, "MTF Swings (" + tfName(mtfTf) + "):", (haveHighs ? s83SwingTag(1, mLastHigh, mPrevHigh) : "no two swing highs yet") + " + " + (haveLows ? s83SwingTag(-1, mLastLow, mPrevLow) : "no two swing lows yet"), upExp and not downExp ? DASH_POSITIVE_COLOR : downExp and not upExp ? DASH_NEGATIVE_COLOR : DASH_NEUTRAL_COLOR, swingTip)
+    row += 1
+    dashRow(row, "Market Tradability:", tradability == 2 ? "Tradable (" + trendWord(emaDir) + ")" : "Not Tradable", passColor(tradability == 2), entryFilterTooltip())
     row += 1
     dashRow(row, "Tradability Reason:", wrapText(tradeReason), DASH_TEXT_COLOR, "")
-    row += 1
-    dashRow(row, "Trade Recommendations:", wrapText(tradeRecommendation(htfView, mtfView, ltfView, tradability)), DASH_TEXT_COLOR, "")
     row += 1
     // 83% Strategy: its state, the armed setups, the entry filters behind the
     // pending orders, today's risk and the latest outcome.

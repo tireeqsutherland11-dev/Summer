@@ -35,10 +35,11 @@ input ENUM_TIMEFRAMES Structure_Timeframe=PERIOD_H4; // HTF
 input ENUM_TIMEFRAMES Setup_Entry_Timeframe=PERIOD_H1; // MTF
 input ENUM_TIMEFRAMES LTF_Timeframe=PERIOD_M30; // LTF
 
-input group "Trend Analysis Timeframes"
-input bool Use_HTF=true; // Use HTF
-input bool Use_MTF=true; // Use MTF
-input bool Use_LTF=false; // Use LTF
+// Base's Trend Analysis Timeframes are fixed: the 83% Strategy's trend is the
+// HTF EMAs and the MTF swings (see EvaluateTradability).
+const bool Use_HTF=true;
+const bool Use_MTF=true;
+const bool Use_LTF=false;
 
 input group "Structure Bar Processing"
 input int Bars_To_Process=100;
@@ -51,8 +52,8 @@ input bool Show_Swing_Points=true;
 input bool Show_Strong_Weak_High_Low=true; // Show Strong/Weak High/Low
 
 input group "Internal Structure"
-input bool Show_Internal_Structure=true; // Show Internal Structure
-input bool Show_Internal_On_Dashboard=true; // Show Internal Structure On Dashboard
+input bool Show_Internal_Structure=false; // Show Internal Structure (on the chart only)
+const bool Show_Internal_On_Dashboard=false;   // the Internal Structure is not on the dashboard
 input int HTF_Internal_Level=4; // HTF Internal Structure Length (1-10)
 input int MTF_Internal_Level=4; // MTF Internal Structure Length (1-10)
 input int LTF_Internal_Level=4; // LTF Internal Structure Length (1-10)
@@ -119,6 +120,10 @@ input bool Enable_Push_Notifications=false;
 
 input group "83% Strategy - Symbol (Deriv Synthetic Indices)"
 input double Minimum_Lot_Max_Risk_Multiple=0.0;   // Trade The Minimum Lot If It Risks At Most N x The Planned Risk (0 = skip)
+
+input group "83% Strategy - Trend (HTF EMAs + MTF Swings)"
+input int    HTF_Fast_EMA=50;                     // HTF Fast EMA (bullish above the slow one)
+input int    HTF_Slow_EMA=200;                    // HTF Slow EMA
 
 input group "83% Strategy - Setup (LTF)"
 input int    LTF_Bars_To_Process=40;              // LTF Independent Processed Bars
@@ -1454,39 +1459,92 @@ string JoinNames(const string &names[],const int count)
    return result;
   }
 
-// Market Tradability (83% Strategy): Tradable when the Market Trend and the
-// Internal Structure of every selected timeframe point the same way, bullish
-// or bearish.  A Transition counts as its direction, and it does not matter
-// whether the latest break was a BOS or a CHoCH.  Not Tradable otherwise;
-// there is no Tradable (Early).  The reason names the first timeframe that
-// does not agree.
-string TradableCheck(const string name,const BASE_STRUCTURE_STATE &state,
-                     const BASE_INTERNAL_STRUCTURE &internal,const int direction)
+// Market Tradability (83% Strategy): trend identification from the HTF EMA
+// trend filter and the MTF structural progression.
+//  * Bullish: the HTF fast EMA (HTF_Fast_EMA, 50) is above the HTF slow EMA
+//    (HTF_Slow_EMA, 200) on the latest closed HTF candle, and the MTF shows
+//    upward expansion: its latest swing high is above the previous swing
+//    high (an HH).
+//  * Bearish: the HTF fast EMA is below the slow EMA, and the MTF shows
+//    downward expansion: its latest swing low is below the previous swing
+//    low (an LL).
+//  * Not Tradable otherwise; the reason names the missing condition.
+// The MTF swings are its structure swings (MTF Swing Detection Length): the
+// latest swing high and the one before it (the previous leg's high; a
+// higher high within the same leg replaces it), and the same for lows.  The
+// Internal Structure plays no part (it is only drawn on the chart).
+struct S83_TREND
   {
-   int trend=BiasDirection(state);
-   if(trend==0) return NoTrendText(name,state);
-   if(trend!=direction) return name+" is "+TrendWord(trend)+", not "+TrendWord(direction)+".";
-   if(internal.trend!=direction)
-      return "The "+name+" internal structure is "+(internal.trend==0?"undefined":TrendWord(internal.trend))+
-             ", not "+TrendWord(direction)+".";
-   return "";
+   bool have_ema;
+   double ema_fast;
+   double ema_slow;
+   int ema_direction;       // 1 fast above slow, -1 below, 0 equal or unavailable
+   bool have_highs;
+   double high;             // the MTF's latest swing high
+   double prev_high;        // the swing high before it
+   bool have_lows;
+   double low;
+   double prev_low;
+  };
+
+// The latest swing on one side (1 highs, -1 lows) and the one before it,
+// skipping swings a later one in the same leg replaced.
+bool S83LastTwoSwings(const BASE_STRUCTURE_POINT &points[],const int side,double &current,double &previous)
+  {
+   int found=0;
+   for(int k=ArraySize(points)-1;k>=0 && found<2;k--)
+     {
+      if(points[k].side!=side || points[k].superseded) continue;
+      if(found==0) current=points[k].price;
+      else previous=points[k].price;
+      found++;
+     }
+   return found==2;
   }
 
-BASE_TRADABILITY EvaluateTradability(const BASE_STRUCTURE_STATE &htf,const BASE_STRUCTURE_STATE &mtf,
-                                     const BASE_STRUCTURE_STATE &ltf,
-                                     const BASE_INTERNAL_STRUCTURE &htf_internal,
-                                     const BASE_INTERNAL_STRUCTURE &mtf_internal,
-                                     const BASE_INTERNAL_STRUCTURE &ltf_internal,string &reason)
+// "HH", "LH" or "EQH" for highs; "LL", "HL" or "EQL" for lows.
+string S83SwingTag(const int side,const double current,const double previous)
   {
-   int direction=Use_HTF?BiasDirection(htf):(Use_MTF?BiasDirection(mtf):BiasDirection(ltf));
-   reason="";
-   if(Use_HTF) reason=TradableCheck(HTFName(),htf,htf_internal,direction);
-   if(reason=="" && Use_MTF) reason=TradableCheck(MTFName(),mtf,mtf_internal,direction);
-   if(reason=="" && Use_LTF) reason=TradableCheck(LTFName(),ltf,ltf_internal,direction);
-   if(reason!="" || direction==0) return BASE_NOT_TRADABLE;
-   int selected=(Use_HTF?1:0)+(Use_MTF?1:0)+(Use_LTF?1:0);
-   reason=TrendTimeframesText()+(selected==1?" is ":selected==2?" are both ":" are all ")+TrendWord(direction)+
-          ", in their Market Trend and Internal Structure.";
+   if(side>0) return current>previous?"HH":current<previous?"LH":"EQH";
+   return current<previous?"LL":current>previous?"HL":"EQL";
+  }
+
+string S83EmaText()
+  {
+   return HTFName()+" "+(string)HTF_Fast_EMA+"/"+(string)HTF_Slow_EMA+" EMA";
+  }
+
+BASE_TRADABILITY EvaluateTradability(const S83_TREND &trend,string &reason)
+  {
+   if(!trend.have_ema)
+     {
+      reason="The "+S83EmaText()+" is not available yet (not enough "+HTFName()+" history).";
+      return BASE_NOT_TRADABLE;
+     }
+   int d=trend.ema_direction;
+   if(d==0)
+     {
+      reason="The "+HTFName()+" "+(string)HTF_Fast_EMA+" and "+(string)HTF_Slow_EMA+" EMAs are equal.";
+      return BASE_NOT_TRADABLE;
+     }
+   string ema=HTFName()+" "+(string)HTF_Fast_EMA+" EMA is "+(d>0?"above":"below")+" the "+(string)HTF_Slow_EMA+" EMA";
+   bool have=d>0?trend.have_highs:trend.have_lows;
+   if(!have)
+     {
+      reason=ema+", but the "+MTFName()+" has no two swing "+(d>0?"highs":"lows")+" yet.";
+      return BASE_NOT_TRADABLE;
+     }
+   double current=d>0?trend.high:trend.low,previous=d>0?trend.prev_high:trend.prev_low;
+   string tag=S83SwingTag(d,current,previous);
+   if(d>0?current<=previous:current>=previous)
+     {
+      reason=ema+", but the "+MTFName()+"'s latest swing "+(d>0?"high ":"low ")+PriceText(current)+" is not "+
+             (d>0?"above":"below")+" the previous one "+PriceText(previous)+" ("+tag+", no "+
+             (d>0?"upward":"downward")+" expansion).";
+      return BASE_NOT_TRADABLE;
+     }
+   reason=ema+", and the "+MTFName()+" made "+(d>0?"an HH":"an LL")+" ("+PriceText(current)+" "+
+          (d>0?"above ":"below ")+PriceText(previous)+").";
    return BASE_TRADABLE;
   }
 
@@ -1979,40 +2037,29 @@ void AddInternalStructureRow(BASE_DASHBOARD_ROW &rows[],const BASE_INTERNAL_STRU
 // Each selected timeframe's Market Trend (its breakdown is the tooltip),
 // Market Tradability (the entry filters are its tooltip), the reason and the
 // HTF trade recommendation, then the 83% Strategy rows.
-void DrawDashboard(const BASE_STRUCTURE_STATE &htf,const string htf_breakdown,
-                   const string recommendation,const BASE_STRUCTURE_STATE &mtf,
-                   const string mtf_breakdown,const BASE_STRUCTURE_STATE &ltf,
-                   const string ltf_breakdown,const BASE_INTERNAL_STRUCTURE &htf_internal,
-                   const BASE_INTERNAL_STRUCTURE &mtf_internal,const BASE_INTERNAL_STRUCTURE &ltf_internal,
-                   const BASE_TRADABILITY tradability,
+void DrawDashboard(const S83_TREND &trend,const BASE_TRADABILITY tradability,
                    const string tradability_reason,const string filter_tooltip)
   {
    Comment("");
    BASE_DASHBOARD_ROW rows[];
-   if(Use_HTF)
-     {
-      AddDashboardRow(rows,"HTF Market Trend ("+HTFName()+"):",BiasText(htf),TrendColor(htf),
-                      htf_breakdown);
-      AddInternalStructureRow(rows,htf_internal,htf,HTFName(),HTF_Internal_Level);
-     }
-   if(Use_MTF)
-     {
-      AddDashboardRow(rows,"MTF Market Trend ("+MTFName()+"):",BiasText(mtf),TrendColor(mtf),
-                      mtf_breakdown);
-      AddInternalStructureRow(rows,mtf_internal,mtf,MTFName(),MTF_Internal_Level);
-     }
-   if(Use_LTF)
-     {
-      AddDashboardRow(rows,"LTF Market Trend ("+LTFName()+"):",BiasText(ltf),TrendColor(ltf),
-                      ltf_breakdown);
-      AddInternalStructureRow(rows,ltf_internal,ltf,LTFName(),LTF_Internal_Level);
-     }
+   int d=trend.have_ema?trend.ema_direction:0;
+   string ema_tip=trend.have_ema?(string)HTF_Fast_EMA+" EMA "+PriceText(trend.ema_fast)+", "+(string)HTF_Slow_EMA+
+                  " EMA "+PriceText(trend.ema_slow)+" (latest closed "+HTFName()+" candle)":"Not enough "+HTFName()+" history yet";
+   AddDashboardRow(rows,"HTF Trend ("+S83EmaText()+"):",
+                   !trend.have_ema?"Not available":d>0?"Bullish ("+(string)HTF_Fast_EMA+" above "+(string)HTF_Slow_EMA+")":
+                   d<0?"Bearish ("+(string)HTF_Fast_EMA+" below "+(string)HTF_Slow_EMA+")":"Flat (EMAs equal)",
+                   d>0?DASHBOARD_POSITIVE_COLOR:d<0?DASHBOARD_NEGATIVE_COLOR:DASHBOARD_NEUTRAL_COLOR,ema_tip);
+   string highs=trend.have_highs?S83SwingTag(1,trend.high,trend.prev_high):"no two swing highs yet";
+   string lows=trend.have_lows?S83SwingTag(-1,trend.low,trend.prev_low):"no two swing lows yet";
+   bool up=trend.have_highs && trend.high>trend.prev_high,down=trend.have_lows && trend.low<trend.prev_low;
+   string swing_tip="Latest swing high "+(trend.have_highs?PriceText(trend.high)+" vs previous "+PriceText(trend.prev_high):"-")+
+                    "; latest swing low "+(trend.have_lows?PriceText(trend.low)+" vs previous "+PriceText(trend.prev_low):"-");
+   AddDashboardRow(rows,"MTF Swings ("+MTFName()+"):",highs+" + "+lows,
+                   up && !down?DASHBOARD_POSITIVE_COLOR:down && !up?DASHBOARD_NEGATIVE_COLOR:DASHBOARD_NEUTRAL_COLOR,swing_tip);
    AddDashboardRow(rows,"Market Tradability:",
-                   tradability==BASE_TRADABLE?"Tradable":tradability==BASE_TRADABLE_EARLY?"Tradable (Early)":
-                   "Not Tradable",tradability==BASE_TRADABLE_EARLY?DASHBOARD_EARLY_COLOR:
+                   tradability==BASE_TRADABLE?"Tradable ("+TrendWord(d)+")":"Not Tradable",
                    PassColor(tradability==BASE_TRADABLE),filter_tooltip);
    AddWrappedDashboardRow(rows,"Tradability Reason:",tradability_reason,DASHBOARD_TEXT_COLOR);
-   AddWrappedDashboardRow(rows,"Trade Recommendations:",recommendation,DASHBOARD_TEXT_COLOR);
    S83DashboardRows(rows);
    DrawDashboardRows(rows);
   }
@@ -2025,10 +2072,10 @@ void DrawDashboard(const BASE_STRUCTURE_STATE &htf,const string htf_breakdown,
 // the market filters, and Fib Base's Fibonacci engine for the levels.
 //
 // Bullish (buys only):
-//  * Market Tradability reads Tradable (bullish): the Market Trend and the
-//    Internal Structure of every selected timeframe are bullish (a Transition
-//    counts, and the latest break may be a BOS or a CHoCH).  There is no
-//    Tradable (Early) and there are no Optimal Conditions.
+//  * Market Tradability reads Tradable (bullish): the HTF 50 EMA is above the
+//    HTF 200 EMA, and the MTF's latest swing high is above the previous one
+//    (an HH, upward expansion).  Bearish: the 50 EMA below the 200 EMA and an
+//    MTF LL.  See EvaluateTradability.  It is the only market filter.
 //  * LTF setup (M30, Swing Detection level 3 by default), searched in the last
 //    LTF_Bars_To_Process (40) closed LTF candles:
 //      A: the most recent HL from which there was heavy buying pressure;
@@ -2215,7 +2262,6 @@ bool g_s83_ready=false;
 // Published by Rebuild for the tick handler and the dashboard.
 BASE_TRADABILITY g_s83_tradability=BASE_NOT_TRADABLE;
 int g_s83_market_direction=0;      // the direction Market Tradability refers to
-int g_s83_mtf_direction=0;
 string g_s83_tradability_reason="";
 double g_s83_atr=0.0;              // LTF ATR of the latest closed LTF candle
 datetime g_s83_last_time=0;        // the latest closed LTF candle
@@ -2435,6 +2481,32 @@ bool S83Used(const datetime &used[],const datetime time)
    for(int i=ArraySize(used)-1;i>=0;i--)
       if(used[i]==time) return true;
    return false;
+  }
+
+// --------------------------------------------------------------- trend
+// The HTF EMAs (on the latest closed HTF candle) and the MTF's last two swing
+// highs and lows, for Market Tradability (see EvaluateTradability).
+int g_s83_ema_fast_handle=INVALID_HANDLE;
+int g_s83_ema_slow_handle=INVALID_HANDLE;
+S83_TREND g_s83_trend;
+
+void S83ReadTrend(const BASE_STRUCTURE_POINT &mtf_points[],S83_TREND &trend)
+  {
+   ZeroMemory(trend);
+   double fast[],slow[];
+   trend.have_ema=g_s83_ema_fast_handle!=INVALID_HANDLE && g_s83_ema_slow_handle!=INVALID_HANDLE &&
+                  iBars(_Symbol,BASETimeframe())>HTF_Slow_EMA &&
+                  CopyBuffer(g_s83_ema_fast_handle,0,1,1,fast)==1 && CopyBuffer(g_s83_ema_slow_handle,0,1,1,slow)==1 &&
+                  fast[0]!=EMPTY_VALUE && slow[0]!=EMPTY_VALUE;
+   if(trend.have_ema)
+     {
+      trend.ema_fast=fast[0];
+      trend.ema_slow=slow[0];
+      trend.ema_direction=fast[0]>slow[0]?1:(fast[0]<slow[0]?-1:0);
+     }
+   trend.have_highs=S83LastTwoSwings(mtf_points,1,trend.high,trend.prev_high);
+   trend.have_lows=S83LastTwoSwings(mtf_points,-1,trend.low,trend.prev_low);
+   g_s83_trend=trend;
   }
 
 // ------------------------------------------------------------ outcomes
@@ -2873,8 +2945,7 @@ void S83Update(const BASE_STRUCTURE_STATE &htf,const BASE_STRUCTURE_STATE &mtf,
   {
    g_s83_tradability=tradability;
    g_s83_tradability_reason=tradability_reason;
-   g_s83_market_direction=Use_HTF?BiasDirection(htf):(Use_MTF?BiasDirection(mtf):BiasDirection(ltf));
-   g_s83_mtf_direction=BiasDirection(mtf);
+   g_s83_market_direction=g_s83_trend.have_ema?g_s83_trend.ema_direction:0;
    double atr[];
    SwingATR(ltf_rates,ltf_total,atr);
    g_s83_atr=atr[ltf_total-1];
@@ -2937,8 +3008,8 @@ void S83DashboardRows(BASE_DASHBOARD_ROW &rows[])
       if(g_s83_armed_valid[slot]!=0)
          AddWrappedDashboardRow(rows,"Setup:",S83SetupText(g_s83_armed[slot]),DASHBOARD_TEXT_COLOR,
                                 "Heavy pressure "+DoubleToString(g_s83_armed[slot].impulse,1)+" "+LTFName()+" ATR");
-   int direction=g_s83_armed_valid[0]!=0?1:(g_s83_armed_valid[1]!=0?-1:g_s83_mtf_direction);
-   string blocker=direction==0?"the "+MTFName()+" has no trend":S83FilterText(direction);
+   int direction=g_s83_armed_valid[0]!=0?1:(g_s83_armed_valid[1]!=0?-1:g_s83_market_direction);
+   string blocker=S83FilterText(direction);
    AddWrappedDashboardRow(rows,"Entry Filters:",blocker==""?"PASS ("+TrendWord(direction)+")":"BLOCKED: "+blocker,
                           PassColor(blocker==""));
    string risk=(string)g_s83_day.trades+"/"+(string)Max_Trades_Per_Day+" trades, risk "+
@@ -2961,8 +3032,8 @@ void S83DashboardRows(BASE_DASHBOARD_ROW &rows[])
 // The market filters alone (no position, day or trade-count checks), for the
 // dashboard.
 // The market filter of an entry: Market Tradability reads Tradable in its
-// direction: every selected timeframe's Market Trend and Internal Structure
-// agree (see EvaluateTradability).
+// direction: the HTF EMA trend and the MTF swings agree (see
+// EvaluateTradability).
 string S83FilterText(const int direction)
   {
    if(g_s83_tradability!=BASE_TRADABLE)
@@ -3107,6 +3178,7 @@ string S83InputProblem()
   {
    if(LTF_Bars_To_Process<5) return "LTF_Bars_To_Process must be at least 5";
    if(Setups_To_Show<0) return "Setups_To_Show cannot be negative";
+   if(HTF_Fast_EMA<1 || HTF_Slow_EMA<=HTF_Fast_EMA) return "the HTF EMAs need 1 <= HTF_Fast_EMA < HTF_Slow_EMA";
    if(Entry_Level<=0.0 || Entry_Level>=1.0) return "the Entry Level must be between 0 and 1 (0.83 = 83%)";
    if(Impulse_Candles<0 || Impulse_Min_ATR<0.0) return "the heavy-pressure inputs cannot be negative";
    if(Risk_Percent<=0.0 || Risk_Percent>100.0) return "Risk_Percent must be above 0 and at most 100";
@@ -3130,10 +3202,21 @@ void S83Init()
    g_s83_breakeven_failed=0;
    g_s83_journaled="";
    g_s83_waiting="";
+   ZeroMemory(g_s83_trend);
+   g_s83_ema_fast_handle=iMA(_Symbol,BASETimeframe(),HTF_Fast_EMA,0,MODE_EMA,PRICE_CLOSE);
+   g_s83_ema_slow_handle=iMA(_Symbol,BASETimeframe(),HTF_Slow_EMA,0,MODE_EMA,PRICE_CLOSE);
    g_trade.SetExpertMagicNumber(Magic_Number);
    g_trade.SetDeviationInPoints(20);
    g_trade.SetTypeFillingBySymbol(_Symbol);
    g_trade.LogLevel(LOG_LEVEL_ERRORS);
+  }
+
+void S83Deinit()
+  {
+   if(g_s83_ema_fast_handle!=INVALID_HANDLE) IndicatorRelease(g_s83_ema_fast_handle);
+   if(g_s83_ema_slow_handle!=INVALID_HANDLE) IndicatorRelease(g_s83_ema_slow_handle);
+   g_s83_ema_fast_handle=INVALID_HANDLE;
+   g_s83_ema_slow_handle=INVALID_HANDLE;
   }
 
 // Returns false while history or an indicator is still being synchronized.
@@ -3193,13 +3276,6 @@ bool Rebuild(const bool permit_alert)
    BASE_STRUCTURE_EVENT events[];
    ReplayStructure(rates,total,length,structure_state,points,events);
 
-   // The internal structure of each trend timeframe, for the dashboard and
-   // Market Tradability.
-   BASE_INTERNAL_STRUCTURE htf_internal,mtf_internal,ltf_internal;
-   BASE_BREAK_MARK unused[];
-   ReplayInternalStructure(rates,total,HTFInternalLength(),htf_internal,unused);
-   ReplayInternalStructure(setup_rates,ArraySize(setup_rates),MTFInternalLength(),mtf_internal,unused);
-   ReplayInternalStructure(ltf_rates,ltf_total,LTFInternalLength(),ltf_internal,unused);
 
    // The MTF MA line, if shown, over the drawn MTF candles.
    MqlRates mtf_rates[];
@@ -3234,17 +3310,15 @@ bool Rebuild(const bool permit_alert)
       DrawAverageLines(rates,total,displayed,ma,mtf_rates,mtf_ma,mtf_count);
      }
 
+   // Trend: the HTF EMAs on the latest closed HTF candle and the MTF swings.
+   S83_TREND trend;
+   S83ReadTrend(setup_points,trend);
    string tradability_reason="";
-   BASE_TRADABILITY tradability=EvaluateTradability(structure_state,setup_state,ltf_state,htf_internal,
-                                                    mtf_internal,ltf_internal,tradability_reason);
+   BASE_TRADABILITY tradability=EvaluateTradability(trend,tradability_reason);
    S83Update(structure_state,setup_state,ltf_state,ltf_rates,ltf_total,ltf_points,
              tradability,tradability_reason);
 
-   if(DrawingEnabled())    DrawDashboard(structure_state,BreakdownText(structure_state,points,events),
-                 TradeRecommendation(structure_state,points,setup_state,ltf_state,tradability),
-                 setup_state,BreakdownText(setup_state,setup_points,setup_events),
-                 ltf_state,BreakdownText(ltf_state,ltf_points,ltf_events),
-                 htf_internal,mtf_internal,ltf_internal,tradability,tradability_reason,EntryFilterTooltip(rates[total-1],ma,adx,atr));
+   if(DrawingEnabled()) DrawDashboard(trend,tradability,tradability_reason,EntryFilterTooltip(rates[total-1],ma,adx,atr));
    if(DrawingEnabled()) S83DrawAll();
    g_s83_waiting="";
    // Alert every event that became known on the newest closed candle (a CHoCH
@@ -3325,6 +3399,7 @@ void OnDeinit(const int reason)
    g_mtf_ma_handle=INVALID_HANDLE;
    g_adx_handle=INVALID_HANDLE;
    g_atr_handle=INVALID_HANDLE;
+   S83Deinit();
    ObjectsDeleteAll(0,g_prefix);
    Comment("");
   }
