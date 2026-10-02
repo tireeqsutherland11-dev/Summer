@@ -762,15 +762,16 @@ engine, labels and dashboard unchanged. Both use Fib Base's Fibonacci engine
 Buys (bullish market):
 
 1. **Market Tradability.** The dashboard's Market Tradability reads
-   **Tradable** (bullish). By default, that means the Market Trend and the
-   Internal Structure of every selected timeframe (HTF, MTF and LTF) read
+   **Tradable** (bullish). That means the Market Trend and the Internal
+   Structure of every selected timeframe (HTF, MTF and LTF by default) read
    bullish.
    - A Bullish Transition counts as bullish.
    - It does not matter whether the latest break was a BOS or a CHoCH.
-   - Consolidation / Undefined, or any of them pointing the other way, is
-     Not Tradable. The reason names the first one that does not agree.
-   - What counts, and which kinds of break are accepted, is set in the
-     [Market Tradability inputs](#market-tradability-inputs).
+   - Consolidation / Undefined, an undefined internal structure, or any of
+     them pointing the other way, is Not Tradable. The reason names the
+     first one that does not agree.
+   - The internal structures count even when their dashboard rows are
+     hidden.
    - This is the only market filter: there are no Optimal Conditions and no
      Tradable (Early) in the strategy. Base's own indicator keeps its rules.
 2. **LTF setup.** The LTF is M30 with LTF Swing Detection level 3 (3 candles
@@ -827,39 +828,6 @@ How the rules are made exact:
 - **The processed bars.** A must lie within the processed candles. A setup
   whose A leaves them **expires**. On the LTF chart, Base's structure is also
   drawn over just those candles.
-
-### Market Tradability inputs
-
-The **83% Strategy - Market Tradability** inputs set what Market Tradability
-takes into account. Each selected timeframe (HTF, MTF, LTF in Base's Trend
-Analysis Timeframes) has two components, each with its own switches:
-
-| Component | Counts | Accepts |
-| --- | --- | --- |
-| Market Trend | `HTF_Trend_Counts` (`HTF Market Trend`) | `HTF_Trend_Accept_BOS` (`BOS`): an established trend, its latest break a BOS (e.g. Bullish). `HTF_Trend_Accept_Transition` (`Transition`): a Transition, its latest break a CHoCH (e.g. Bullish Transition). |
-| Internal Structure | `HTF_Internal_Counts` (`HTF Internal Structure`) | `HTF_Internal_Accept_BOS` (`BOS`): an internal trend whose latest break is a BOS, e.g. Bullish (BOS). `HTF_Internal_Accept_CHoCH` (`CHoCH`): one whose latest break is a CHoCH, e.g. Bullish (CHoCH). |
-
-The MTF and LTF have the same six switches (`MTF_...`, `LTF_...`; on
-TradingView, one row per component). Everything is on by default.
-
-- **Tradable** means every counted component points the same way, each
-  with an accepted kind of break.
-  - The direction is the first counted component's, in this order: HTF
-    trend, HTF internal, MTF trend, MTF internal, LTF trend, LTF internal.
-  - Consolidation / Undefined, or an undefined internal structure, never
-    agrees.
-- **Not Tradable** otherwise. The reason names the first component that
-  blocks, for example:
-  - "H1 is only a bullish Transition (a CHoCH not yet confirmed by a BOS),
-    and Transitions are not accepted.";
-  - "The M30 internal structure is bearish, not bullish.".
-- **Examples:**
-  - Untick `Transition` on the HTF to trade only an established HTF trend.
-  - Untick `CHoCH` on the LTF internal structure to require an internal BOS.
-  - Untick `LTF Internal Structure` to leave it out entirely.
-- **Valid settings.** At least one component must count, and each counted
-  component must accept at least one kind. Otherwise the EA refuses the
-  inputs, and the TradingView strategy shows an error.
 
 ### Risk management (all adjustable)
 
@@ -1040,17 +1008,12 @@ and Python mirrors:
   - a position already open: 5.
 
   The generated markets are random, so they say nothing about profitability.
-- **The Market Tradability rule and its inputs.** Market Tradability was
-  computed for 369,000 cases:
-  - **Defaults:** every combination of three timeframes' Market Trends
-    (none, bullish or bearish by CHoCH or BOS, ranging) and Internal
-    Structures (undefined, bullish or bearish by BOS or CHoCH), for all
-    timeframe selections;
-  - **Other settings:** samples of 60 random settings of the 18 inputs.
-
-  It read Tradable exactly when every counted component agreed with an
-  accepted kind of break. There was a reason in every case and the right
-  direction. Invalid settings were refused and valid ones accepted.
+- **The Tradable rule.** Market Tradability was computed for every
+  combination of three timeframes' Market Trends (none, bullish or bearish
+  by CHoCH or BOS, ranging), Internal Structures (bullish, bearish,
+  undefined) and timeframe selections: 40,824 cases. It read Tradable
+  exactly when every selected timeframe's trend and internal structure
+  agreed, with a reason in every case.
 - **Deriv tests.** Separate tests cover:
   - sizing at the minimum, maximum and total volume limits;
   - the Journal reason while history is missing.

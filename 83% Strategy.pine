@@ -2,10 +2,9 @@
 // 83% Strategy - Base market structure (Base.pine v2.43) with Fib Base's
 // Fibonacci engine, as a TradingView strategy. Same rules as 83% Strategy.mq5.
 //
-// Bullish (buys only): Market Tradability reads Tradable (by default the
-// Market Trend and the Internal Structure of every selected timeframe are
-// bullish, a Transition, BOS or CHoCH alike; see the Market Tradability
-// inputs); on the LTF (M30, Swing Detection level 3, 40 independent processed
+// Bullish (buys only): Market Tradability reads Tradable (the Market Trend
+// and the Internal Structure of every selected timeframe are bullish, a
+// Transition, BOS or CHoCH alike); on the LTF (M30, Swing Detection level 3, 40 independent processed
 // bars), once a candle has closed above the swing high before the most
 // recent HL with heavy buying pressure (the break of structure), the
 // Fibonacci runs from the highest high since that HL (0%, B, which follows
@@ -65,8 +64,8 @@ strategy("83% Strategy", shorttitle = "83%", overlay = true, initial_capital = 1
 // ---------------------------------------------------------------- inputs
 grpTf = "Timeframes"
 htfTf = input.timeframe("240", "HTF", group = grpTf, tooltip = "Higher timeframe (HTF). Its structure sets the main trend, Market Tradability, the HTF MA, ADX, ATR and session filters, and the alerts.")
-mtfTf = input.timeframe("60", "MTF", group = grpTf, tooltip = "Middle timeframe (MTF). Its Market Trend and Internal Structure count towards Market Tradability (see the Market Tradability inputs), and it drives the MTF MA filter.")
-ltfTf = input.timeframe("30", "LTF", group = grpTf, tooltip = "Lower timeframe (LTF), the chart the 83% Strategy trades on. Its Market Trend and Internal Structure count towards Market Tradability (see the Market Tradability inputs).")
+mtfTf = input.timeframe("60", "MTF", group = grpTf, tooltip = "Middle timeframe (MTF). Its Market Trend and Internal Structure must agree with the other timeframes for Market Tradability, and it drives the MTF MA filter.")
+ltfTf = input.timeframe("30", "LTF", group = grpTf, tooltip = "Lower timeframe (LTF), the chart the 83% Strategy trades on. Its Market Trend and Internal Structure must agree with the other timeframes for Market Tradability.")
 
 grpTrend = "Trend Analysis Timeframes"
 useHtf = input.bool(true, "Use HTF", group = grpTrend, tooltip = "Show the HTF Market Trend and require it to agree with the other selected timeframes for Market Tradability. An established HTF trend is always required.")
@@ -175,26 +174,6 @@ entryLevel = input.float(0.83, "Entry Fibonacci Level", minval = 0.01, maxval = 
 impulseCandles = input.int(3, "Heavy Pressure: Candles After The HL/LH", minval = 0, maxval = 20, group = grpS83, tooltip = "Heavy pressure must start the move: a candle within this many candles after A (A's own candle included) must close far enough beyond A (below).")
 impulseMinAtr = input.float(2.0, "Heavy Pressure: Minimum Move (LTF ATR)", minval = 0.0, step = 0.1, group = grpS83, tooltip = "How far beyond A that close must be, in 14-candle LTF ATR measured at A. On real data 2.0 selected the strongest 43% of HL-to-HH legs. 0 accepts every leg.")
 
-grpS83Trad = "83% Strategy - Market Tradability"
-htfTrendCounts = input.bool(true, "HTF Market Trend", inline = "htfT", group = grpS83Trad)
-htfTrendBos = input.bool(true, "BOS", inline = "htfT", group = grpS83Trad)
-htfTrendTransition = input.bool(true, "Transition", inline = "htfT", group = grpS83Trad, tooltip = "Counted: the HTF Market Trend must point the trade direction. BOS: accept an established trend (its latest break a BOS, e.g. Bullish). Transition: accept a Transition (its latest break a CHoCH, e.g. Bullish Transition). Consolidation / Undefined never agrees.")
-htfInternalCounts = input.bool(true, "HTF Internal Structure", inline = "htfI", group = grpS83Trad)
-htfInternalBos = input.bool(true, "BOS", inline = "htfI", group = grpS83Trad)
-htfInternalChoch = input.bool(true, "CHoCH", inline = "htfI", group = grpS83Trad, tooltip = "Counted: the HTF Internal Structure must point the trade direction. BOS: accept an internal trend whose latest break is a BOS, e.g. Bullish (BOS). CHoCH: accept one whose latest break is a CHoCH, e.g. Bullish (CHoCH). Undefined never agrees.")
-mtfTrendCounts = input.bool(true, "MTF Market Trend", inline = "mtfT", group = grpS83Trad)
-mtfTrendBos = input.bool(true, "BOS", inline = "mtfT", group = grpS83Trad)
-mtfTrendTransition = input.bool(true, "Transition", inline = "mtfT", group = grpS83Trad, tooltip = "Counted: the MTF Market Trend must point the trade direction. BOS: accept an established trend (its latest break a BOS, e.g. Bullish). Transition: accept a Transition (its latest break a CHoCH, e.g. Bullish Transition). Consolidation / Undefined never agrees.")
-mtfInternalCounts = input.bool(true, "MTF Internal Structure", inline = "mtfI", group = grpS83Trad)
-mtfInternalBos = input.bool(true, "BOS", inline = "mtfI", group = grpS83Trad)
-mtfInternalChoch = input.bool(true, "CHoCH", inline = "mtfI", group = grpS83Trad, tooltip = "Counted: the MTF Internal Structure must point the trade direction. BOS: accept an internal trend whose latest break is a BOS, e.g. Bullish (BOS). CHoCH: accept one whose latest break is a CHoCH, e.g. Bullish (CHoCH). Undefined never agrees.")
-ltfTrendCounts = input.bool(true, "LTF Market Trend", inline = "ltfT", group = grpS83Trad)
-ltfTrendBos = input.bool(true, "BOS", inline = "ltfT", group = grpS83Trad)
-ltfTrendTransition = input.bool(true, "Transition", inline = "ltfT", group = grpS83Trad, tooltip = "Counted: the LTF Market Trend must point the trade direction. BOS: accept an established trend (its latest break a BOS, e.g. Bullish). Transition: accept a Transition (its latest break a CHoCH, e.g. Bullish Transition). Consolidation / Undefined never agrees.")
-ltfInternalCounts = input.bool(true, "LTF Internal Structure", inline = "ltfI", group = grpS83Trad)
-ltfInternalBos = input.bool(true, "BOS", inline = "ltfI", group = grpS83Trad)
-ltfInternalChoch = input.bool(true, "CHoCH", inline = "ltfI", group = grpS83Trad, tooltip = "Counted: the LTF Internal Structure must point the trade direction. BOS: accept an internal trend whose latest break is a BOS, e.g. Bullish (BOS). CHoCH: accept one whose latest break is a CHoCH, e.g. Bullish (CHoCH). Undefined never agrees.")
-
 grpS83Risk = "83% Strategy - Risk Management"
 riskPercent = input.float(5.0, "Risk (%) Per Trade", minval = 0.01, maxval = 100.0, step = 0.1, group = grpS83Risk, tooltip = "Share of the balance (initial capital plus net profit) lost at the stop. Quantity = balance x risk % / 100 / (stop distance x point value).")
 maxTradesPerDay = input.int(5, "Number Of Trades Per Day (Max)", minval = 1, group = grpS83Risk, tooltip = "At most this many entries per day (exchange time zone).")
@@ -300,12 +279,6 @@ if not useHtf and not useMtf and not useLtf
     runtime.error("Enable at least one trend analysis timeframe")
 if rrHigh < rrLow
     runtime.error("The second standard R:R must be at least the first")
-if not ((useHtf and (htfTrendCounts or htfInternalCounts)) or (useMtf and (mtfTrendCounts or mtfInternalCounts)) or (useLtf and (ltfTrendCounts or ltfInternalCounts)))
-    runtime.error("Count at least one Market Trend or Internal Structure of a selected timeframe for Market Tradability")
-if (htfTrendCounts and not htfTrendBos and not htfTrendTransition) or (mtfTrendCounts and not mtfTrendBos and not mtfTrendTransition) or (ltfTrendCounts and not ltfTrendBos and not ltfTrendTransition)
-    runtime.error("A counted Market Trend must accept BOS, Transition or both")
-if (htfInternalCounts and not htfInternalBos and not htfInternalChoch) or (mtfInternalCounts and not mtfInternalBos and not mtfInternalChoch) or (ltfInternalCounts and not ltfInternalBos and not ltfInternalChoch)
-    runtime.error("A counted Internal Structure must accept BOS, CHoCH or both")
 
 // ------------------------------------------------------ structure engine
 // An equal high or low (EQH/EQL, see markEqual) keeps the role of the swing
@@ -1634,62 +1607,28 @@ joinNames(array<string> names) =>
     r
 
 // Market Tradability (83% Strategy; 2 Tradable, 0 Not Tradable): Tradable
-// when every counted component points the same way, bullish or bearish, with
-// an accepted kind of break. The components are each selected timeframe's
-// Market Trend and Internal Structure, set in the "83% Strategy - Market
-// Tradability" inputs (see 83% Strategy.mq5's EvaluateTradability):
-//  * a counted Market Trend is accepted when established (latest break a
-//    BOS) if BOS is ticked, and when a Transition (latest break a CHoCH) if
-//    Transition is ticked; Consolidation / Undefined never agrees;
-//  * a counted Internal Structure is accepted when its latest break is a BOS
-//    if BOS is ticked, and a CHoCH if CHoCH is ticked; undefined never agrees.
-// The direction is the first counted component's (HTF trend, HTF internal,
-// MTF trend, MTF internal, LTF trend, LTF internal). There is no Tradable
-// (Early). The reason names the first component that does not agree.
-trendCheck(string name, TfView v, int d, bool acceptBos, bool acceptTransition) =>
+// when the Market Trend and the Internal Structure of every selected
+// timeframe point the same way, bullish or bearish. A Transition counts as
+// its direction, and it does not matter whether the latest break was a BOS
+// or a CHoCH. There is no Tradable (Early). The reason names the first
+// timeframe that does not agree.
+tradableCheck(string name, TfView v, InternalView iv, int d) =>
     int t = biasDirection(v)
-    bool established = definiteBias(v)
-    t == 0 ? noTrendText(name, v) : t != d ? name + " is " + trendWord(t) + ", not " + trendWord(d) + "." : established and not acceptBos ? name + " is an established " + trendWord(t) + " trend (latest break a BOS), but only Transitions are accepted." : not established and not acceptTransition ? name + " is only a " + trendWord(t) + " Transition (a CHoCH not yet confirmed by a BOS), and Transitions are not accepted." : ""
-
-internalCheck(string name, InternalView iv, int d, bool acceptBos, bool acceptChoch) =>
-    iv.trend == 0 ? "The " + name + " internal structure is undefined." : iv.trend != d ? "The " + name + " internal structure is " + trendWord(iv.trend) + ", not " + trendWord(d) + "." : iv.lastChoch and not acceptChoch ? "The " + name + " internal structure is " + trendWord(iv.trend) + " by a CHoCH, and internal CHoCHs are not accepted." : not iv.lastChoch and not acceptBos ? "The " + name + " internal structure is " + trendWord(iv.trend) + " by a BOS, and internal BOSs are not accepted." : ""
-
-// The direction Market Tradability refers to: the first counted component's.
-tradabilityDir(TfView htf, TfView mtf, TfView ltf, InternalView hi, InternalView mi, InternalView li) =>
-    useHtf and htfTrendCounts ? biasDirection(htf) : useHtf and htfInternalCounts ? hi.trend : useMtf and mtfTrendCounts ? biasDirection(mtf) : useMtf and mtfInternalCounts ? mi.trend : useLtf and ltfTrendCounts ? biasDirection(ltf) : useLtf and ltfInternalCounts ? li.trend : 0
-
-// "H4 trend + internal, H1 trend + internal and M30 trend + internal".
-countedText() =>
-    array<string> parts = array.new<string>()
-    if useHtf and (htfTrendCounts or htfInternalCounts)
-        parts.push(tfName(htfTf) + (htfTrendCounts and htfInternalCounts ? " trend + internal" : htfTrendCounts ? " trend" : " internal"))
-    if useMtf and (mtfTrendCounts or mtfInternalCounts)
-        parts.push(tfName(mtfTf) + (mtfTrendCounts and mtfInternalCounts ? " trend + internal" : mtfTrendCounts ? " trend" : " internal"))
-    if useLtf and (ltfTrendCounts or ltfInternalCounts)
-        parts.push(tfName(ltfTf) + (ltfTrendCounts and ltfInternalCounts ? " trend + internal" : ltfTrendCounts ? " trend" : " internal"))
-    joinNames(parts)
+    t == 0 ? noTrendText(name, v) : t != d ? name + " is " + trendWord(t) + ", not " + trendWord(d) + "." : iv.trend != d ? "The " + name + " internal structure is " + (iv.trend == 0 ? "undefined" : trendWord(iv.trend)) + ", not " + trendWord(d) + "." : ""
 
 evaluateTradability(TfView htf, TfView mtf, TfView ltf, InternalView hi, InternalView mi, InternalView li) =>
-    int d = tradabilityDir(htf, mtf, ltf, hi, mi, li)
+    int d = useHtf ? biasDirection(htf) : useMtf ? biasDirection(mtf) : biasDirection(ltf)
     string reason = ""
-    if useHtf and htfTrendCounts
-        reason := trendCheck(tfName(htfTf), htf, d, htfTrendBos, htfTrendTransition)
-    if reason == "" and useHtf and htfInternalCounts
-        reason := internalCheck(tfName(htfTf), hi, d, htfInternalBos, htfInternalChoch)
-    if reason == "" and useMtf and mtfTrendCounts
-        reason := trendCheck(tfName(mtfTf), mtf, d, mtfTrendBos, mtfTrendTransition)
-    if reason == "" and useMtf and mtfInternalCounts
-        reason := internalCheck(tfName(mtfTf), mi, d, mtfInternalBos, mtfInternalChoch)
-    if reason == "" and useLtf and ltfTrendCounts
-        reason := trendCheck(tfName(ltfTf), ltf, d, ltfTrendBos, ltfTrendTransition)
-    if reason == "" and useLtf and ltfInternalCounts
-        reason := internalCheck(tfName(ltfTf), li, d, ltfInternalBos, ltfInternalChoch)
-    bool anyCounted = (useHtf and (htfTrendCounts or htfInternalCounts)) or (useMtf and (mtfTrendCounts or mtfInternalCounts)) or (useLtf and (ltfTrendCounts or ltfInternalCounts))
-    if not anyCounted
-        reason := "No Market Tradability component is counted (see the Market Tradability inputs)."
+    if useHtf
+        reason := tradableCheck(tfName(htfTf), htf, hi, d)
+    if reason == "" and useMtf
+        reason := tradableCheck(tfName(mtfTf), mtf, mi, d)
+    if reason == "" and useLtf
+        reason := tradableCheck(tfName(ltfTf), ltf, li, d)
     int state = reason == "" and d != 0 ? 2 : 0
+    int selected = (useHtf ? 1 : 0) + (useMtf ? 1 : 0) + (useLtf ? 1 : 0)
     if state == 2
-        reason := "Every counted component is " + trendWord(d) + ": " + countedText() + "."
+        reason := trendTimeframesText() + (selected == 1 ? " is " : selected == 2 ? " are both " : " are all ") + trendWord(d) + ", in their Market Trend and Internal Structure."
     [state, reason]
 
 // Tradable (Early): early entries in the trend's direction while the
@@ -1797,10 +1736,9 @@ entryFilterTooltip() =>
 // established MTF trend, using Base's structure (above) for the swings and the
 // market filters, and Fib Base's Fibonacci engine for the levels. Same rules as
 // 83% Strategy.mq5:
-//  * Bullish (buys only): Market Tradability reads Tradable (bullish): by
-//    default the Market Trend and the Internal Structure of every selected
-//    timeframe are bullish (a Transition counts, BOS or CHoCH alike; see the
-//    Market Tradability inputs). On the LTF chart (M30, Swing Detection level 3
+//  * Bullish (buys only): Market Tradability reads Tradable (bullish): the
+//    Market Trend and the Internal Structure of every selected timeframe are
+//    bullish (a Transition counts, BOS or CHoCH alike). On the LTF chart (M30, Swing Detection level 3
 //    by default), within the last LTF Independent Processed Bars (40)
 //    candles, A is the most recent HL with heavy buying pressure; once a
 //    candle closes above the swing high before A, B is the highest high
@@ -1929,12 +1867,13 @@ s83DayName(int d) =>
 // The latest closed LTF candle is the chart's own when the chart is the LTF.
 bool s83OnLtf = timeframe.in_seconds() == timeframe.in_seconds(ltfTf)
 [s83Tradability, s83TradabilityWhy] = evaluateTradability(htfView, mtfView, ltfView, htfInternal, mtfInternal, ltfInternal)
-int s83MarketDir = tradabilityDir(htfView, mtfView, ltfView, htfInternal, mtfInternal, ltfInternal)
+int s83MarketDir = useHtf ? biasDirection(htfView) : useMtf ? biasDirection(mtfView) : biasDirection(ltfView)
 
 // Why an armed setup in direction `dir` cannot be entered on the next candle,
 // or "" when it can (market filters only).
 // The market filter of an entry: Market Tradability reads Tradable in its
-// direction (see evaluateTradability and the Market Tradability inputs).
+// direction: every selected timeframe's Market Trend and Internal Structure
+// agree (see evaluateTradability).
 s83FilterText(int dir) =>
     string r = ""
     if s83Tradability != 2
