@@ -179,8 +179,8 @@ and then tune its thresholds for the symbol and timeframe.
 market structure from closed candles, draws HH/HL/LH/LL, BOS and CHoCH, and
 reports multi-timeframe tradability and market conditions. It also marks
 equal highs and lows (EQH/EQL), Strong/Weak High/Low, and a finer Internal
-Structure with its own BOS/CHoCH. It never places, modifies, or closes
-trades.
+Structure with its own BOS/CHoCH, and measures trend persistence with the
+Hurst exponent. It never places, modifies, or closes trades.
 
 ## Install and start
 
@@ -190,8 +190,8 @@ trades.
 3. In MetaTrader 5, refresh **Navigator > Expert Advisors**, then drag **Base**
    onto a chart. An invalid input is reported in the Experts tab with the
    input's name and valid range.
-4. Leave the default timeframes for the intended H1 structure / M15 setup /
-   M5 confirmation workflow, or deliberately select alternatives.
+4. Leave the default timeframes (HTF H1, MTF M30, LTF M15; by default only
+   the HTF decides Market Tradability), or deliberately select alternatives.
 5. Keep **Algo Trading** enabled if you want the EA event loop to run. Base
    itself does not submit orders.
 6. Enable terminal push notifications and provide a MetaQuotes ID before
@@ -434,7 +434,9 @@ and bold, for example **Market Trend (H4):**. Only the outputs are coloured:
 | Output | Green | Red | Grey | Amber |
 |---|---|---|---|---|
 | Market Trend | Bullish, Bullish Transition | Bearish, Bearish Transition | Consolidation / Undefined | |
+| Swing Structure | HH + HL | LL + LH | anything else | |
 | Internal Structure | Bullish | Bearish | Undefined | |
+| Hurst Exponent | above `Hurst_Minimum` | not above it | not available | |
 | Market Tradability | Tradable | Not Tradable | | Tradable (Early) |
 | Optimal Conditions and each condition | OPTIMAL, PASS | NOT OPTIMAL, BLOCKED | | |
 
@@ -455,6 +457,11 @@ The black text is made for a light chart background.
 
   Each trend is replayed independently with its own Swing Detection Length,
   and new swings that break nothing never change it.
+- **Swing Structure.** Below each Market Trend, indented: the latest swing
+  high against the previous one (HH, LH or EQH) and the same for lows (LL,
+  HL or EQL), for example `HH + HL`. The previous swing is the previous
+  leg's; a higher high within the same leg replaces it. Hover it for the
+  prices.
 - **Internal Structure.** Below each Market Trend, indented, that
   timeframe's internal trend with its latest internal break, for example
   `Bullish (CHoCH)`, or Undefined before the first break (green, red or
@@ -466,21 +473,31 @@ The black text is made for a light chart background.
     (a pullback until the swing structure breaks).`
 
   `Show_Internal_On_Dashboard` hides these rows.
+- **Hurst Exponent (H1).** The Hurst exponent H of the last 100 closed HTF
+  candles, with its reading: trending (above 0.55), random walk (0.45 to
+  0.55) or mean-reverting (below 0.45). See **Hurst exponent** below.
 - **Market Tradability.** Tradable, Tradable (Early) or Not Tradable. It is
   an analytical state, not an instruction to place a trade.
-  - **Tradable** always requires an established Bullish or Bearish HTF trend
-    (latest break a BOS, not Consolidation / Undefined). Every timeframe
-    selected in **Trend Analysis Timeframes** must have a direction (a
-    Consolidation / Undefined trend has none), and they must agree. The MTF
-    may be transitional, but a selected LTF must itself be established.
-  - **Tradable (Early)**, in amber: the same, except that the HTF (or a
-    selected LTF) is only in transition (a CHoCH not yet confirmed by a
-    BOS). The HTF must agree with every selected timeframe, and the internal
-    structure of the HTF and of every selected timeframe must agree with
-    that direction. For example, H4 and H1 both Bearish Transition with
-    both internal structures bearish. `Allow_Early_Tradability` (on by
-    default) turns it off. It works even when `Show_Internal_On_Dashboard`
-    hides the Internal Structure rows.
+  - **Tradable** needs all of these to line up in one direction:
+    1. **Market Trend.** The HTF trend, and the trend of every other
+       timeframe selected in **Trend Analysis Timeframes**, is Bullish (or
+       all Bearish): established by a BOS, not a transition and not
+       Consolidation / Undefined.
+    2. **Progressive structure** on each of them. Bullish: a Higher High
+       (`Current_Swing_High > Previous_Swing_High`) and a Higher Low
+       (`Current_Swing_Low > Previous_Swing_Low`). Bearish: a Lower Low and
+       a Lower High.
+    3. **HTF Internal Structure** in that direction, its latest break a BOS
+       (not a CHoCH).
+    4. **Hurst exponent** above `Hurst_Minimum` (0.55).
+  - **Tradable (Early)**, in amber, off by default
+    (`Allow_Early_Tradability`): every selected timeframe agrees with the
+    HTF, but the HTF (or a selected MTF or LTF) is only in transition (a
+    CHoCH not yet confirmed by a BOS), and the internal structure of the HTF
+    and of every selected timeframe agrees with that direction. For
+    example, H4 and H1 both Bearish Transition with both internal
+    structures bearish. It does not check conditions 2 to 4. It works even
+    when `Show_Internal_On_Dashboard` hides the Internal Structure rows.
   - Why a separate state: internal agreement made a transition much more
     likely to reach its confirming BOS, but it still failed about a third
     of the time (see below).
@@ -488,20 +505,24 @@ The black text is made for a light chart background.
     for the latest closed structure candle: whether a long or short
     BOS/CHoCH setup would pass, and each filter's reading.
 - **Tradability Reason.** One sentence that names the timeframes. It says
-  why the market is tradable, or gives the first rule that fails. Like the
-  Trade Recommendations, it wraps onto further lines of at most 48
-  characters so the dashboard stays narrow:
-  - `H4 and H1 are both bullish, and the H4 trend is confirmed by a BOS.`
-  - `H4 is bullish but H1 is bearish.`
-  - `H4 and H1 are both bearish and their internal structure agrees, but the
-    H4 trend is only a transition (a CHoCH not yet confirmed by a BOS).`
-    (Tradable (Early))
-  - `H4 is only in a bullish transition (a CHoCH not yet confirmed by a BOS).`
-  - `H4 is only in a bearish transition (a CHoCH not yet confirmed by a BOS),
-    and the H1 internal structure is not bearish yet.` (it would be Tradable
-    (Early) once the H1 internal structure turns bearish)
+  why the market is tradable. Otherwise it gives the trend problem, or, once
+  the trends line up, every other condition that fails. Like the Trade
+  Recommendations, it wraps onto further lines of at most 48 characters so
+  the dashboard stays narrow:
+  - `H1 is bullish (BOS) with HH + HL, the H1 internal structure is bullish
+    (BOS), and the Hurst exponent 0.62 is above 0.55.` (Tradable)
+  - `H1 is bearish (BOS), but the H1 swings are LH + HL (bearish needs LL +
+    LH); the Hurst exponent 0.48 is not above 0.55 (random walk).`
+  - `H1 is bullish (BOS), but the H1 internal structure is bullish (CHoCH),
+    not bullish (BOS).`
+  - `H1 is bullish but M30 is bearish.` (MTF selected)
+  - `H1 is only in a bullish transition (a CHoCH not yet confirmed by a
+    BOS).`
+  - `H1 and M30 are both bearish and their internal structure agrees, but
+    the H1 trend is only a transition (a CHoCH not yet confirmed by a BOS).`
+    (Tradable (Early), when allowed)
   - `H1 is ranging (repeated CHoCHs in one area with no BOS).`
-  - `H4 has no structure break yet.`
+  - `H1 has no structure break yet.`
 - **Trade Recommendations.** One action for the HTF trend, with the price that
   decides it:
   - Bullish: `Look for buys on pullbacks while price holds above HL 1.08450.`
@@ -515,16 +536,20 @@ The black text is made for a light chart background.
   - Bearish mirrors Bullish.
 
   When the HTF trend is established but a selected lower timeframe holds
-  Tradable back, it names that timeframe instead, for example `H4 is bullish,
-  but wait for H1 to turn bullish before buying.` When the market is
+  Tradable back, it names that timeframe instead, for example `H1 is bullish,
+  but wait for M30 to turn bullish before buying.` When another condition
+  holds it back (the swings, the internal structure or the Hurst
+  exponent), it says `H1 is bullish, but wait for Market Tradability (see
+  Tradability Reason) before buying.` When the market is
   Tradable (Early), it gives the early entry and what confirms it, for
   example `Early sells only, while price holds below LH 1.10500; a close
   below LL 1.09500 (bearish BOS) confirms the trend.`
-- **Optimal Conditions.** OPTIMAL when every requirement enabled in the
-  **Optimal Conditions** input group passes. Below it, each enabled
-  requirement shows PASS or BLOCKED; hover any of these rows for the reason.
-  - By default it checks timeframe correlation and relative tick volume.
-    Timeframe Correlation passes whenever Market Tradability is Tradable or
+- **Optimal Conditions.** Shown only when at least one requirement in the
+  **Optimal Conditions** input group is enabled; none is by default. It
+  reads OPTIMAL when every enabled requirement passes. Below it, each
+  enabled requirement shows PASS or BLOCKED; hover any of these rows for the
+  reason.
+  - Timeframe Correlation passes whenever Market Tradability is Tradable or
     Tradable (Early): in both, every selected timeframe agrees on the
     direction.
   - Healthy Extension blocks only an overextended market: the latest LTF
@@ -554,14 +579,31 @@ The black text is made for a light chart background.
 - The structure, setup, and LTF inputs are all monitored for new bars, so custom
   timeframe orders still refresh correctly.
 - **Trend Analysis Timeframes:** `Use HTF`, `Use MTF` and `Use LTF`
-  independently choose which Market Trends are shown and must correlate for
-  Market Tradability.
+  independently choose which Market Trends are shown and must line up for
+  Market Tradability. By default only the HTF (H1) is used.
   - At least one must remain enabled. This supports HTF-only, HTF/MTF,
     all-three, and other combinations.
-  - The established HTF trend prerequisite always applies, even when the HTF
-    row is hidden. Tradable (Early) also always uses the HTF and its internal
-    structure.
-- **Tradable (Early).** `Allow_Early_Tradability` (default on) shows it. It
+  - The HTF conditions always apply, even when the HTF row is hidden: its
+    established trend and progressive swings, its internal structure and
+    the Hurst exponent. Tradable (Early) also always uses the HTF and its
+    internal structure.
+- **Hurst exponent.** `Hurst_Timeframe` (HTF, MTF or LTF; HTF by default),
+  `Hurst_Candles` (100 closed candles, 50 to 400) and `Hurst_Minimum`
+  (0.55). It is calculated as in the 83% Strategy:
+  - **Method.** With x = ln(close), for each lag tau from 2 to 20 candles,
+    sigma(tau) is the root mean square of x[t + tau] - x[t] over the window.
+    H is the least-squares slope of ln sigma(tau) against ln tau (the
+    generalized Hurst exponent with q = 2).
+  - **Readings.** A random walk gives about 0.5, a trending market more
+    (from a steady drift or from momentum in its moves) and a
+    mean-reverting market less.
+  - **Why this variant.** The textbook version takes the standard deviation
+    of the differences, which subtracts their average move. That removes the
+    drift, so a steady trend read about 0.41, the same as a random walk.
+  - **Real data.** On EURUSD H1 and H4, an index on M5 and M30 and five
+    stocks on D1, H was above 0.55 in about 13% to 30% of 100-candle
+    windows.
+- **Tradable (Early).** `Allow_Early_Tradability` (default off) shows it. It
   passes Optimal Conditions' Timeframe Correlation, like Tradable.
 
   How it was tested: Base's engine and internal structure (Swing Detection
@@ -606,8 +648,9 @@ The black text is made for a light chart background.
   lengths 5 and 14. The generated markets have no mean reversion (their
   most extended candles did best), so they could not set the limit.
 - The four `Use_*_For_Optimal` inputs independently choose which requirements
-  determine the Optimal Conditions result. At least one must remain enabled;
-  disabled requirements are omitted from both the result and the dashboard.
+  determine the Optimal Conditions result. All four are off by default, which
+  hides Optimal Conditions from the dashboard; disabled requirements are
+  omitted from both the result and the dashboard.
 - Preset session UTC offsets are fixed and do not adjust for daylight-saving
   time. Set the broker server offset correctly and use a custom session where
   seasonal handling matters.
@@ -650,9 +693,11 @@ outside the EA.
 `Base.mq5`. It uses the same structure engine: per-timeframe Swing Detection
 Length, HH/HL/LH/LL and EQH/EQL labels, close-only BOS/CHoCH/LS with centred
 captions, trend, Consolidation / Undefined, Strong/Weak High/Low, the
-Internal Structure with its dashed BOS/CHoCH, and the same dashboard (Market
-Trends with their breakdowns and Internal Structure, Market Tradability with
-the entry-filter tooltip, the trade recommendation, and Optimal Conditions). It has the same inputs,
+Internal Structure with its dashed BOS/CHoCH, the Hurst exponent, and the
+same dashboard (Market Trends with their breakdowns, Swing Structure and
+Internal Structure, the Hurst exponent, Market Tradability with the
+entry-filter tooltip, the trade recommendation, and Optimal Conditions when
+any is selected). It has the same inputs,
 groups and defaults, except for the session and alert inputs described below.
 Every input has an info icon in the settings dialog whose tooltip says what
 it does, as in the Smart Money Engine. Like the EA, it only analyses the
@@ -672,6 +717,19 @@ structure) were identical. The EA searches the candles for each line's end;
 the Pine engine records each level's first touch as candles close, since
 Pine cannot look back an unlimited number of candles. Both give the same
 ends.
+
+Market Tradability (v2.44) was checked the same way. A line-by-line Python
+copy of the Pine rules, fed by the Pine engine copy and the Pine Hurst
+calculation, gave the EA's state and reason, word for word:
+- on every candle of 8 generated H1 markets (17,002 candles, Tradable on
+  4,684);
+- on 62,940 rule cases covering every timeframe selection and Tradable
+  (Early).
+
+The same cases also matched a separately written statement of the rule. A
+deliberate slip in the copy (ignoring a CHoCH, or another separator in the
+reason) made thousands of cases differ. Nothing in v2.44 has been compiled in
+MetaEditor or run in TradingView yet.
 
 Differences from the EA:
 
@@ -708,6 +766,8 @@ Differences from the EA:
     feeds.
   - The HTF and MTF MA filters each read the latest closed candle of their
     timeframe.
+  - The Hurst exponent on the MTF or LTF takes more calculation than on the
+    HTF.
 
 ## Fib Base for TradingView (`Fib Base.pine`)
 

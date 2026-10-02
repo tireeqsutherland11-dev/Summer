@@ -1,5 +1,5 @@
 #property copyright "Market Trend Analyser conversion"
-#property version   "2.43"
+#property version   "2.44"
 #property strict
 #property description "BASE: MT5 port of the Market Trend Analyser Pine Script."
 #property description "Signal/visualisation EA only; the source indicator contains no trading rules."
@@ -12,17 +12,24 @@ enum BASE_ATR_MODE { BASE_ATR_MINIMUM=0, BASE_ATR_MAXIMUM=1, BASE_ATR_RANGE=2 };
 enum BASE_LABEL_SIZE { BASE_TINY=7, BASE_SMALL=9, BASE_NORMAL=11, BASE_LARGE=14 };
 // Market Tradability (see EvaluateTradability).
 enum BASE_TRADABILITY { BASE_NOT_TRADABLE=0, BASE_TRADABLE_EARLY=1, BASE_TRADABLE=2 };
+// The timeframe the Hurst exponent is measured on (see HurstOf).
+enum BASE_HURST_TF { BASE_HURST_HTF=0, BASE_HURST_MTF=1, BASE_HURST_LTF=2 };
 
 input group "Timeframes"
-input ENUM_TIMEFRAMES Structure_Timeframe=PERIOD_H4; // HTF
-input ENUM_TIMEFRAMES Setup_Entry_Timeframe=PERIOD_H1; // MTF
+input ENUM_TIMEFRAMES Structure_Timeframe=PERIOD_H1; // HTF
+input ENUM_TIMEFRAMES Setup_Entry_Timeframe=PERIOD_M30; // MTF
 input ENUM_TIMEFRAMES LTF_Timeframe=PERIOD_M15; // LTF
 
 input group "Trend Analysis Timeframes"
 input bool Use_HTF=true; // Use HTF
-input bool Use_MTF=true; // Use MTF
+input bool Use_MTF=false; // Use MTF
 input bool Use_LTF=false; // Use LTF
-input bool Allow_Early_Tradability=true; // Allow Tradable (Early)
+input bool Allow_Early_Tradability=false; // Allow Tradable (Early)
+
+input group "Hurst Exponent (Trend Persistence)"
+input BASE_HURST_TF Hurst_Timeframe=BASE_HURST_HTF; // Hurst Timeframe (HTF, MTF or LTF)
+input int Hurst_Candles=100; // Hurst Window (closed candles, 50-400)
+input double Hurst_Minimum=0.55; // Tradable When H Is Above (0.5 = random walk)
 
 input group "Structure Bar Processing"
 input int Bars_To_Process=100;
@@ -98,9 +105,9 @@ input bool Use_ATR_Filter=true;
 input int ATR_Length=14;
 
 input group "Optimal Conditions"
-input bool Use_Timeframe_Correlation_For_Optimal=true;
+input bool Use_Timeframe_Correlation_For_Optimal=false;
 input bool Use_Healthy_Extension_For_Optimal=false;
-input bool Use_Market_Volume_For_Optimal=true;
+input bool Use_Market_Volume_For_Optimal=false;
 input bool Use_Price_Momentum_For_Optimal=false;
 
 input group "Alerts"
@@ -1287,8 +1294,11 @@ string TradeRecommendation(const BASE_STRUCTURE_STATE &htf,const BASE_STRUCTURE_
       string lead=HTFName()+" is "+TrendWord(direction)+", but wait for ";
       if(Use_MTF && BiasDirection(mtf)!=direction)
          return lead+MTFName()+" to turn "+TrendWord(direction)+" before "+action+".";
+      if(Use_MTF && !DefiniteBias(mtf))
+         return lead+MTFName()+" to confirm with a "+TrendWord(direction)+" BOS before "+action+".";
       if(Use_LTF && (BiasDirection(ltf)!=direction || !DefiniteBias(ltf)))
          return lead+LTFName()+" to confirm with a "+TrendWord(direction)+" BOS before "+action+".";
+      return lead+"Market Tradability (see Tradability Reason) before "+action+".";
      }
    return RecommendationText(htf,points);
   }
@@ -1385,61 +1395,288 @@ string JoinNames(const string &names[],const int count)
    return result;
   }
 
+// The latest two swings on each side of a timeframe, for the progressive
+// structure Market Tradability needs: the latest swing high and the one
+// before it (the previous leg's high; a higher high within the same leg
+// replaces it), and the same for lows.
+struct BASE_SWINGS
+  {
+   bool have_highs;
+   double high;             // the latest swing high
+   double prev_high;        // the swing high before it
+   bool have_lows;
+   double low;
+   double prev_low;
+  };
+
+bool LastTwoSwings(const BASE_STRUCTURE_POINT &points[],const int side,double &current,double &previous)
+  {
+   int found=0;
+   for(int k=ArraySize(points)-1;k>=0 && found<2;k--)
+     {
+      if(points[k].side!=side || points[k].superseded) continue;
+      if(found==0) current=points[k].price;
+      else previous=points[k].price;
+      found++;
+     }
+   return found==2;
+  }
+
+void ReadSwings(const BASE_STRUCTURE_POINT &points[],BASE_SWINGS &swings)
+  {
+   ZeroMemory(swings);
+   swings.have_highs=LastTwoSwings(points,1,swings.high,swings.prev_high);
+   swings.have_lows=LastTwoSwings(points,-1,swings.low,swings.prev_low);
+  }
+
+// "HH", "LH" or "EQH" for highs; "LL", "HL" or "EQL" for lows.
+string SwingTag(const int side,const double current,const double previous)
+  {
+   if(side>0) return current>previous?"HH":current<previous?"LH":"EQH";
+   return current<previous?"LL":current>previous?"HL":"EQL";
+  }
+
+// 1 for a bullish progression (an HH and an HL), -1 for a bearish one (an LL
+// and an LH), 0 otherwise.
+int SwingProgression(const BASE_SWINGS &swings)
+  {
+   if(!swings.have_highs || !swings.have_lows) return 0;
+   if(swings.high>swings.prev_high && swings.low>swings.prev_low) return 1;
+   if(swings.low<swings.prev_low && swings.high<swings.prev_high) return -1;
+   return 0;
+  }
+
+// "HH + HL", or what is missing.
+string SwingStructureText(const BASE_SWINGS &swings)
+  {
+   return (swings.have_highs?SwingTag(1,swings.high,swings.prev_high):"no two swing highs yet")+" + "+
+          (swings.have_lows?SwingTag(-1,swings.low,swings.prev_low):"no two swing lows yet");
+  }
+
+// The structure of a timeframe for a direction: "" when it is progressive
+// (an HH and an HL for bullish, an LL and an LH for bearish), else what is
+// missing.
+string SwingProblem(const BASE_SWINGS &swings,const int direction,const string name)
+  {
+   if(!swings.have_highs || !swings.have_lows)
+      return "the "+name+" has no two swing "+(!swings.have_highs?"highs":"lows")+" yet";
+   if(SwingProgression(swings)==direction) return "";
+   return "the "+name+" swings are "+SwingStructureText(swings)+" ("+TrendWord(direction)+" needs "+
+          (direction>0?"HH + HL":"LL + LH")+")";
+  }
+
+// --------------------------------------------------------- Hurst exponent
+// The Hurst exponent H of the last Hurst_Candles closed candles of the Hurst
+// timeframe (the HTF by default), as in the 83% Strategy: a random walk
+// gives about 0.5, a trending (persistent) market more, a mean-reverting one
+// less.
+const int HURST_MIN_LAG=2;
+const int HURST_MAX_LAG=20;
+
+struct BASE_HURST
+  {
+   bool have;
+   double value;            // H
+   int candles;             // closed candles available for it
+  };
+
+ENUM_TIMEFRAMES HurstTimeframe()
+  {
+   if(Hurst_Timeframe==BASE_HURST_MTF) return SetupTimeframe();
+   if(Hurst_Timeframe==BASE_HURST_LTF) return LTFTimeframe();
+   return BASETimeframe();
+  }
+
+string HurstName() { return TimeframeName(HurstTimeframe()); }
+
+// The lagged-difference method (the generalized Hurst exponent with q = 2):
+// x = ln(close) of n closes (oldest first); for each lag tau from
+// HURST_MIN_LAG to HURST_MAX_LAG, sigma(tau) is the root mean square of
+// x[t+tau] - x[t] over the window; H is the least-squares slope of
+// ln sigma(tau) against ln tau.  The drift is not subtracted, so a steady
+// trend raises H as momentum does (with the standard deviation instead, a
+// steady trend read about 0.41, like a random walk).  False when a close is
+// not positive or the prices do not move.  Base.pine computes it in the same
+// order.
+bool HurstOf(const double &close[],const int n,double &h)
+  {
+   h=0.0;
+   if(n<=HURST_MAX_LAG) return false;
+   double x[];
+   ArrayResize(x,n);
+   for(int i=0;i<n;i++)
+     {
+      if(close[i]<=0.0) return false;
+      x[i]=MathLog(close[i]);
+     }
+   int lags=HURST_MAX_LAG-HURST_MIN_LAG+1;
+   double lt[],ls[];
+   ArrayResize(lt,lags);
+   ArrayResize(ls,lags);
+   for(int k=0;k<lags;k++)
+     {
+      int tau=HURST_MIN_LAG+k;
+      int m=n-tau;
+      double square=0.0;
+      for(int t=0;t<m;t++)
+        {
+         double move=x[t+tau]-x[t];
+         square+=move*move;
+        }
+      square/=m;
+      if(square<=0.0) return false;
+      lt[k]=MathLog((double)tau);
+      ls[k]=MathLog(MathSqrt(square));
+     }
+   double mt=0.0,ms=0.0;
+   for(int k=0;k<lags;k++)
+     {
+      mt+=lt[k];
+      ms+=ls[k];
+     }
+   mt/=lags;
+   ms/=lags;
+   double sxy=0.0,sxx=0.0;
+   for(int k=0;k<lags;k++)
+     {
+      sxy+=(lt[k]-mt)*(ls[k]-ms);
+      sxx+=(lt[k]-mt)*(lt[k]-mt);
+     }
+   h=sxy/sxx;
+   return true;
+  }
+
+void ReadHurst(BASE_HURST &hurst)
+  {
+   ZeroMemory(hurst);
+   MqlRates rates[];
+   ArraySetAsSeries(rates,false);
+   int got=CopyRates(_Symbol,HurstTimeframe(),1,Hurst_Candles,rates);
+   hurst.candles=MathMax(got,0);
+   if(got!=Hurst_Candles) return;
+   double close[];
+   ArrayResize(close,got);
+   for(int i=0;i<got;i++) close[i]=rates[i].close;
+   hurst.have=HurstOf(close,got,hurst.value);
+  }
+
+// About 0.5 is a random walk; above it a trending (persistent) market, below
+// it a mean-reverting one.
+string HurstWord(const double h)
+  {
+   return h>0.55?"trending":h>=0.45?"random walk":"mean-reverting";
+  }
+
+// The Hurst exponent: "" when it is above Hurst_Minimum, else why not.
+string HurstProblem(const BASE_HURST &hurst)
+  {
+   if(!hurst.have)
+      return hurst.candles<Hurst_Candles?
+             "the Hurst exponent needs "+(string)Hurst_Candles+" closed "+HurstName()+" candles ("+
+             (string)hurst.candles+" so far)":"the Hurst exponent is not available (the "+HurstName()+" closes do not move)";
+   if(hurst.value>Hurst_Minimum) return "";
+   return "the Hurst exponent "+DoubleToString(hurst.value,2)+" is not above "+DoubleToString(Hurst_Minimum,2)+
+          " ("+HurstWord(hurst.value)+")";
+  }
+
+// The HTF internal structure for a direction: "" when it is in that
+// direction and its latest break is a BOS, else what it is.
+string InternalProblem(const BASE_INTERNAL_STRUCTURE &internal,const int direction,const string name)
+  {
+   if(internal.trend==direction && !internal.last_choch) return "";
+   if(internal.trend==0) return "the "+name+" internal structure has no break yet";
+   return "the "+name+" internal structure is "+TrendWord(internal.trend)+(internal.last_choch?" (CHoCH)":" (BOS)")+", not "+
+          TrendWord(direction)+" (BOS)";
+  }
+
+// "a; b; c" for the reasons.
+string JoinProblems(const string &problems[],const int count)
+  {
+   string result="";
+   for(int i=0;i<count;i++) result+=(i==0?"":"; ")+problems[i];
+   return result;
+  }
+
 // Market Tradability:
-//  * Tradable: the HTF trend is established (latest break a BOS); every
-//    selected trend timeframe has a direction and they all agree; a selected
-//    LTF is itself established.  The MTF may be transitional.  A
-//    Consolidation / Undefined trend has no direction.
-//  * Tradable (Early), when Allow_Early_Tradability is on: the same, except
-//    that the HTF and/or a selected LTF is only in transition (a CHoCH not
-//    yet confirmed by a BOS), the HTF agrees with every selected timeframe,
-//    and the internal structure of the HTF and of every selected timeframe
-//    agrees with that direction.  On real and generated markets, internal
-//    agreement made an HTF transition (with the MTF agreeing) reach its
-//    confirming BOS markedly more often (58-70% of episodes against 44-50%
-//    without it), but it still failed about a third of the time, so it is
-//    shown apart from Tradable.
+//  * Tradable: all of these line up in one direction.
+//     1. Market Trend: the HTF trend and the trend of every selected trend
+//        timeframe are all Bullish (or all Bearish): established by a BOS,
+//        not a transition and not Consolidation / Undefined.
+//     2. Progressive structure on each of them: bullish, a Higher High (the
+//        latest swing high above the previous one) and a Higher Low (the
+//        latest swing low above the previous one); bearish, a Lower Low and a
+//        Lower High (see ReadSwings).
+//     3. The HTF Internal Structure in that direction, its latest break a BOS
+//        (not a CHoCH).
+//     4. The Hurst exponent above Hurst_Minimum (0.55), a trending market
+//        (see HurstOf).
+//  * Tradable (Early), when Allow_Early_Tradability is on (off by default):
+//    every selected timeframe agrees with the HTF, but the HTF and/or a
+//    selected MTF or LTF is only in transition (a CHoCH not yet confirmed by
+//    a BOS), and the internal structure of the HTF and of every selected
+//    timeframe agrees with that direction.  On real and generated markets,
+//    internal agreement made an HTF transition (with the MTF agreeing) reach
+//    its confirming BOS markedly more often (58-70% of episodes against
+//    44-50% without it), but it still failed about a third of the time, so
+//    it is shown apart from Tradable.  It does not check conditions 2 to 4.
 //  * Not Tradable otherwise.
-// The reason says why in one sentence, naming the timeframes.
+// The reason names the timeframes and every condition that fails.
 BASE_TRADABILITY EvaluateTradability(const BASE_STRUCTURE_STATE &htf,const BASE_STRUCTURE_STATE &mtf,
                                      const BASE_STRUCTURE_STATE &ltf,
                                      const BASE_INTERNAL_STRUCTURE &htf_internal,
                                      const BASE_INTERNAL_STRUCTURE &mtf_internal,
-                                     const BASE_INTERNAL_STRUCTURE &ltf_internal,string &reason)
+                                     const BASE_INTERNAL_STRUCTURE &ltf_internal,
+                                     const BASE_SWINGS &htf_swings,const BASE_SWINGS &mtf_swings,
+                                     const BASE_SWINGS &ltf_swings,const BASE_HURST &hurst,string &reason)
   {
    bool htf_definite=DefiniteBias(htf);
+   bool mtf_definite=DefiniteBias(mtf);
    bool ltf_definite=DefiniteBias(ltf);
    int htf_direction=BiasDirection(htf);
    int mtf_direction=BiasDirection(mtf);
    int ltf_direction=BiasDirection(ltf);
-   bool available=(!Use_HTF || htf_direction!=0) &&
-                  (!Use_MTF || mtf_direction!=0) &&
-                  (!Use_LTF || ltf_direction!=0);
-   bool match=(!Use_HTF || !Use_MTF ||
-               htf_direction==mtf_direction) &&
-              (!Use_HTF || !Use_LTF ||
-               htf_direction==ltf_direction) &&
-              (!Use_MTF || !Use_LTF ||
-               mtf_direction==ltf_direction);
-   bool tradable=htf_definite && available && match && (!Use_LTF || ltf_definite);
    int selected=(Use_HTF?1:0)+(Use_MTF?1:0)+(Use_LTF?1:0);
-   if(tradable)
+   // The HTF and the selected timeframes, for the reasons.
+   int named=selected+(Use_HTF?0:1);
+   string names=Use_HTF?TrendTimeframesText():HTFName()+(selected==1?" and ":", ")+TrendTimeframesText();
+   // 1. Market Trend: established, all in the HTF's direction.
+   bool trend=htf_definite && (!Use_MTF || (mtf_definite && mtf_direction==htf_direction)) &&
+              (!Use_LTF || (ltf_definite && ltf_direction==htf_direction));
+   if(trend)
      {
-      int direction=Use_HTF?htf_direction:(Use_MTF?mtf_direction:ltf_direction);
-      reason=TrendTimeframesText()+(selected==1?" is ":selected==2?" are both ":" are all ")+
-             TrendWord(direction)+", and the "+HTFName()+" trend is confirmed by a BOS";
-      if(Use_LTF) reason+=", as is the "+LTFName()+" trend";
-      reason+=".";
-      return BASE_TRADABLE;
+      int d=htf_direction;
+      string problems[5];
+      int count=0;
+      // 2. Progressive structure on the HTF and each selected timeframe.
+      string checks[5];
+      checks[0]=SwingProblem(htf_swings,d,HTFName());
+      checks[1]=Use_MTF?SwingProblem(mtf_swings,d,MTFName()):"";
+      checks[2]=Use_LTF?SwingProblem(ltf_swings,d,LTFName()):"";
+      // 3. The HTF internal structure, 4. the Hurst exponent.
+      checks[3]=InternalProblem(htf_internal,d,HTFName());
+      checks[4]=HurstProblem(hurst);
+      for(int k=0;k<5;k++)
+         if(checks[k]!="") problems[count++]=checks[k];
+      string lead=names+(named==1?" is ":named==2?" are both ":" are all ")+TrendWord(d)+" (BOS)";
+      if(count==0)
+        {
+         reason=lead+" with "+(d>0?"HH + HL":"LL + LH")+", the "+HTFName()+" internal structure is "+
+                TrendWord(d)+" (BOS), and the Hurst exponent "+DoubleToString(hurst.value,2)+" is above "+
+                DoubleToString(Hurst_Minimum,2)+".";
+         return BASE_TRADABLE;
+        }
+      reason=lead+", but "+JoinProblems(problems,count)+".";
+      return BASE_NOT_TRADABLE;
      }
-   // Tradable (Early): every direction agrees with the HTF and only the
-   // HTF and/or the selected LTF is still a transition.
+   // Tradable (Early): every direction agrees with the HTF and only the HTF
+   // and/or a selected MTF or LTF is still a transition.
    bool early_candidate=Allow_Early_Tradability && htf_direction!=0 &&
                         (!Use_MTF || mtf_direction==htf_direction) &&
                         (!Use_LTF || ltf_direction==htf_direction);
-   string pending[2];
+   string pending[3];
    int pending_count=0;
    if(!htf_definite) pending[pending_count++]=HTFName();
+   if(Use_MTF && !mtf_definite) pending[pending_count++]=MTFName();
    if(Use_LTF && !ltf_definite) pending[pending_count++]=LTFName();
    string disagree[3];
    int disagree_count=0;
@@ -1448,8 +1685,6 @@ BASE_TRADABILITY EvaluateTradability(const BASE_STRUCTURE_STATE &htf,const BASE_
    if(Use_LTF && ltf_internal.trend!=htf_direction) disagree[disagree_count++]=LTFName();
    if(early_candidate && pending_count>0 && disagree_count==0)
      {
-      int named=selected+(Use_HTF?0:1);
-      string names=Use_HTF?TrendTimeframesText():HTFName()+(selected==1?" and ":", ")+TrendTimeframesText();
       reason=names+(named==1?" is ":named==2?" are both ":" are all ")+TrendWord(htf_direction)+
              " and "+(named==1?"its":"their")+" internal structure agrees, but the "+
              JoinNames(pending,pending_count)+(pending_count==1?" trend is only a transition (a CHoCH":
@@ -1460,15 +1695,11 @@ BASE_TRADABILITY EvaluateTradability(const BASE_STRUCTURE_STATE &htf,const BASE_
    else if(!htf_definite) reason=TransitionText(HTFName(),htf);
    else if(Use_MTF && mtf_direction==0) reason=NoTrendText(MTFName(),mtf);
    else if(Use_LTF && ltf_direction==0) reason=NoTrendText(LTFName(),ltf);
-   else if(!match)
-     {
-      string first=Use_HTF?HTFName():MTFName();
-      int first_direction=Use_HTF?htf_direction:mtf_direction;
-      bool mtf_conflict=Use_HTF && Use_MTF && mtf_direction!=htf_direction;
-      string other=mtf_conflict?MTFName():LTFName();
-      int other_direction=mtf_conflict?mtf_direction:ltf_direction;
-      reason=first+" is "+TrendWord(first_direction)+" but "+other+" is "+TrendWord(other_direction)+".";
-     }
+   else if(Use_MTF && mtf_direction!=htf_direction)
+      reason=HTFName()+" is "+TrendWord(htf_direction)+" but "+MTFName()+" is "+TrendWord(mtf_direction)+".";
+   else if(Use_LTF && ltf_direction!=htf_direction)
+      reason=HTFName()+" is "+TrendWord(htf_direction)+" but "+LTFName()+" is "+TrendWord(ltf_direction)+".";
+   else if(Use_MTF && !mtf_definite) reason=TransitionText(MTFName(),mtf);
    else reason=TransitionText(LTFName(),ltf);
    // A transition that would be Tradable (Early) but for the internal
    // structure says which timeframes do not agree yet.
@@ -2028,6 +2259,20 @@ color PassColor(const bool pass)
    return pass?DASHBOARD_POSITIVE_COLOR:DASHBOARD_NEGATIVE_COLOR;
   }
 
+// The swing structure under a timeframe's Market Trend, indented: the latest
+// swing high against the previous one and the same for lows; green for an HH
+// and an HL, red for an LL and an LH.
+void AddSwingStructureRow(BASE_DASHBOARD_ROW &rows[],const BASE_SWINGS &swings)
+  {
+   int progression=SwingProgression(swings);
+   string tip="Latest swing high "+(swings.have_highs?PriceText(swings.high)+" vs previous "+PriceText(swings.prev_high):"-")+
+              "; latest swing low "+(swings.have_lows?PriceText(swings.low)+" vs previous "+PriceText(swings.prev_low):"-")+
+              "\nMarket Tradability needs HH + HL (bullish) or LL + LH (bearish).";
+   AddDashboardRow(rows,"Swing Structure:",SwingStructureText(swings),
+                   progression>0?DASHBOARD_POSITIVE_COLOR:progression<0?DASHBOARD_NEGATIVE_COLOR:DASHBOARD_NEUTRAL_COLOR,
+                   tip,true,DASHBOARD_INDENT);
+  }
+
 // The internal structure under its timeframe's Market Trend, indented; the
 // tooltip gives its latest break and how it relates to the Market Trend.
 void AddInternalStructureRow(BASE_DASHBOARD_ROW &rows[],const BASE_INTERNAL_STRUCTURE &internal,
@@ -2040,16 +2285,18 @@ void AddInternalStructureRow(BASE_DASHBOARD_ROW &rows[],const BASE_INTERNAL_STRU
                    InternalStructureTooltip(internal,state,name,level),true,DASHBOARD_INDENT);
   }
 
-// Each selected timeframe's Market Trend (its breakdown is the tooltip),
-// Market Tradability (the entry filters are its tooltip), the reason, the
-// HTF trade recommendation, and Optimal Conditions with each selected
-// condition (the reason is the tooltip).
+// Each selected timeframe's Market Trend (its breakdown is the tooltip) with
+// its swing and internal structure, the Hurst exponent, Market Tradability
+// (the entry filters are its tooltip), the reason, the HTF trade
+// recommendation, and, when any is selected, Optimal Conditions with each
+// selected condition (the reason is the tooltip).
 void DrawDashboard(const BASE_STRUCTURE_STATE &htf,const string htf_breakdown,
                    const string recommendation,const BASE_STRUCTURE_STATE &mtf,
                    const string mtf_breakdown,const BASE_STRUCTURE_STATE &ltf,
                    const string ltf_breakdown,const BASE_INTERNAL_STRUCTURE &htf_internal,
                    const BASE_INTERNAL_STRUCTURE &mtf_internal,const BASE_INTERNAL_STRUCTURE &ltf_internal,
-                   const BASE_TRADABILITY tradability,
+                   const BASE_SWINGS &htf_swings,const BASE_SWINGS &mtf_swings,const BASE_SWINGS &ltf_swings,
+                   const BASE_HURST &hurst,const BASE_TRADABILITY tradability,
                    const string tradability_reason,const string filter_tooltip,
                    const bool optimal,const string optimal_reason,const bool correlated,
                    const bool healthy_extension,const double extension,const bool good_volume,const double volume_ratio,
@@ -2061,26 +2308,43 @@ void DrawDashboard(const BASE_STRUCTURE_STATE &htf,const string htf_breakdown,
      {
       AddDashboardRow(rows,"HTF Market Trend ("+HTFName()+"):",BiasText(htf),TrendColor(htf),
                       htf_breakdown);
+      AddSwingStructureRow(rows,htf_swings);
       AddInternalStructureRow(rows,htf_internal,htf,HTFName(),HTF_Internal_Level);
      }
    if(Use_MTF)
      {
       AddDashboardRow(rows,"MTF Market Trend ("+MTFName()+"):",BiasText(mtf),TrendColor(mtf),
                       mtf_breakdown);
+      AddSwingStructureRow(rows,mtf_swings);
       AddInternalStructureRow(rows,mtf_internal,mtf,MTFName(),MTF_Internal_Level);
      }
    if(Use_LTF)
      {
       AddDashboardRow(rows,"LTF Market Trend ("+LTFName()+"):",BiasText(ltf),TrendColor(ltf),
                       ltf_breakdown);
+      AddSwingStructureRow(rows,ltf_swings);
       AddInternalStructureRow(rows,ltf_internal,ltf,LTFName(),LTF_Internal_Level);
      }
+   AddDashboardRow(rows,"Hurst Exponent ("+HurstName()+"):",
+                   hurst.have?"H "+DoubleToString(hurst.value,2)+" ("+HurstWord(hurst.value)+")":"Not available",
+                   hurst.have?PassColor(hurst.value>Hurst_Minimum):DASHBOARD_NEUTRAL_COLOR,
+                   "The last "+(string)Hurst_Candles+" closed "+HurstName()+" candles. Market Tradability needs H above "+
+                   DoubleToString(Hurst_Minimum,2)+"; about 0.5 is a random walk, above it a trending market, below it a "+
+                   "mean-reverting one.");
    AddDashboardRow(rows,"Market Tradability:",
                    tradability==BASE_TRADABLE?"Tradable":tradability==BASE_TRADABLE_EARLY?"Tradable (Early)":
                    "Not Tradable",tradability==BASE_TRADABLE_EARLY?DASHBOARD_EARLY_COLOR:
                    PassColor(tradability==BASE_TRADABLE),filter_tooltip);
    AddWrappedDashboardRow(rows,"Tradability Reason:",tradability_reason,DASHBOARD_TEXT_COLOR);
    AddWrappedDashboardRow(rows,"Trade Recommendations:",recommendation,DASHBOARD_TEXT_COLOR);
+   // Optimal Conditions only when at least one requirement is selected (none
+   // by default).
+   if(!Use_Timeframe_Correlation_For_Optimal && !Use_Healthy_Extension_For_Optimal &&
+      !Use_Market_Volume_For_Optimal && !Use_Price_Momentum_For_Optimal)
+     {
+      DrawDashboardRows(rows);
+      return;
+     }
    AddDashboardRow(rows,"","",DASHBOARD_TEXT_COLOR);
    AddDashboardRow(rows,"Optimal Conditions:",optimal?"OPTIMAL":"NOT OPTIMAL",PassColor(optimal),
                    optimal_reason);
@@ -2156,8 +2420,8 @@ bool Rebuild(const bool permit_alert)
    BASE_STRUCTURE_EVENT events[];
    ReplayStructure(rates,total,length,structure_state,points,events);
 
-   // The internal structure of each trend timeframe, for the dashboard and
-   // Tradable (Early).
+   // The internal structure of each trend timeframe, for the dashboard,
+   // Market Tradability (the HTF's) and Tradable (Early).
    BASE_INTERNAL_STRUCTURE htf_internal,mtf_internal,ltf_internal;
    BASE_BREAK_MARK unused[];
    ReplayInternalStructure(rates,total,HTFInternalLength(),htf_internal,unused);
@@ -2194,9 +2458,18 @@ bool Rebuild(const bool permit_alert)
      }
    DrawAverageLines(rates,total,displayed,ma,mtf_rates,mtf_ma,mtf_count);
 
+   // The latest two swings on each side of each trend timeframe (progressive
+   // structure) and the Hurst exponent, for Market Tradability.
+   BASE_SWINGS htf_swings,mtf_swings,ltf_swings;
+   ReadSwings(points,htf_swings);
+   ReadSwings(setup_points,mtf_swings);
+   ReadSwings(ltf_points,ltf_swings);
+   BASE_HURST hurst;
+   ReadHurst(hurst);
    string tradability_reason="";
    BASE_TRADABILITY tradability=EvaluateTradability(structure_state,setup_state,ltf_state,htf_internal,
-                                                    mtf_internal,ltf_internal,tradability_reason);
+                                                    mtf_internal,ltf_internal,htf_swings,mtf_swings,
+                                                    ltf_swings,hurst,tradability_reason);
    // The timeframes correlate whenever the market is Tradable or Tradable
    // (Early): in both, every selected timeframe agrees on the direction.
    bool bias_ready=tradability!=BASE_NOT_TRADABLE;
@@ -2232,7 +2505,8 @@ bool Rebuild(const bool permit_alert)
                  TradeRecommendation(structure_state,points,setup_state,ltf_state,tradability),
                  setup_state,BreakdownText(setup_state,setup_points,setup_events),
                  ltf_state,BreakdownText(ltf_state,ltf_points,ltf_events),
-                 htf_internal,mtf_internal,ltf_internal,tradability,tradability_reason,EntryFilterTooltip(rates[total-1],ma,adx,atr),
+                 htf_internal,mtf_internal,ltf_internal,htf_swings,mtf_swings,ltf_swings,hurst,
+                 tradability,tradability_reason,EntryFilterTooltip(rates[total-1],ma,adx,atr),
                  optimal,optimal_reason,bias_ready,healthy_extension,extension,good_volume,volume_ratio,
                  good_momentum,momentum_ratio);
    // Alert every event that became known on the newest closed candle (a CHoCH
@@ -2273,9 +2547,10 @@ bool ValidInputs()
       problem="HTF MA, MTF MA, ADX and ATR lengths must be positive";
    else if(Equal_Highs_Lows_Threshold<0.0 || Equal_Highs_Lows_Threshold>0.5)
       problem="the EQH/EQL Threshold must be between 0 and 0.5";
-   else if(!Use_Timeframe_Correlation_For_Optimal && !Use_Healthy_Extension_For_Optimal &&
-           !Use_Market_Volume_For_Optimal && !Use_Price_Momentum_For_Optimal)
-      problem="enable at least one Optimal Conditions requirement";
+   else if(Hurst_Candles<50 || Hurst_Candles>400)
+      problem="Hurst_Candles must be 50 to 400";
+   else if(Hurst_Minimum<0.0 || Hurst_Minimum>=1.0)
+      problem="Hurst_Minimum must be 0 to below 1";
    else if(!Use_HTF && !Use_MTF && !Use_LTF)
       problem="enable at least one trend analysis timeframe";
    if(problem=="") return true;
