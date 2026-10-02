@@ -2071,6 +2071,11 @@ void DrawDashboard(const S83_TREND &trend,const BASE_TRADABILITY tradability,
 //    exponent is above 0.55 (a trending market).  Bearish: 20 < 50 < 200, an
 //    MTF LL and LH, and the same Hurst exponent.  See EvaluateTradability.
 //    It is the only market filter.
+//  * Only setups in the market's direction are identified: buys while the
+//    HTF EMAs are in bullish order (the dashboard's HTF Trend), sells while
+//    they are in bearish order, none while they are in neither.  A setup
+//    still armed when the market stops pointing its direction is cancelled.
+//    See S83ScanSetups.
 //  * LTF setup (M30, Swing Detection level 3 by default), searched in the last
 //    LTF_Bars_To_Process (40) closed LTF candles:
 //      A: the most recent HL from which there was heavy buying pressure;
@@ -2178,7 +2183,8 @@ enum S83_STATE
    S83_INVALID=2,     // a new HH (LL) came first
    S83_EXPIRED=3,     // A left the LTF processed bars
    S83_MISSED=4,      // the entry level was reached before the setup was known
-   S83_REPLACED=5     // a newer setup in the same direction took over
+   S83_REPLACED=5,    // a newer setup in the same direction took over
+   S83_CANCELLED=6    // the market no longer points its direction
   };
 
 // One setup: A (the HL/LH the heavy move started from), B (the extreme
@@ -2212,7 +2218,8 @@ enum S83_WHY
    S83_WHY_NEW_B=1,         // a new HH (LL) before the touch
    S83_WHY_EXPIRED=2,       // A left the processed candles
    S83_WHY_MISSED=3,        // the level was reached before the setup was known
-   S83_WHY_REPLACED=4       // a newer setup in the same direction
+   S83_WHY_REPLACED=4,      // a newer setup in the same direction
+   S83_WHY_MARKET=5         // the market no longer points its direction
   };
 
 string S83WhyText(const S83_SETUP &setup)
@@ -2224,6 +2231,7 @@ string S83WhyText(const S83_SETUP &setup)
       case S83_WHY_EXPIRED: return "expired: A left the "+(string)LTFBarsToProcess()+" processed candles";
       case S83_WHY_MISSED: return "missed: "+S83LevelText()+" reached before the setup was known";
       case S83_WHY_REPLACED: return "replaced by a newer setup";
+      case S83_WHY_MARKET: return "cancelled: the market is no longer "+(setup.direction>0?"bullish":"bearish");
      }
    return "";
   }
@@ -2256,7 +2264,7 @@ CTrade g_trade;
 bool g_s83_ready=false;
 // Published by Rebuild for the tick handler and the dashboard.
 BASE_TRADABILITY g_s83_tradability=BASE_NOT_TRADABLE;
-int g_s83_market_direction=0;      // the direction Market Tradability refers to
+int g_s83_market_direction=0;      // the market's direction now: the HTF EMA order (1, -1 or 0)
 string g_s83_tradability_reason="";
 double g_s83_atr=0.0;              // LTF ATR of the latest closed LTF candle
 datetime g_s83_last_time=0;        // the latest closed LTF candle
@@ -2346,11 +2354,17 @@ void S83FollowB(S83_SETUP &setup,const MqlRates &rates[],const int i)
   }
 
 // The setups of one LTF replay, candle by candle over its last
-// LTF_Bars_To_Process closed candles.  On each candle:
+// LTF_Bars_To_Process closed candles.  Only setups in the market's direction
+// are identified: market[i] is the market direction at the open of candle i
+// (see S83MarketHistory), buys only in a bullish market and sells only in a
+// bearish one.  On each candle:
+//  0. an armed setup whose direction the market no longer points is
+//     cancelled, before the candle can touch it;
 //  1. each armed setup steps through the candle (see S83Step): touched or
 //     invalidated.  If still armed, its B follows price (S83FollowB), and it
 //     expires once its A is no longer within the processed candles.
-//  2. for buys, then sells: the latest swing low (high) confirmed so far, A,
+//  2. for buys in a bullish market, or sells in a bearish one: the latest
+//     swing low (high) confirmed so far, A,
 //     starts a setup when it is an HL (LH), has not been used, lies within
 //     the processed candles, a candle from A on has closed beyond the swing
 //     before it (the break of structure) and it shows heavy pressure.  B is
@@ -2364,7 +2378,7 @@ void S83FollowB(S83_SETUP &setup,const MqlRates &rates[],const int i)
 // one more window; so scanning from three windows back gives the same result
 // as scanning all of history.
 void S83ScanSetups(const MqlRates &rates[],const int total,const BASE_STRUCTURE_POINT &points[],
-                   const double &atr[],S83_SETUP &setups[],int &live_buy,int &live_sell)
+                   const double &atr[],const int &market[],S83_SETUP &setups[],int &live_buy,int &live_sell)
   {
    ArrayResize(setups,0);
    live_buy=-1;
@@ -2382,6 +2396,8 @@ void S83ScanSetups(const MqlRates &rates[],const int total,const BASE_STRUCTURE_
         {
          int index=slot==0?live_buy:live_sell;
          if(index<0) continue;
+         if(market[i]!=setups[index].direction)
+            S83End(setups[index],S83_CANCELLED,rates[i].time,S83_WHY_MARKET);
          S83Step(setups[index],rates[i]);
          S83FollowB(setups[index],rates,i);
          if(S83Live(setups[index]) && setups[index].a_bar<i-window+1)
@@ -2394,6 +2410,7 @@ void S83ScanSetups(const MqlRates &rates[],const int total,const BASE_STRUCTURE_
       for(int slot=0;slot<2;slot++)
         {
          int direction=slot==0?1:-1;
+         if(market[i]!=direction) continue;
          // A: the latest swing on its side; the swing before it on the other
          // side holds the level whose break arms the setup.
          int a=-1,p=-1;
@@ -2600,6 +2617,58 @@ void S83ReadTrend(const BASE_STRUCTURE_POINT &mtf_points[],S83_TREND &trend)
       trend.have_hurst=S83HurstOf(close,got,trend.hurst);
      }
    g_s83_trend=trend;
+  }
+
+// The market direction at the open of each LTF candle from `from` on, for the
+// setup scan: the HTF EMA order (as g_s83_trend.ema_direction) of the latest
+// HTF candles closed by then: 1 bullish (fast > middle > slow on each of the
+// last HTF_EMA_Candles), -1 bearish, 0 neither.  The HTF candle that closes
+// as an LTF candle opens counts for that candle, as it does live.  False
+// while the EMAs cannot be read yet (the build then waits).
+bool S83MarketHistory(const MqlRates &rates[],const int total,const int from,int &market[])
+  {
+   ArrayResize(market,MathMax(total,0));
+   if(total<=0) return true;
+   ArrayInitialize(market,0);
+   ENUM_TIMEFRAMES htf=BASETimeframe();
+   int period=PeriodSeconds(htf);
+   int n=HTF_EMA_Candles;
+   int start=MathMax(0,MathMin(from,total-1));
+   if(g_s83_ema_fast_handle==INVALID_HANDLE || g_s83_ema_middle_handle==INVALID_HANDLE ||
+      g_s83_ema_slow_handle==INVALID_HANDLE) return false;
+   if(iBars(_Symbol,htf)<=HTF_EMA_Slow+n) return true;   // not enough HTF history: no direction
+   // The closed HTF candles from n before the first LTF candle's open to now.
+   int count=(int)((TimeCurrent()-rates[start].time)/period)+n+3;
+   MqlRates htf_rates[];
+   double fast[],middle[],slow[];
+   ArraySetAsSeries(htf_rates,false);
+   ArraySetAsSeries(fast,false);
+   ArraySetAsSeries(middle,false);
+   ArraySetAsSeries(slow,false);
+   int got=CopyRates(_Symbol,htf,1,count,htf_rates);
+   if(got<=0 || CopyBuffer(g_s83_ema_fast_handle,0,1,got,fast)!=got ||
+      CopyBuffer(g_s83_ema_middle_handle,0,1,got,middle)!=got || CopyBuffer(g_s83_ema_slow_handle,0,1,got,slow)!=got)
+      return false;
+   // The EMA direction after each closed HTF candle.
+   int direction[];
+   ArrayResize(direction,got);
+   int run=0,last=0;
+   for(int k=0;k<got;k++)
+     {
+      int stack=fast[k]==EMPTY_VALUE || middle[k]==EMPTY_VALUE || slow[k]==EMPTY_VALUE?0:
+                S83EmaStack(fast[k],middle[k],slow[k]);
+      run=stack!=0 && stack==last?run+1:(stack!=0?1:0);
+      last=stack;
+      // Only runs that lie wholly within the copied candles count.
+      direction[k]=run>=n && k>=n-1?stack:0;
+     }
+   int j=-1;
+   for(int i=start;i<total;i++)
+     {
+      while(j+1<got && htf_rates[j+1].time+period<=rates[i].time) j++;
+      market[i]=j>=0?direction[j]:0;
+     }
+   return true;
   }
 
 // The HTF EMA lines over the drawn HTF candles (at most 500 segments each).
@@ -3055,7 +3124,7 @@ void S83OnTick()
 // timeframes: publishes the market filters and finds the LTF setups.
 void S83Update(const BASE_STRUCTURE_STATE &htf,const BASE_STRUCTURE_STATE &mtf,
                const BASE_STRUCTURE_STATE &ltf,const MqlRates &ltf_rates[],const int ltf_total,
-               const BASE_STRUCTURE_POINT &ltf_points[],
+               const BASE_STRUCTURE_POINT &ltf_points[],const int &market[],
                const BASE_TRADABILITY tradability,const string tradability_reason)
   {
    g_s83_tradability=tradability;
@@ -3073,7 +3142,21 @@ void S83Update(const BASE_STRUCTURE_STATE &htf,const BASE_STRUCTURE_STATE &mtf,
       was_armed[slot]=g_s83_ready && g_s83_armed_valid[slot]!=0?1:0;
       was_time[slot]=g_s83_armed[slot].a_time;
      }
-   S83ScanSetups(ltf_rates,ltf_total,ltf_points,atr,g_s83_setups,armed_buy,armed_sell);
+   // Only setups in the market's direction (see S83ScanSetups).
+   S83ScanSetups(ltf_rates,ltf_total,ltf_points,atr,market,g_s83_setups,armed_buy,armed_sell);
+   // The forming candle: a live setup the market no longer points to is
+   // cancelled now (the next scan ends it on this candle too).
+   datetime forming=iTime(_Symbol,LTFTimeframe(),0);
+   if(armed_buy>=0 && g_s83_market_direction!=1)
+     {
+      S83End(g_s83_setups[armed_buy],S83_CANCELLED,forming,S83_WHY_MARKET);
+      armed_buy=-1;
+     }
+   if(armed_sell>=0 && g_s83_market_direction!=-1)
+     {
+      S83End(g_s83_setups[armed_sell],S83_CANCELLED,forming,S83_WHY_MARKET);
+      armed_sell=-1;
+     }
    g_s83_armed_valid[0]=armed_buy>=0?1:0;
    g_s83_armed_valid[1]=armed_sell>=0?1:0;
    if(armed_buy>=0) g_s83_armed[0]=g_s83_setups[armed_buy];
@@ -3096,7 +3179,8 @@ void S83DashboardRows(BASE_DASHBOARD_ROW &rows[])
    AddDashboardRow(rows,"","",DASHBOARD_TEXT_COLOR);
    ulong ticket=0;
    bool position=S83FindPosition(ticket);
-   string state="Waiting for a setup";
+   string state=g_s83_market_direction>0?"Waiting for a buy setup":g_s83_market_direction<0?"Waiting for a sell setup":
+                "No setups ("+HTFName()+" EMAs not in order)";
    color state_color=DASHBOARD_NEUTRAL_COLOR;
    if(position)
      {
@@ -3118,7 +3202,8 @@ void S83DashboardRows(BASE_DASHBOARD_ROW &rows[])
    AddDashboardRow(rows,"83% Strategy ("+LTFName()+"):",state,state_color,
                    "Buys (sells) at the "+S83LevelText()+" retracement of the latest "+LTFName()+
                    " HL-to-HH (LH-to-LL) leg with heavy pressure, within the last "+(string)LTFBarsToProcess()+
-                   " "+LTFName()+" candles.");
+                   " "+LTFName()+" candles. Only buy setups are identified in a bullish market and only sell setups "+
+                   "in a bearish one (the "+HTFName()+" EMA order).");
    for(int slot=0;slot<2;slot++)
       if(g_s83_armed_valid[slot]!=0)
          AddWrappedDashboardRow(rows,"Setup:",S83SetupText(g_s83_armed[slot]),DASHBOARD_TEXT_COLOR,
@@ -3417,12 +3502,17 @@ bool Rebuild(const bool permit_alert)
       S83DrawEmaLines(rates,total,displayed);
      }
 
-   // Trend: the HTF EMAs on the latest closed HTF candle and the MTF swings.
+   // Trend: the HTF EMAs on the latest closed HTF candle and the MTF swings,
+   // and the market direction at each LTF candle's open (the setups follow it).
    S83_TREND trend;
    S83ReadTrend(setup_points,trend);
+   int market[];
+   if(!S83MarketHistory(ltf_rates,ltf_total,ltf_total-3*LTFBarsToProcess(),market) ||
+      (!trend.have_ema && iBars(_Symbol,BASETimeframe())>HTF_EMA_Slow+HTF_EMA_Candles))
+      return S83Wait("the HTF EMAs are still calculating");
    string tradability_reason="";
    BASE_TRADABILITY tradability=EvaluateTradability(trend,tradability_reason);
-   S83Update(structure_state,setup_state,ltf_state,ltf_rates,ltf_total,ltf_points,
+   S83Update(structure_state,setup_state,ltf_state,ltf_rates,ltf_total,ltf_points,market,
              tradability,tradability_reason);
 
    if(DrawingEnabled()) DrawDashboard(trend,tradability,tradability_reason,EntryFilterTooltip(rates[total-1],adx,atr));

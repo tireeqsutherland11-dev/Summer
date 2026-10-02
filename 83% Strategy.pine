@@ -2,6 +2,9 @@
 // 83% Strategy - Base market structure (Base.pine v2.43) with Fib Base's
 // Fibonacci engine, as a TradingView strategy. Same rules as 83% Strategy.mq5.
 //
+// Only setups in the market's direction are identified: buys while the HTF
+// EMAs are in bullish order (20 > 50 > 200), sells while they are in bearish
+// order, none otherwise.
 // Bullish (buys only): Market Tradability reads Tradable (all three line up:
 // the HTF EMAs 20 > 50 > 200, an MTF HH and HL, and a Hurst exponent above
 // 0.55); on the LTF (M30, Swing Detection level 3, 40 independent processed
@@ -1847,7 +1850,10 @@ entryFilterTooltip() =>
 //  * Bullish (buys only): Market Tradability reads Tradable (bullish): all
 //    three conditions line up: the HTF EMAs are in order, 20 > 50 > 200; the
 //    MTF made an HH and an HL; and the Hurst exponent is above 0.55 (bearish:
-//    20 < 50 < 200, an LL and an LH, the same Hurst exponent). On the LTF chart (M30, Swing Detection level 3
+//    20 < 50 < 200, an LL and an LH, the same Hurst exponent). Only setups in
+//    the market's direction are identified: buys while the HTF EMAs are in
+//    bullish order, sells while they are in bearish order, none otherwise;
+//    a setup still armed when that changes is cancelled. On the LTF chart (M30, Swing Detection level 3
 //    by default), within the last LTF Independent Processed Bars (40)
 //    candles, A is the most recent HL with heavy buying pressure; once a
 //    candle closes above the swing high before A, B is the highest high
@@ -1890,6 +1896,7 @@ S83_INVALID = 2
 S83_EXPIRED = 3
 S83_MISSED = 4
 S83_REPLACED = 5
+S83_CANCELLED = 6
 
 // One setup: A (the HL/LH the heavy move started from), B (the HH/LL it
 // formed), the entry level between them, its state and its drawings.
@@ -2176,11 +2183,17 @@ s83Prune() =>
             if not keep
                 s83Drawn.remove(k)
 
-// One closed LTF candle (see 83% Strategy.mq5's S83ScanSetups):
+// One closed LTF candle (see 83% Strategy.mq5's S83ScanSetups). Only setups
+// in the market's direction (s83MarketDir, the HTF EMA order at this candle's
+// open) are identified: buys in a bullish market, sells in a bearish one.
+//  0. an armed setup the market no longer points to is cancelled before the
+//     candle can touch it (unless its order filled on it: the filters of an
+//     order placed at the previous close reach this candle);
 //  1. each armed setup steps through the candle (s83Step): touched or
 //     invalidated. If still armed, its B follows price (s83FollowB), and it
 //     expires once its A left the processed candles;
-//  2. for buys, then sells: the latest swing low (high), A, starts a setup
+//  2. for buys in a bullish market, or sells in a bearish one: the latest
+//     swing low (high), A, starts a setup
 //     when it is an HL (LH) not used before, within the processed candles, a
 //     candle from A on has closed beyond the swing before it (the break of
 //     structure) and it shows heavy pressure. B is the extreme since A. If
@@ -2233,6 +2246,11 @@ if barstate.isconfirmed and s83OnLtf
     //    follows price, then expiry once A left the processed candles.
     bool buyWasLive = not na(s83Buy) and s83Live(s83Buy)
     bool sellWasLive = not na(s83Sell) and s83Live(s83Sell)
+    // 0. Only setups in the market's direction stay armed.
+    if buyWasLive and s83MarketDir != 1 and not s83Buy.traded
+        s83End(s83Buy, S83_CANCELLED, time, "cancelled: the market is no longer bullish")
+    if sellWasLive and s83MarketDir != -1 and not s83Sell.traded
+        s83End(s83Sell, S83_CANCELLED, time, "cancelled: the market is no longer bearish")
     if buyWasLive
         s83Step(s83Buy)
     if sellWasLive
@@ -2256,8 +2274,9 @@ if barstate.isconfirmed and s83OnLtf
     while s83UsedSell.size() > 200
         s83UsedSell.shift()
 
-    // 2. New setups: A is the latest swing on its side; the swing before it on
-    //    the other side holds the level whose break arms the setup.
+    // 2. New setups, in the market's direction only: A is the latest swing on
+    //    its side; the swing before it on the other side holds the level whose
+    //    break arms the setup.
     for side = 0 to 1
         int dir = side == 0 ? 1 : -1
         SPoint a = na
@@ -2272,7 +2291,7 @@ if barstate.isconfirmed and s83OnLtf
                 if na(a) and pt.side == -dir
                     a := pt
         bool used = not na(a) and (dir > 0 ? s83UsedBuy.includes(a.pivotTime) : s83UsedSell.includes(a.pivotTime))
-        if not na(a) and not na(p) and a.kind < 0 and not used and a.pivotBar >= bar_index - ltfBarsToProcess + 1
+        if dir == s83MarketDir and not na(a) and not na(p) and a.kind < 0 and not used and a.pivotBar >= bar_index - ltfBarsToProcess + 1
             int broke = -1
             for k = a.pivotBar to bar_index
                 float c = close[bar_index - k]
@@ -2499,9 +2518,9 @@ if barstate.islast or barstate.islastconfirmedhistory
     row += 1
     bool buyArmed = not na(s83Buy) and s83Live(s83Buy)
     bool sellArmed = not na(s83Sell) and s83Live(s83Sell)
-    string s83State = not s83OnLtf ? "Open a " + tfName(ltfTf) + " chart to trade" : strategy.position_size > 0 ? "Buy position open" : strategy.position_size < 0 ? "Sell position open" : buyArmed and sellArmed ? "Buy and sell setups live" : buyArmed ? "Buy setup armed" : sellArmed ? "Sell setup armed" : "Waiting for a setup"
+    string s83State = not s83OnLtf ? "Open a " + tfName(ltfTf) + " chart to trade" : strategy.position_size > 0 ? "Buy position open" : strategy.position_size < 0 ? "Sell position open" : buyArmed and sellArmed ? "Buy and sell setups live" : buyArmed ? "Buy setup armed" : sellArmed ? "Sell setup armed" : s83MarketDir > 0 ? "Waiting for a buy setup" : s83MarketDir < 0 ? "Waiting for a sell setup" : "No setups (" + tfName(htfTf) + " EMAs not in order)"
     color s83Color = not s83OnLtf ? DASH_NEGATIVE_COLOR : strategy.position_size > 0 or (buyArmed and not sellArmed) ? DASH_POSITIVE_COLOR : strategy.position_size < 0 or (sellArmed and not buyArmed) ? DASH_NEGATIVE_COLOR : DASH_NEUTRAL_COLOR
-    dashRow(row, "83% Strategy (" + tfName(ltfTf) + "):", s83State, s83Color, "Buys (sells) at the " + s83LevelText() + " retracement of the latest " + tfName(ltfTf) + " HL-to-HH (LH-to-LL) leg with heavy pressure, within the last " + str.tostring(ltfBarsToProcess) + " " + tfName(ltfTf) + " candles.")
+    dashRow(row, "83% Strategy (" + tfName(ltfTf) + "):", s83State, s83Color, "Buys (sells) at the " + s83LevelText() + " retracement of the latest " + tfName(ltfTf) + " HL-to-HH (LH-to-LL) leg with heavy pressure, within the last " + str.tostring(ltfBarsToProcess) + " " + tfName(ltfTf) + " candles. Only buy setups are identified in a bullish market and only sell setups in a bearish one (the " + tfName(htfTf) + " EMA order).")
     row += 1
     if buyArmed
         dashRow(row, "Setup:", wrapText(s83SetupText(s83Buy)), DASH_TEXT_COLOR, "Heavy pressure " + str.tostring(s83Buy.impulse, "0.0") + " " + tfName(ltfTf) + " ATR")

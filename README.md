@@ -789,7 +789,20 @@ Buys (bullish market):
    condition. This is the only market filter. The BOS / CHoCH Market Trends,
    the Internal Structure, Optimal Conditions and Tradable (Early) play no
    part. Base's own indicator keeps its rules.
-2. **LTF setup.** The LTF is M30 with LTF Swing Detection level 3 (3 candles
+2. **Only setups in the market's direction.** In a bullish market only buy
+   setups are identified and taken; in a bearish market only sell setups.
+   - The market's direction is the dashboard's HTF Trend: the HTF EMAs in
+     bullish order (20 > 50 > 200) or bearish order (20 < 50 < 200), on the
+     last `HTF_EMA_Candles` closed HTF candles.
+   - It is read at each LTF candle's open, from the HTF candles closed by
+     then.
+   - While the EMAs are in neither order, no setups are identified.
+   - A setup that is still armed when the market stops pointing its
+     direction is cancelled. It is drawn dotted with "cancelled: the market
+     is no longer bullish" (or bearish).
+   - Entries still need all three Market Tradability conditions in the
+     setup's direction.
+3. **LTF setup.** The LTF is M30 with LTF Swing Detection level 3 (3 candles
    each side) by default. The setup is searched within the last
    `LTF_Bars_To_Process` (the LTF Independent Processed Bars, 40) closed LTF
    candles.
@@ -802,15 +815,16 @@ Buys (bullish market):
      length) close without reaching it.
    - The Fibonacci runs from B (0%) back to A (100%), so the 83% level moves
      up with B.
-3. **Entry.** Price touches the 83% level (`Entry_Level`, 0.83). Any
+4. **Entry.** Price touches the 83% level (`Entry_Level`, 0.83). Any
    pullback to it after the break counts, including one while B is still
    forming.
-4. **Invalid.** If price makes a new HH (trades above a confirmed B) before
+5. **Invalid.** If price makes a new HH (trades above a confirmed B) before
    reaching 83%, the setup is dead and its HL is used up. A new setup needs
    a new HL.
 
 Sells mirror this:
-- the HTF EMAs in the opposite order, 20 < 50 < 200;
+- the HTF EMAs in the opposite order, 20 < 50 < 200 (only sell setups are
+  identified then);
 - downward expansion on the MTF: a Lower Low (`Current_Swing_Low <
   Previous_Swing_Low`) and a Lower High (`Current_Swing_High <
   Previous_Swing_High`);
@@ -921,7 +935,7 @@ On the LTF chart, setups are drawn as in the strategy's examples.
   stop zone (red, entry to stop loss), drawn from C.
   - An armed setup shows its planned zones from the latest candle.
   - Failed setups are drawn dotted with their reason: invalidated, expired,
-    missed or replaced.
+    missed, replaced or cancelled.
 
 The dashboard shows the trend and the strategy:
 
@@ -956,7 +970,11 @@ Trade Recommendations are no longer on the dashboard.
 
 Then come the strategy's rows:
 
-- **83% Strategy.** Waiting, a buy or sell setup armed, or a position open.
+- **83% Strategy.** A buy or sell setup armed, a position open, or the
+  wait:
+  - "Waiting for a buy setup" in a bullish market;
+  - "Waiting for a sell setup" in a bearish market;
+  - "No setups (H4 EMAs not in order)" when the market is in neither.
 - **Setup.** A, B and the 83% price. B reads `(forming)` while it still
   follows price.
 - **Entry Filters.** PASS, or BLOCKED with the reason (Market Tradability
@@ -1009,6 +1027,9 @@ Then come the strategy's rows:
   - Days follow the exchange time zone.
   - A new MTF/HTF candle reaches the filters one LTF candle after it closes,
     because Base's `request.security` reads the latest closed candle.
+    The same goes for the market's direction: an order placed at the
+    previous close can still fill on the candle where the market turned.
+    That setup is traded rather than cancelled.
   - Each platform starts its EMAs from its own history, so the EMA values can
     differ slightly where little HTF history is loaded.
   - The Hurst exponent on the MTF or LTF takes more calculation than on the
@@ -1078,15 +1099,23 @@ and Python mirrors:
   - the day and trade limits;
   - breakeven.
 
-  All 114 trades passed. Every one of the 656 touches of an armed setup was
-  either traded or rejected for a genuine reason:
-  - Market Tradability not Tradable: 465;
-  - Tradable in the other direction: 77;
-  - a position already open: 2.
+  All 114 trades passed. Every one of the 259 touches of an armed setup was
+  either traded or rejected because Market Tradability was not Tradable
+  (145).
 
-  Two more runs of 10 markets each also passed: one with the EMA order
-  required on the last 3 HTF candles (51 trades), and one with the Hurst
-  exponent on the MTF (52 trades).
+  Three more runs of 10 markets each also passed:
+  - the EMA order required on the last 3 HTF candles (51 trades);
+  - the Hurst exponent on the MTF (52 trades);
+  - short EMAs (5/10/20), whose order flips often (87 trades).
+- **Only setups in the market's direction.** The market's direction was
+  recomputed independently from the HTF candles.
+  - At every tick of the 20 markets (7.8 million checks), any armed setup
+    pointed the market's direction.
+  - Each of the 1,038 setups that ended was audited over its whole life
+    (13,831 candles): the market pointed its direction at every candle, and
+    the 4 that were cancelled ended on the first candle where it did not.
+  - At each entry, the market had pointed the trade direction since the
+    setup's candle.
 
   The generated markets are random, so they say nothing about profitability.
 - **The Tradable rule.** Market Tradability was computed for every
@@ -1119,7 +1148,11 @@ and Python mirrors:
   - the EA's Hurst exponent matched a line-by-line Python copy of the Pine
     calculation on 21,388 readings, with windows of 50, 100 and 250 closes.
     A deliberate off-by-one in the copy made every reading differ, so the
-    comparison catches indexing mistakes.
+    comparison catches indexing mistakes;
+  - the EA's market direction at each M30 candle matched the one the Pine
+    request returns on 109,421 candles, including weekend gaps and 1, 2 or 3
+    candles of EMA consistency. Reading the HTF candle one step too late in
+    the copy made 3,209 comparisons differ.
 - **Deriv tests.** Separate tests cover:
   - sizing at the minimum, maximum and total volume limits;
   - the Journal reason while history is missing.
@@ -1131,12 +1164,18 @@ and Python mirrors:
   - the daily trade limit and excluded days;
   - the LTF drawings.
 - **The EA and the Pine strategy agree.** The EA's setup scan was compared,
-  setup by setup, with a Python mirror of the Pine strategy's setup logic on
-  19 generated markets. These covered several swing levels, windows (20 to
-  60 candles) and pressure settings, at both forex and gold price scales.
-  - All 3,607 setups matched: A, B (where it ended up), the level, the
-    outcome, when the setup was armed and ended, and why it ended.
-  - Only 17 of them were missed (price reached 83% before A was confirmed).
+  setup by setup, with a Python mirror of the Pine strategy's setup logic.
+  - **Markets:** 19 generated markets, plus 4 whose market direction flipped
+    at random every 2 to 30 candles.
+  - **Settings:** several swing levels, windows (20 to 60 candles) and
+    pressure settings, at both forex and gold price scales.
+  - **Result:** all 1,960 setups matched: A, B (where it ended up), the
+    level, the outcome, when the setup was armed and ended, and why it
+    ended.
+  - **Outcomes:** 171 were cancelled when the market turned, and 38 were
+    missed (price reached 83% before the setup was known).
+  - **Sensitivity:** without the direction rule, the copy differed on 2,185
+    setups.
 - **The drawing limit.** In a 60-day visual run, the chart was checked at
   every M30 candle. It always showed exactly the latest 2 setups plus any
   live one. In 213 of those checks, older setups were hidden.
