@@ -2,10 +2,10 @@
 // 83% Strategy - Base market structure (Base.pine v2.43) with Fib Base's
 // Fibonacci engine, as a TradingView strategy. Same rules as 83% Strategy.mq5.
 //
-// Bullish (buys only): Market Tradability reads Tradable (the Market Trend
-// and the Internal Structure of every selected timeframe are bullish, a
-// Transition, BOS or CHoCH alike) and the Optimal Conditions OPTIMAL; on the
-// LTF (M30, Swing Detection level 3, 40 independent processed
+// Bullish (buys only): Market Tradability reads Tradable (by default the
+// Market Trend and the Internal Structure of every selected timeframe are
+// bullish, a Transition, BOS or CHoCH alike; see the Market Tradability
+// inputs); on the LTF (M30, Swing Detection level 3, 40 independent processed
 // bars), once a candle has closed above the swing high before the most
 // recent HL with heavy buying pressure (the break of structure), the
 // Fibonacci runs from the highest high since that HL (0%, B, which follows
@@ -65,8 +65,8 @@ strategy("83% Strategy", shorttitle = "83%", overlay = true, initial_capital = 1
 // ---------------------------------------------------------------- inputs
 grpTf = "Timeframes"
 htfTf = input.timeframe("240", "HTF", group = grpTf, tooltip = "Higher timeframe (HTF). Its structure sets the main trend, Market Tradability, the HTF MA, ADX, ATR and session filters, and the alerts.")
-mtfTf = input.timeframe("60", "MTF", group = grpTf, tooltip = "Middle timeframe (MTF). Its trend is correlated with the HTF for Market Tradability, it drives the MTF MA filter, and its swings and ATR measure Healthy Extension.")
-ltfTf = input.timeframe("30", "LTF", group = grpTf, tooltip = "Lower timeframe (LTF). Its trend can be correlated too, its latest close is the price Healthy Extension measures, and its candles feed Market Volume and Price Momentum.")
+mtfTf = input.timeframe("60", "MTF", group = grpTf, tooltip = "Middle timeframe (MTF). Its Market Trend and Internal Structure count towards Market Tradability (see the Market Tradability inputs), and it drives the MTF MA filter.")
+ltfTf = input.timeframe("30", "LTF", group = grpTf, tooltip = "Lower timeframe (LTF), the chart the 83% Strategy trades on. Its Market Trend and Internal Structure count towards Market Tradability (see the Market Tradability inputs).")
 
 grpTrend = "Trend Analysis Timeframes"
 useHtf = input.bool(true, "Use HTF", group = grpTrend, tooltip = "Show the HTF Market Trend and require it to agree with the other selected timeframes for Market Tradability. An established HTF trend is always required.")
@@ -161,18 +161,11 @@ grpAtr = "ATR Filter"
 useAtr = input.bool(true, "Use ATR Filter", group = grpAtr, tooltip = "Require the HTF ATR to be at least 1.0 (in price units) for setups. Shown in the Market Tradability tooltip only.")
 atrLength = input.int(14, "ATR Length", minval = 1, group = grpAtr, tooltip = "Length of the HTF ATR.")
 
-grpOpt = "Optimal Conditions"
-useCorrOpt = input.bool(true, "Use Timeframe Correlation For Optimal", group = grpOpt, tooltip = "Optimal Conditions requires the selected timeframes to correlate (Market Tradability is Tradable or Tradable (Early).")
-useExtOpt = input.bool(false, "Use Healthy Extension For Optimal", group = grpOpt, tooltip = "Optimal Conditions blocks an overextended market: price more than 10 MTF ATR beyond the latest MTF swing low (bullish HTF trend) or swing high (bearish). Anything less passes.")
-useVolOpt = input.bool(true, "Use Market Volume For Optimal", group = grpOpt, tooltip = "Optimal Conditions requires the latest LTF volume to be 0.5x to 2x its 20-candle average.")
-useMomOpt = input.bool(false, "Use Price Momentum For Optimal", group = grpOpt, tooltip = "Optimal Conditions requires the latest LTF true range to be 0.5x to 2x its 20-candle average.")
-
 grpDash = "Dashboard and Alerts"
 dashPositionInput = input.string("Top Right", "Dashboard Position", options = ["Top Left", "Top Right", "Bottom Left", "Bottom Right"], group = grpDash, tooltip = "Corner of the chart where the dashboard is shown.")
 enableAlerts = input.bool(false, "Alert On Structure-Timeframe BOS / CHoCH / LS", group = grpDash, tooltip = "Send an alert() when a BOS, CHoCH or LS is confirmed on the latest closed HTF candle. Create the alert with Any alert() function call.")
 
 grpS83Sym = "83% Strategy - Symbol (Deriv Synthetic Indices)"
-symbolProfile = input.string("Auto", "Symbol Profile", options = ["Auto", "Deriv Synthetic Index", "Standard Symbol"], group = grpS83Sym, tooltip = "Deriv synthetic indices tick at a fixed rate around the clock, so their volume measures nothing: Market Volume is not applied to them (nor to any symbol without volume data). Auto recognises them by ticker, description or the DERIV prefix.")
 minQty = input.float(0.0, "Minimum Quantity (0 = none)", minval = 0.0, group = grpS83Sym, tooltip = "The symbol's minimum order size, e.g. the Deriv minimum lot. A smaller risk-based size is not traded, unless the option below allows the minimum.")
 minQtyRiskMultiple = input.float(0.0, "Trade The Minimum If It Risks At Most N x The Plan (0 = skip)", minval = 0.0, step = 0.5, group = grpS83Sym, tooltip = "When the risk-based size is below the minimum quantity, trade the minimum only if its loss at the stop is at most this many times the planned risk.")
 
@@ -182,12 +175,25 @@ entryLevel = input.float(0.83, "Entry Fibonacci Level", minval = 0.01, maxval = 
 impulseCandles = input.int(3, "Heavy Pressure: Candles After The HL/LH", minval = 0, maxval = 20, group = grpS83, tooltip = "Heavy pressure must start the move: a candle within this many candles after A (A's own candle included) must close far enough beyond A (below).")
 impulseMinAtr = input.float(2.0, "Heavy Pressure: Minimum Move (LTF ATR)", minval = 0.0, step = 0.1, group = grpS83, tooltip = "How far beyond A that close must be, in 14-candle LTF ATR measured at A. On real data 2.0 selected the strongest 43% of HL-to-HH legs. 0 accepts every leg.")
 
-grpS83Conf = "83% Strategy - Entry Confirmation"
-engulfConfirm = input.bool(false, "Wait For An Engulfing After The 83% Touch", group = grpS83Conf, tooltip = "On: once price touches the entry level, the trade waits for an engulfing candle in the trade direction (bullish for buys, bearish for sells) on the lower timeframe or the LTF, on the touching candle or later, and enters at its close. Off: a limit order at the entry level.")
-useLowerEngulf = input.bool(true, "Engulfing On The Lower Timeframe", inline = "lower", group = grpS83Conf)
-engulfLowerTf = input.timeframe("15", "", inline = "lower", group = grpS83Conf, tooltip = "The lower timeframe (M15 by default). Its candles inside each LTF candle are read with request.security_lower_tf; the entry is placed at the close of the LTF candle that contains the engulfing.")
-useLtfEngulf = input.bool(true, "Engulfing On The LTF", group = grpS83Conf, tooltip = "An engulfing of the LTF candles (M30 by default) also confirms the entry.")
-confirmWindow = input.int(4, "LTF Candles To Wait For The Engulfing", minval = 1, maxval = 50, group = grpS83Conf, tooltip = "The engulfing must close within this many LTF candles, the touching candle included. The setup also fails if a candle closes through A or price makes a new HH (LL) first.")
+grpS83Trad = "83% Strategy - Market Tradability"
+htfTrendCounts = input.bool(true, "HTF Market Trend", inline = "htfT", group = grpS83Trad)
+htfTrendBos = input.bool(true, "BOS", inline = "htfT", group = grpS83Trad)
+htfTrendTransition = input.bool(true, "Transition", inline = "htfT", group = grpS83Trad, tooltip = "Counted: the HTF Market Trend must point the trade direction. BOS: accept an established trend (its latest break a BOS, e.g. Bullish). Transition: accept a Transition (its latest break a CHoCH, e.g. Bullish Transition). Consolidation / Undefined never agrees.")
+htfInternalCounts = input.bool(true, "HTF Internal Structure", inline = "htfI", group = grpS83Trad)
+htfInternalBos = input.bool(true, "BOS", inline = "htfI", group = grpS83Trad)
+htfInternalChoch = input.bool(true, "CHoCH", inline = "htfI", group = grpS83Trad, tooltip = "Counted: the HTF Internal Structure must point the trade direction. BOS: accept an internal trend whose latest break is a BOS, e.g. Bullish (BOS). CHoCH: accept one whose latest break is a CHoCH, e.g. Bullish (CHoCH). Undefined never agrees.")
+mtfTrendCounts = input.bool(true, "MTF Market Trend", inline = "mtfT", group = grpS83Trad)
+mtfTrendBos = input.bool(true, "BOS", inline = "mtfT", group = grpS83Trad)
+mtfTrendTransition = input.bool(true, "Transition", inline = "mtfT", group = grpS83Trad, tooltip = "Counted: the MTF Market Trend must point the trade direction. BOS: accept an established trend (its latest break a BOS, e.g. Bullish). Transition: accept a Transition (its latest break a CHoCH, e.g. Bullish Transition). Consolidation / Undefined never agrees.")
+mtfInternalCounts = input.bool(true, "MTF Internal Structure", inline = "mtfI", group = grpS83Trad)
+mtfInternalBos = input.bool(true, "BOS", inline = "mtfI", group = grpS83Trad)
+mtfInternalChoch = input.bool(true, "CHoCH", inline = "mtfI", group = grpS83Trad, tooltip = "Counted: the MTF Internal Structure must point the trade direction. BOS: accept an internal trend whose latest break is a BOS, e.g. Bullish (BOS). CHoCH: accept one whose latest break is a CHoCH, e.g. Bullish (CHoCH). Undefined never agrees.")
+ltfTrendCounts = input.bool(true, "LTF Market Trend", inline = "ltfT", group = grpS83Trad)
+ltfTrendBos = input.bool(true, "BOS", inline = "ltfT", group = grpS83Trad)
+ltfTrendTransition = input.bool(true, "Transition", inline = "ltfT", group = grpS83Trad, tooltip = "Counted: the LTF Market Trend must point the trade direction. BOS: accept an established trend (its latest break a BOS, e.g. Bullish). Transition: accept a Transition (its latest break a CHoCH, e.g. Bullish Transition). Consolidation / Undefined never agrees.")
+ltfInternalCounts = input.bool(true, "LTF Internal Structure", inline = "ltfI", group = grpS83Trad)
+ltfInternalBos = input.bool(true, "BOS", inline = "ltfI", group = grpS83Trad)
+ltfInternalChoch = input.bool(true, "CHoCH", inline = "ltfI", group = grpS83Trad, tooltip = "Counted: the LTF Internal Structure must point the trade direction. BOS: accept an internal trend whose latest break is a BOS, e.g. Bullish (BOS). CHoCH: accept one whose latest break is a CHoCH, e.g. Bullish (CHoCH). Undefined never agrees.")
 
 grpS83Risk = "83% Strategy - Risk Management"
 riskPercent = input.float(5.0, "Risk (%) Per Trade", minval = 0.01, maxval = 100.0, step = 0.1, group = grpS83Risk, tooltip = "Share of the balance (initial capital plus net profit) lost at the stop. Quantity = balance x risk % / 100 / (stop distance x point value).")
@@ -292,10 +298,14 @@ LOW_LABEL_COLOR = #008080
 
 if not useHtf and not useMtf and not useLtf
     runtime.error("Enable at least one trend analysis timeframe")
-if not useCorrOpt and not useExtOpt and not useVolOpt and not useMomOpt
-    runtime.error("Enable at least one Optimal Conditions requirement")
 if rrHigh < rrLow
     runtime.error("The second standard R:R must be at least the first")
+if not ((useHtf and (htfTrendCounts or htfInternalCounts)) or (useMtf and (mtfTrendCounts or mtfInternalCounts)) or (useLtf and (ltfTrendCounts or ltfInternalCounts)))
+    runtime.error("Count at least one Market Trend or Internal Structure of a selected timeframe for Market Tradability")
+if (htfTrendCounts and not htfTrendBos and not htfTrendTransition) or (mtfTrendCounts and not mtfTrendBos and not mtfTrendTransition) or (ltfTrendCounts and not ltfTrendBos and not ltfTrendTransition)
+    runtime.error("A counted Market Trend must accept BOS, Transition or both")
+if (htfInternalCounts and not htfInternalBos and not htfInternalChoch) or (mtfInternalCounts and not mtfInternalBos and not mtfInternalChoch) or (ltfInternalCounts and not ltfInternalBos and not ltfInternalChoch)
+    runtime.error("A counted Internal Structure must accept BOS, CHoCH or both")
 
 // ------------------------------------------------------ structure engine
 // An equal high or low (EQH/EQL, see markEqual) keeps the role of the swing
@@ -1624,28 +1634,62 @@ joinNames(array<string> names) =>
     r
 
 // Market Tradability (83% Strategy; 2 Tradable, 0 Not Tradable): Tradable
-// when the Market Trend and the Internal Structure of every selected
-// timeframe point the same way, bullish or bearish. A Transition counts as
-// its direction, and it does not matter whether the latest break was a BOS
-// or a CHoCH. There is no Tradable (Early). The reason names the first
-// timeframe that does not agree.
-tradableCheck(string name, TfView v, InternalView iv, int d) =>
+// when every counted component points the same way, bullish or bearish, with
+// an accepted kind of break. The components are each selected timeframe's
+// Market Trend and Internal Structure, set in the "83% Strategy - Market
+// Tradability" inputs (see 83% Strategy.mq5's EvaluateTradability):
+//  * a counted Market Trend is accepted when established (latest break a
+//    BOS) if BOS is ticked, and when a Transition (latest break a CHoCH) if
+//    Transition is ticked; Consolidation / Undefined never agrees;
+//  * a counted Internal Structure is accepted when its latest break is a BOS
+//    if BOS is ticked, and a CHoCH if CHoCH is ticked; undefined never agrees.
+// The direction is the first counted component's (HTF trend, HTF internal,
+// MTF trend, MTF internal, LTF trend, LTF internal). There is no Tradable
+// (Early). The reason names the first component that does not agree.
+trendCheck(string name, TfView v, int d, bool acceptBos, bool acceptTransition) =>
     int t = biasDirection(v)
-    t == 0 ? noTrendText(name, v) : t != d ? name + " is " + trendWord(t) + ", not " + trendWord(d) + "." : iv.trend != d ? "The " + name + " internal structure is " + (iv.trend == 0 ? "undefined" : trendWord(iv.trend)) + ", not " + trendWord(d) + "." : ""
+    bool established = definiteBias(v)
+    t == 0 ? noTrendText(name, v) : t != d ? name + " is " + trendWord(t) + ", not " + trendWord(d) + "." : established and not acceptBos ? name + " is an established " + trendWord(t) + " trend (latest break a BOS), but only Transitions are accepted." : not established and not acceptTransition ? name + " is only a " + trendWord(t) + " Transition (a CHoCH not yet confirmed by a BOS), and Transitions are not accepted." : ""
+
+internalCheck(string name, InternalView iv, int d, bool acceptBos, bool acceptChoch) =>
+    iv.trend == 0 ? "The " + name + " internal structure is undefined." : iv.trend != d ? "The " + name + " internal structure is " + trendWord(iv.trend) + ", not " + trendWord(d) + "." : iv.lastChoch and not acceptChoch ? "The " + name + " internal structure is " + trendWord(iv.trend) + " by a CHoCH, and internal CHoCHs are not accepted." : not iv.lastChoch and not acceptBos ? "The " + name + " internal structure is " + trendWord(iv.trend) + " by a BOS, and internal BOSs are not accepted." : ""
+
+// The direction Market Tradability refers to: the first counted component's.
+tradabilityDir(TfView htf, TfView mtf, TfView ltf, InternalView hi, InternalView mi, InternalView li) =>
+    useHtf and htfTrendCounts ? biasDirection(htf) : useHtf and htfInternalCounts ? hi.trend : useMtf and mtfTrendCounts ? biasDirection(mtf) : useMtf and mtfInternalCounts ? mi.trend : useLtf and ltfTrendCounts ? biasDirection(ltf) : useLtf and ltfInternalCounts ? li.trend : 0
+
+// "H4 trend + internal, H1 trend + internal and M30 trend + internal".
+countedText() =>
+    array<string> parts = array.new<string>()
+    if useHtf and (htfTrendCounts or htfInternalCounts)
+        parts.push(tfName(htfTf) + (htfTrendCounts and htfInternalCounts ? " trend + internal" : htfTrendCounts ? " trend" : " internal"))
+    if useMtf and (mtfTrendCounts or mtfInternalCounts)
+        parts.push(tfName(mtfTf) + (mtfTrendCounts and mtfInternalCounts ? " trend + internal" : mtfTrendCounts ? " trend" : " internal"))
+    if useLtf and (ltfTrendCounts or ltfInternalCounts)
+        parts.push(tfName(ltfTf) + (ltfTrendCounts and ltfInternalCounts ? " trend + internal" : ltfTrendCounts ? " trend" : " internal"))
+    joinNames(parts)
 
 evaluateTradability(TfView htf, TfView mtf, TfView ltf, InternalView hi, InternalView mi, InternalView li) =>
-    int d = useHtf ? biasDirection(htf) : useMtf ? biasDirection(mtf) : biasDirection(ltf)
+    int d = tradabilityDir(htf, mtf, ltf, hi, mi, li)
     string reason = ""
-    if useHtf
-        reason := tradableCheck(tfName(htfTf), htf, hi, d)
-    if reason == "" and useMtf
-        reason := tradableCheck(tfName(mtfTf), mtf, mi, d)
-    if reason == "" and useLtf
-        reason := tradableCheck(tfName(ltfTf), ltf, li, d)
+    if useHtf and htfTrendCounts
+        reason := trendCheck(tfName(htfTf), htf, d, htfTrendBos, htfTrendTransition)
+    if reason == "" and useHtf and htfInternalCounts
+        reason := internalCheck(tfName(htfTf), hi, d, htfInternalBos, htfInternalChoch)
+    if reason == "" and useMtf and mtfTrendCounts
+        reason := trendCheck(tfName(mtfTf), mtf, d, mtfTrendBos, mtfTrendTransition)
+    if reason == "" and useMtf and mtfInternalCounts
+        reason := internalCheck(tfName(mtfTf), mi, d, mtfInternalBos, mtfInternalChoch)
+    if reason == "" and useLtf and ltfTrendCounts
+        reason := trendCheck(tfName(ltfTf), ltf, d, ltfTrendBos, ltfTrendTransition)
+    if reason == "" and useLtf and ltfInternalCounts
+        reason := internalCheck(tfName(ltfTf), li, d, ltfInternalBos, ltfInternalChoch)
+    bool anyCounted = (useHtf and (htfTrendCounts or htfInternalCounts)) or (useMtf and (mtfTrendCounts or mtfInternalCounts)) or (useLtf and (ltfTrendCounts or ltfInternalCounts))
+    if not anyCounted
+        reason := "No Market Tradability component is counted (see the Market Tradability inputs)."
     int state = reason == "" and d != 0 ? 2 : 0
-    int selected = (useHtf ? 1 : 0) + (useMtf ? 1 : 0) + (useLtf ? 1 : 0)
     if state == 2
-        reason := trendTimeframesText() + (selected == 1 ? " is " : selected == 2 ? " are both " : " are all ") + trendWord(d) + ", in their Market Trend and Internal Structure."
+        reason := "Every counted component is " + trendWord(d) + ": " + countedText() + "."
     [state, reason]
 
 // Tradable (Early): early entries in the trend's direction while the
@@ -1748,32 +1792,15 @@ entryFilterTooltip() =>
     out := out + "\nADX " + (useAdx ? str.tostring(hAdx, "0.0") + " " + passText(adxPass) : "off") + " | ATR " + (useAtr ? str.tostring(hAtr, format.mintick) + " " + passText(atrPass) : "off")
     out
 
-// Optimal Conditions: every enabled requirement must pass.
-evaluateOptimal(bool biasReady, bool healthy, float extension, bool goodVolume, float volumeRatio, bool goodMomentum, float momentumRatio) =>
-    bool optimal = (not useCorrOpt or biasReady) and (not useExtOpt or healthy) and (not useVolOpt or goodVolume) and (not useMomOpt or goodMomentum)
-    string reason = ""
-    if optimal
-        reason := "All selected requirements are met"
-    else
-        if useCorrOpt and not biasReady
-            reason := "the selected timeframes do not correlate (see Tradability Reason)"
-        if useExtOpt and not healthy
-            reason := reason + (reason == "" ? "" : "; ") + "price is overextended" + (na(extension) ? "" : " (" + extensionText(extension) + " beyond the latest " + tfName(mtfTf) + " swing)")
-        if useVolOpt and not goodVolume
-            reason := reason + (reason == "" ? "" : "; ") + (volumeRatio < VOLUME_MIN_RATIO ? "volume is too low" : "volume is too high")
-        if useMomOpt and not goodMomentum
-            reason := reason + (reason == "" ? "" : "; ") + (momentumRatio < MOMENTUM_MIN_RATIO ? "momentum is too low (price is sluggish)" : "momentum is too high (price would need to be chased)")
-    [optimal, reason]
-
 // ================================================================ 83% Strategy
 // Trades the 83% retracement of a heavy LTF impulse in the direction of an
 // established MTF trend, using Base's structure (above) for the swings and the
 // market filters, and Fib Base's Fibonacci engine for the levels. Same rules as
 // 83% Strategy.mq5:
-//  * Bullish (buys only): Market Tradability reads Tradable (bullish): the
-//    Market Trend and the Internal Structure of every selected timeframe are
-//    bullish (a Transition counts, BOS or CHoCH alike). The Optimal
-//    Conditions read OPTIMAL. On the LTF chart (M30, Swing Detection level 3
+//  * Bullish (buys only): Market Tradability reads Tradable (bullish): by
+//    default the Market Trend and the Internal Structure of every selected
+//    timeframe are bullish (a Transition counts, BOS or CHoCH alike; see the
+//    Market Tradability inputs). On the LTF chart (M30, Swing Detection level 3
 //    by default), within the last LTF Independent Processed Bars (40)
 //    candles, A is the most recent HL with heavy buying pressure; once a
 //    candle closes above the swing high before A, B is the highest high
@@ -1784,8 +1811,9 @@ evaluateOptimal(bool biasReady, bool healthy, float extension, bool goodVolume, 
 //  * Heavy pressure: within Impulse Candles candles of A (A's candle
 //    included), a candle closes at least Impulse Min ATR LTF ATR beyond A, the
 //    14-candle ATR taken at A.
-//  * A setup is known once B is a confirmed swing; if price reached the entry
-//    level before that, it is missed rather than traded late.
+//  * A setup is known once A is a confirmed swing and the break has closed;
+//    if price reached the entry level after B before that, it is missed
+//    rather than traded late.
 //  * Risk: Risk % of the balance (initial capital plus net profit) at the
 //    stop, cut after every run of consecutive losses in a day and restored the
 //    next day; at most Max Trades a day, on the selected days, one position at
@@ -1815,9 +1843,6 @@ S83_INVALID = 2
 S83_EXPIRED = 3
 S83_MISSED = 4
 S83_REPLACED = 5
-S83_WAITING = 6
-S83_CONFIRMED = 7
-S83_FAILED = 8
 
 // One setup: A (the HL/LH the heavy move started from), B (the HH/LL it
 // formed), the entry level between them, its state and its drawings.
@@ -1846,12 +1871,6 @@ type S83Setup
     float tp = na
     float rr = na
     int entryTime = na
-    // Engulfing confirmation: the touch, then the engulfing candle.
-    int touchBar = na
-    int touchTime = na
-    int confirmTime = na
-    int confirmSecs = 0
-    float confirmPrice = na
     array<line> lines
     array<label> levelLabels
     array<label> labels
@@ -1874,8 +1893,7 @@ alignUp(float p) =>
     math.ceil(p / syminfo.mintick - 1e-8) * syminfo.mintick
 
 // Take profit, stop loss and reward-to-risk for an entry at `entry`, and
-// whether that stop is behind A (an entry well past the entry level after a
-// strong engulfing can leave a 1:2 / 1:3 stop in front of A).
+// whether that stop is behind A.
 s83Plan(S83Setup s, float entry, float atr) =>
     float tp = s.dir > 0 ? alignDown(s.bPrice - tpBufferAtr * atr) : alignUp(s.bPrice + tpBufferAtr * atr)
     float reward = s.dir > 0 ? tp - entry : entry - tp
@@ -1887,17 +1905,8 @@ s83Plan(S83Setup s, float entry, float atr) =>
     bool behind = s.dir > 0 ? sl < s.aPrice : sl > s.aPrice
     [tp, sl, rr, ok, behind]
 
-// Engulfing (body): the previous candle closed against the setup's direction,
-// this one with it, closing beyond the previous open from an open at or
-// beyond the previous close.
-s83Engulf(int d, float pO, float pC, float cO, float cC) =>
-    d > 0 ? pC < pO and cC > cO and cC > pO and cO <= pC : pC > pO and cC < cO and cC < pO and cO >= pC
-
 s83Live(S83Setup s) =>
-    s.state == S83_ARMED or s.state == S83_WAITING
-
-s83TfText(int secs) =>
-    secs % 3600 == 0 ? "H" + str.tostring(secs / 3600) : "M" + str.tostring(secs / 60)
+    s.state == S83_ARMED
 
 // Heavy pressure: the furthest close beyond A within Impulse Candles candles
 // of it, in LTF ATR at A.
@@ -1916,72 +1925,22 @@ s83TradingDay(int d) =>
 s83DayName(int d) =>
     d == dayofweek.monday ? "Monday" : d == dayofweek.tuesday ? "Tuesday" : d == dayofweek.wednesday ? "Wednesday" : d == dayofweek.thursday ? "Thursday" : d == dayofweek.friday ? "Friday" : d == dayofweek.saturday ? "Saturday" : "Sunday"
 
-// Market Tradability's state alone (2 Tradable, 1 Tradable (Early), 0 Not
-// Tradable), for every candle; evaluateTradability gives the same state with
-// its reason for the dashboard.
-tradabilityState(TfView htf, TfView mtf, TfView ltf, InternalView hi, InternalView mi, InternalView li) =>
-    // evaluateTradability's state without its reason (2 Tradable, 0 not).
-    int d = useHtf ? biasDirection(htf) : useMtf ? biasDirection(mtf) : biasDirection(ltf)
-    bool ok = d != 0 and (not useHtf or (biasDirection(htf) == d and hi.trend == d)) and (not useMtf or (biasDirection(mtf) == d and mi.trend == d)) and (not useLtf or (biasDirection(ltf) == d and li.trend == d))
-    ok ? 2 : 0
-
-// ------------------------------------------------ Deriv synthetic indices
-// Deriv's synthetic indices (Volatility, Crash / Boom, Jump, Step, Range Break,
-// DEX, Drift Switch ...) are generated prices that tick at a fixed rate around
-// the clock, so their volume measures nothing and is often missing on
-// TradingView. Base's Market Volume requirement is not applied to them, nor to
-// any symbol without volume data (it would block every trade). Auto
-// recognises them by ticker, description or the DERIV prefix.
-string s83SymText = str.upper(syminfo.ticker + " | " + syminfo.description + " | " + syminfo.prefix)
-bool s83AutoSynthetic = syminfo.prefix == "DERIV" or str.contains(s83SymText, "VOLATILITY") or str.contains(s83SymText, "CRASH") or str.contains(s83SymText, "BOOM") or str.contains(s83SymText, "JUMP") or str.contains(s83SymText, "STEP") or str.contains(s83SymText, "RANGE BREAK") or str.contains(s83SymText, "DEX ") or str.contains(s83SymText, "DRIFT SWITCH") or str.contains(s83SymText, "HYBRID") or str.startswith(str.upper(syminfo.ticker), "R_") or str.startswith(str.upper(syminfo.ticker), "1HZ")
-bool s83Synthetic = symbolProfile == "Deriv Synthetic Index" or (symbolProfile == "Auto" and s83AutoSynthetic)
-bool s83NoVolume = ta.cum(nz(volume)) == 0
-bool s83VolumeNA = s83Synthetic or s83NoVolume
-string s83VolumeNote = s83Synthetic ? "synthetic index" : s83NoVolume ? "no volume data" : ""
-
-// ------------------------------------------------- engulfing confirmation
-// The lower-timeframe candles (M15) of each LTF candle, for the touch, the
-// failures and the lower-timeframe engulfing in their own order. On a chart
-// that is not above the lower timeframe the chart's own candles are used
-// (the strategy only trades on the LTF chart anyway).
-string s83LowerReq = timeframe.in_seconds(engulfLowerTf) < timeframe.in_seconds() ? engulfLowerTf : timeframe.period
-int s83LowerSecs = timeframe.in_seconds(s83LowerReq)
-[s83LwT, s83LwO, s83LwH, s83LwL, s83LwC] = request.security_lower_tf(syminfo.tickerid, s83LowerReq, [time, open, high, low, close])
-var float s83PrevO = na
-var float s83PrevC = na
-s83ConfirmText() =>
-    string lowerName = tfName(s83LowerReq)
-    useLowerEngulf and useLtfEngulf and lowerName != tfName(ltfTf) ? lowerName + " or " + tfName(ltfTf) : useLowerEngulf ? lowerName : tfName(ltfTf)
-
 // ------------------------------------------------- market filters per candle
 // The latest closed LTF candle is the chart's own when the chart is the LTF.
 bool s83OnLtf = timeframe.in_seconds() == timeframe.in_seconds(ltfTf)
-float s83VolAvg = nz(ta.sma(volume, VOLUME_AVERAGE_LENGTH)[1])
-float s83VolRatio = s83VolAvg > 0 ? nz(volume) / s83VolAvg : 0.0
-float s83TrAvg = nz(ta.sma(ta.tr(true), MOMENTUM_AVERAGE_LENGTH)[1])
-float s83MomRatio = s83TrAvg > 0 ? ta.tr(true) / s83TrAvg : 0.0
-int s83Tradability = tradabilityState(htfView, mtfView, ltfView, htfInternal, mtfInternal, ltfInternal)
-int s83MarketDir = useHtf ? biasDirection(htfView) : useMtf ? biasDirection(mtfView) : biasDirection(ltfView)
-float s83Extension = trendExtension(htfView, close, mAtr, mLastLow, nz(mHaveLow) == 1, mLastHigh, nz(mHaveHigh) == 1)
-bool s83Healthy = na(s83Extension) or s83Extension <= MAX_EXTENSION_ATR
-bool s83GoodVolume = s83VolumeNA or (s83VolAvg > 0 and s83VolRatio >= VOLUME_MIN_RATIO and s83VolRatio <= VOLUME_MAX_RATIO)
-bool s83GoodMomentum = s83TrAvg > 0 and s83MomRatio >= MOMENTUM_MIN_RATIO and s83MomRatio <= MOMENTUM_MAX_RATIO
-bool s83Optimal = (not useCorrOpt or s83Tradability != 0) and (not useExtOpt or s83Healthy) and (not useVolOpt or s83GoodVolume) and (not useMomOpt or s83GoodMomentum)
-string s83OptimalReason = useCorrOpt and s83Tradability == 0 ? "timeframes do not correlate" : useExtOpt and not s83Healthy ? "overextended" : useVolOpt and not s83GoodVolume ? (s83VolRatio < VOLUME_MIN_RATIO ? "volume too low" : "volume too high") : useMomOpt and not s83GoodMomentum ? (s83MomRatio < MOMENTUM_MIN_RATIO ? "momentum too low" : "momentum too high") : ""
+[s83Tradability, s83TradabilityWhy] = evaluateTradability(htfView, mtfView, ltfView, htfInternal, mtfInternal, ltfInternal)
+int s83MarketDir = tradabilityDir(htfView, mtfView, ltfView, htfInternal, mtfInternal, ltfInternal)
 
 // Why an armed setup in direction `dir` cannot be entered on the next candle,
 // or "" when it can (market filters only).
-// The market filters of an entry: Tradable in its direction (every selected
-// timeframe's Market Trend and Internal Structure agree), then Optimal.
+// The market filter of an entry: Market Tradability reads Tradable in its
+// direction (see evaluateTradability and the Market Tradability inputs).
 s83FilterText(int dir) =>
     string r = ""
     if s83Tradability != 2
-        [tradeState, tradeWhy] = evaluateTradability(htfView, mtfView, ltfView, htfInternal, mtfInternal, ltfInternal)
-        r := "Market Tradability is not Tradable (" + tradeWhy + ")"
+        r := "Market Tradability is not Tradable (" + s83TradabilityWhy + ")"
     else if s83MarketDir != dir
         r := "Market Tradability is " + trendWord(s83MarketDir) + ", not " + trendWord(dir)
-    else if not s83Optimal
-        r := "not Optimal (" + s83OptimalReason + ")"
     r
 
 // ------------------------------------------------------- daily bookkeeping
@@ -2083,24 +2042,18 @@ method s83DrawTrade(S83Setup s) =>
         s.labels.push(label.new(boxEnd, s.tp, "1:" + str.tostring(s.rr, "0") + "  TP " + priceText(s.tp) + "  SL " + priceText(s.sl), xloc = xloc.bar_time, yloc = yloc.price, color = color(na), style = label.style_label_left, textcolor = chart.fg_color, size = labelSize))
 
 // A finished setup: its levels end Fib Right Offset candles after the
-// candle that ended it. A touched one (with confirmation: its touch and the
-// engulfing) gets C, and its position once traded; a failed one is dotted
-// with its reason.
+// candle that ended it. A touched one gets C, and its position once traded;
+// a failed one is dotted with its reason.
 method s83Finish(S83Setup s) =>
     s.s83Extend(s.endTime + fibRightOffset * chartSeconds * 1000)
     color pc = s.dir > 0 ? bullSetupColor : bearSetupColor
-    if showSetupPoints and not na(s.touchTime) and (s.state != S83_FAILED or showFailedSetups)
-        s.labels.push(label.new(s.touchTime, s.level, "touch", xloc = xloc.bar_time, yloc = yloc.price, color = color(na), style = s.dir > 0 ? label.style_label_up : label.style_label_down, textcolor = pc, size = size.small))
-    if s.state == S83_TOUCHED or s.state == S83_CONFIRMED
-        float cPrice = s.state == S83_CONFIRMED ? s.confirmPrice : s.level
+    if s.state == S83_TOUCHED
         if showSetupPoints
-            s.labels.push(label.new(s.endTime, cPrice, "C", xloc = xloc.bar_time, yloc = yloc.price, color = color(na), style = s.dir > 0 ? label.style_label_up : label.style_label_down, textcolor = pc, size = size.normal))
-            if s.state == S83_CONFIRMED
-                s.labels.push(label.new(s.endTime, cPrice, s83TfText(s.confirmSecs) + " engulfing", xloc = xloc.bar_time, yloc = yloc.price, color = color(na), style = s.dir > 0 ? label.style_label_down : label.style_label_up, textcolor = pc, size = size.small))
+            s.labels.push(label.new(s.endTime, s.level, "C", xloc = xloc.bar_time, yloc = yloc.price, color = color(na), style = s.dir > 0 ? label.style_label_up : label.style_label_down, textcolor = pc, size = size.normal))
         if s.traded
             s.s83DrawTrade()
         else if s.note != ""
-            s.labels.push(label.new(s.endTime, cPrice, s.note, xloc = xloc.bar_time, yloc = yloc.price, color = color(na), style = label.style_label_right, textcolor = color.gray, size = labelSize))
+            s.labels.push(label.new(s.endTime, s.level, s.note, xloc = xloc.bar_time, yloc = yloc.price, color = color(na), style = label.style_label_right, textcolor = color.gray, size = labelSize))
     else if not showFailedSetups
         s.s83Delete()
     else
@@ -2123,38 +2076,19 @@ s83End(S83Setup s, int st, int t, string why) =>
     s.endTime := t
     s.note := why
 
-// One candle of a live setup (see 83% Strategy.mq5's S83Step): the LTF candle
-// itself, or with Engulfing Confirmation each lower-timeframe candle in turn.
-//  * Armed: a touch of the entry level makes it touched (waiting for an
-//    engulfing with confirmation); otherwise going beyond a confirmed B
-//    invalidates it (beyond a forming B, B follows at the close: s83FollowB).
-//  * Waiting: a close beyond A (the HL/LH broke) or going beyond B fails it;
-//    otherwise a lower-timeframe engulfing in its direction, on the touching
-//    candle or later, confirms it at that candle's close.
-s83Step(S83Setup s, int cT, float cO, float cH, float cL, float cC, bool isLower) =>
+// One closed LTF candle of an armed setup (see 83% Strategy.mq5's S83Step):
+// a touch of the entry level makes it touched (the entry); otherwise going
+// beyond a confirmed B invalidates it (beyond a forming B, B follows at the
+// close: s83FollowB).
+s83Step(S83Setup s) =>
     int d = s.dir
     if s.state == S83_ARMED
-        if d > 0 ? cL <= s.level : cH >= s.level
-            if engulfConfirm
-                s.state := S83_WAITING
-                s.touchBar := bar_index
-                s.touchTime := cT
-            else
-                s.state := S83_TOUCHED
-                s.endBar := bar_index
-                s.endTime := time
-        else if s.bFixed and (d > 0 ? cH > s.bPrice : cL < s.bPrice)
-            s83End(s, S83_INVALID, isLower ? cT : time, "invalidated: a new " + (d > 0 ? "HH" : "LL") + " first")
-    if s.state == S83_WAITING
-        if d > 0 ? cC < s.aPrice : cC > s.aPrice
-            s83End(s, S83_FAILED, cT, "failed: a close through A before an engulfing")
-        else if d > 0 ? cH > s.bPrice : cL < s.bPrice
-            s83End(s, S83_FAILED, cT, "failed: a new " + (d > 0 ? "HH" : "LL") + " before an engulfing")
-        else if isLower and useLowerEngulf and not na(s83PrevO) and s83Engulf(d, s83PrevO, s83PrevC, cO, cC)
-            s83End(s, S83_CONFIRMED, cT, "")
-            s.confirmTime := cT + s83LowerSecs * 1000
-            s.confirmSecs := s83LowerSecs
-            s.confirmPrice := cC
+        if d > 0 ? low <= s.level : high >= s.level
+            s.state := S83_TOUCHED
+            s.endBar := bar_index
+            s.endTime := time
+        else if s.bFixed and (d > 0 ? high > s.bPrice : low < s.bPrice)
+            s83End(s, S83_INVALID, time, "invalidated: a new " + (d > 0 ? "HH" : "LL") + " first")
     s.state
 
 // At the close of an LTF candle, the B of an armed setup follows price until
@@ -2177,7 +2111,7 @@ s83FollowB(S83Setup s) =>
 // first); a live one always stays.
 var array<S83Setup> s83Drawn = array.new<S83Setup>()
 s83Visible(S83Setup s) =>
-    s83Live(s) or s.state == S83_TOUCHED or s.state == S83_CONFIRMED or showFailedSetups
+    s83Live(s) or s.state == S83_TOUCHED or showFailedSetups
 s83Prune() =>
     int n = s83Drawn.size()
     int shown = 0
@@ -2195,12 +2129,9 @@ s83Prune() =>
                 s83Drawn.remove(k)
 
 // One closed LTF candle (see 83% Strategy.mq5's S83ScanSetups):
-//  1. each live setup steps through the candle (with Engulfing Confirmation,
-//     through each lower-timeframe candle inside it, in order; see s83Step).
-//     Then a setup waiting for its engulfing is confirmed by an LTF
-//     engulfing, or fails once the wait runs out; a live setup whose A left
-//     the processed candles expires (armed) or fails (waiting);
-//     An armed setup's B follows price (s83FollowB) before these checks.
+//  1. each armed setup steps through the candle (s83Step): touched or
+//     invalidated. If still armed, its B follows price (s83FollowB), and it
+//     expires once its A left the processed candles;
 //  2. for buys, then sells: the latest swing low (high), A, starts a setup
 //     when it is an HL (LH) not used before, within the processed candles, a
 //     candle from A on has closed beyond the swing before it (the break of
@@ -2223,7 +2154,7 @@ if barstate.isconfirmed and s83OnLtf
         s83TradeRisk.push(isLong ? s83PlannedRiskBuy : s83PlannedRiskSell)
         s83TradesToday += 1
         S83Setup s = isLong ? s83PendingBuy : s83PendingSell
-        if not na(s) and not s.traded and (s.state == S83_ARMED or s.state == S83_CONFIRMED)
+        if not na(s) and not s.traded and s.state == S83_ARMED
             s.traded := true
             s.entry := k < strategy.closedtrades ? strategy.closedtrades.entry_price(k) : strategy.opentrades.entry_price(k - strategy.closedtrades)
             s.sl := isLong ? s83PlannedSlBuy : s83PlannedSlSell
@@ -2232,9 +2163,6 @@ if barstate.isconfirmed and s83OnLtf
             s.entryTime := time
             s83Breakeven := false
             s83LastNote := (isLong ? "buy at " : "sell at ") + priceText(s.entry) + ", SL " + priceText(s.sl) + ", TP " + priceText(s.tp) + " (1:" + str.tostring(s.rr, "0") + ")"
-            // A confirmed setup was drawn when it was confirmed; its position now.
-            if s.state == S83_CONFIRMED
-                s.s83DrawTrade()
             if s83Alerts
                 alert("83% Strategy " + syminfo.ticker + ": " + s83LastNote, alert.freq_once_per_bar_close)
         s83KnownTrades += 1
@@ -2253,58 +2181,28 @@ if barstate.isconfirmed and s83OnLtf
             s83LossesInRow := 0
         s83KnownClosed += 1
 
-    // 1. Live setups through this candle: the candle itself, or with Engulfing
-    //    Confirmation each of its lower-timeframe candles in turn. Then, at the
-    //    LTF close, a waiting setup is confirmed by an LTF engulfing (on the
-    //    touching candle or later) or fails when Confirmation Window LTF
-    //    candles have closed since the touch; a live setup whose A left the
-    //    processed candles expires.
+    // 1. Armed setups through this candle: touched or invalidated, then B
+    //    follows price, then expiry once A left the processed candles.
     bool buyWasLive = not na(s83Buy) and s83Live(s83Buy)
     bool sellWasLive = not na(s83Sell) and s83Live(s83Sell)
-    if engulfConfirm
-        int nLower = s83LwT.size()
-        if nLower > 0
-            for j = 0 to nLower - 1
-                int cT = s83LwT.get(j)
-                float cO = s83LwO.get(j)
-                float cH = s83LwH.get(j)
-                float cL = s83LwL.get(j)
-                float cC = s83LwC.get(j)
-                if not na(s83Buy) and s83Live(s83Buy)
-                    s83Step(s83Buy, cT, cO, cH, cL, cC, true)
-                if not na(s83Sell) and s83Live(s83Sell)
-                    s83Step(s83Sell, cT, cO, cH, cL, cC, true)
-                s83PrevO := cO
-                s83PrevC := cC
-    else
-        if not na(s83Buy) and s83Live(s83Buy)
-            s83Step(s83Buy, time, open, high, low, close, false)
-        if not na(s83Sell) and s83Live(s83Sell)
-            s83Step(s83Sell, time, open, high, low, close, false)
+    if buyWasLive
+        s83Step(s83Buy)
+    if sellWasLive
+        s83Step(s83Sell)
     for side = 0 to 1
         S83Setup s = side == 0 ? s83Buy : s83Sell
         bool wasLive = side == 0 ? buyWasLive : sellWasLive
         if wasLive
             s83FollowB(s)
-            if s.state == S83_WAITING
-                if useLtfEngulf and bar_index >= s.touchBar and s83Engulf(s.dir, open[1], close[1], open, close)
-                    s83End(s, S83_CONFIRMED, time, "")
-                    s.confirmTime := time + chartSeconds * 1000
-                    s.confirmSecs := chartSeconds
-                    s.confirmPrice := close
-                else if bar_index - s.touchBar + 1 >= confirmWindow
-                    s83End(s, S83_FAILED, time, "failed: no " + s83ConfirmText() + " engulfing within " + str.tostring(confirmWindow) + " " + tfName(ltfTf) + " candles")
             if s83Live(s) and s.aBar < bar_index - ltfBarsToProcess + 1
-                s83End(s, s.state == S83_ARMED ? S83_EXPIRED : S83_FAILED, time, "expired: A left the processed candles")
+                s83End(s, S83_EXPIRED, time, "expired: A left the processed candles")
             if not s83Live(s)
                 // A touched (limit) setup: traded on this candle, or why not.
                 if s.state == S83_TOUCHED
                     s.note := s.traded ? "" : s83LevelText() + " touched; not traded: " + s.note
                     if not s.traded
                         s83LastNote := s.note
-                // A confirmed setup is drawn once its entry is decided below.
-                if s.state != S83_CONFIRMED
-                    s.s83Finish()
+                s.s83Finish()
     while s83UsedBuy.size() > 200
         s83UsedBuy.shift()
     while s83UsedSell.size() > 200
@@ -2390,103 +2288,62 @@ if barstate.isconfirmed and s83OnLtf
     bool flat = strategy.position_size == 0
     int nextDayKey = year(time_close) * 10000 + month(time_close) * 100 + dayofmonth(time_close)
     int tradesNextDay = nextDayKey == s83Day ? s83TradesToday : 0
-    // With Engulfing Confirmation: a market order at this candle's close for
-    // each setup confirmed during it (the EA enters on the first tick after
-    // the engulfing candle closes, which may be an M15 candle mid-way through
-    // this one).
-    if engulfConfirm
-        for side = 0 to 1
-            S83Setup s = side == 0 ? s83Buy : s83Sell
-            string id = side == 0 ? "83% buy" : "83% sell"
-            if not na(s) and s.state == S83_CONFIRMED and s.endBar == bar_index
-                string event = s83TfText(s.confirmSecs) + " engulfing after the " + s83LevelText() + " touch"
-                string why = not flat ? "a position is already open" : not s83TradingDay(nextDay) ? s83DayName(nextDay) + " is not a trading day" : tradesNextDay >= maxTradesPerDay ? "the maximum of " + str.tostring(maxTradesPerDay) + " trades today is reached" : s83FilterText(s.dir)
-                [ptp, psl, prr, pok, pbehind] = s83Plan(s, close, chartAtr)
-                float balance = strategy.initial_capital + strategy.netprofit
-                float riskCash = balance * s83RiskPct() / 100
-                float dist = math.abs(close - psl)
-                float qty = pok and dist > 0 ? math.floor(riskCash / (dist * syminfo.pointvalue) / qtyStep) * qtyStep : 0.0
-                if pok and minQty > 0 and qty < minQty
-                    qty := minQtyRiskMultiple > 0 and minQty * dist * syminfo.pointvalue <= minQtyRiskMultiple * riskCash ? minQty : 0.0
-                if why == ""
-                    why := not pok ? "the take profit is not beyond the entry" : not pbehind ? "the price is too far from the " + s83LevelText() + " level: a 1:" + str.tostring(prr, "0") + " stop would not be behind " + (s.dir > 0 ? "the HL" : "the LH") : qty <= 0 ? (minQty > 0 ? "the position size is below the minimum quantity of " + str.tostring(minQty) : "the position size rounds to zero") : ""
-                if why == ""
-                    strategy.entry(id, side == 0 ? strategy.long : strategy.short, qty = qty, comment = id)
-                    strategy.exit(id + " exit", from_entry = id, stop = psl, limit = ptp, comment_loss = "SL", comment_profit = "TP")
-                    flat := false
-                    if side == 0
-                        s83PendingBuy := s
-                        s83PlannedRiskBuy := dist
-                        s83PlannedSlBuy := psl
-                        s83PlannedTpBuy := ptp
-                        s83PlannedRrBuy := prr
-                    else
-                        s83PendingSell := s
-                        s83PlannedRiskSell := dist
-                        s83PlannedSlSell := psl
-                        s83PlannedTpSell := ptp
-                        s83PlannedRrSell := prr
-                else
-                    s.note := event + "; not traded: " + why
-                    s83LastNote := s.note
-                s.s83Finish()
-    // Without confirmation: a limit order at the entry level of each armed
-    // setup whose filters pass, one-cancels-the-other between the two.
-    if not engulfConfirm
-        for side = 0 to 1
-            S83Setup s = side == 0 ? s83Buy : s83Sell
-            string id = side == 0 ? "83% buy" : "83% sell"
-            bool live = not na(s) and s.state == S83_ARMED
-            string why = ""
-            if live
-                if not flat
-                    why := "a position is already open"
-                else if not s83TradingDay(nextDay)
-                    why := s83DayName(nextDay) + " is not a trading day"
-                else if tradesNextDay >= maxTradesPerDay
-                    why := "the maximum of " + str.tostring(maxTradesPerDay) + " trades today is reached"
-                else
-                    why := s83FilterText(s.dir)
-            float tp = na
-            float sl = na
-            float rr = na
-            float qty = na
-            if live and why == ""
-                [ptp, psl, prr, pok, pbehind] = s83Plan(s, s.level, chartAtr)
-                float balance = strategy.initial_capital + strategy.netprofit
-                float riskCash = balance * s83RiskPct() / 100
-                float dist = math.abs(s.level - psl)
-                qty := pok and dist > 0 ? math.floor(riskCash / (dist * syminfo.pointvalue) / qtyStep) * qtyStep : 0.0
-                // Below the symbol's minimum quantity: no trade, or the minimum
-                // when it risks at most Minimum Quantity Max Risk times the plan.
-                if pok and minQty > 0 and qty < minQty
-                    qty := minQtyRiskMultiple > 0 and minQty * dist * syminfo.pointvalue <= minQtyRiskMultiple * riskCash ? minQty : 0.0
-                tp := ptp
-                sl := psl
-                rr := prr
-                if not pok
-                    why := "the take profit is not beyond the entry"
-                else if qty <= 0
-                    why := minQty > 0 ? "the position size is below the minimum quantity of " + str.tostring(minQty) : "the position size rounds to zero"
-            if live and why == ""
-                strategy.entry(id, side == 0 ? strategy.long : strategy.short, qty = qty, limit = s.level, oca_name = "83% entry", oca_type = strategy.oca.cancel, comment = id)
-                strategy.exit(id + " exit", from_entry = id, stop = sl, limit = tp, comment_loss = "SL", comment_profit = "TP")
-                if side == 0
-                    s83PendingBuy := s
-                    s83PlannedRiskBuy := math.abs(s.level - sl)
-                    s83PlannedSlBuy := sl
-                    s83PlannedTpBuy := tp
-                    s83PlannedRrBuy := rr
-                else
-                    s83PendingSell := s
-                    s83PlannedRiskSell := math.abs(s.level - sl)
-                    s83PlannedSlSell := sl
-                    s83PlannedTpSell := tp
-                    s83PlannedRrSell := rr
+    // A limit order at the entry level of each armed setup whose filters
+    // pass, one-cancels-the-other between the two.
+    for side = 0 to 1
+        S83Setup s = side == 0 ? s83Buy : s83Sell
+        string id = side == 0 ? "83% buy" : "83% sell"
+        bool live = not na(s) and s.state == S83_ARMED
+        string why = ""
+        if live
+            if not flat
+                why := "a position is already open"
+            else if not s83TradingDay(nextDay)
+                why := s83DayName(nextDay) + " is not a trading day"
+            else if tradesNextDay >= maxTradesPerDay
+                why := "the maximum of " + str.tostring(maxTradesPerDay) + " trades today is reached"
             else
-                strategy.cancel(id)
-                if live
-                    s.note := why
+                why := s83FilterText(s.dir)
+        float tp = na
+        float sl = na
+        float rr = na
+        float qty = na
+        if live and why == ""
+            [ptp, psl, prr, pok, pbehind] = s83Plan(s, s.level, chartAtr)
+            float balance = strategy.initial_capital + strategy.netprofit
+            float riskCash = balance * s83RiskPct() / 100
+            float dist = math.abs(s.level - psl)
+            qty := pok and dist > 0 ? math.floor(riskCash / (dist * syminfo.pointvalue) / qtyStep) * qtyStep : 0.0
+            // Below the symbol's minimum quantity: no trade, or the minimum
+            // when it risks at most Minimum Quantity Max Risk times the plan.
+            if pok and minQty > 0 and qty < minQty
+                qty := minQtyRiskMultiple > 0 and minQty * dist * syminfo.pointvalue <= minQtyRiskMultiple * riskCash ? minQty : 0.0
+            tp := ptp
+            sl := psl
+            rr := prr
+            if not pok
+                why := "the take profit is not beyond the entry"
+            else if qty <= 0
+                why := minQty > 0 ? "the position size is below the minimum quantity of " + str.tostring(minQty) : "the position size rounds to zero"
+        if live and why == ""
+            strategy.entry(id, side == 0 ? strategy.long : strategy.short, qty = qty, limit = s.level, oca_name = "83% entry", oca_type = strategy.oca.cancel, comment = id)
+            strategy.exit(id + " exit", from_entry = id, stop = sl, limit = tp, comment_loss = "SL", comment_profit = "TP")
+            if side == 0
+                s83PendingBuy := s
+                s83PlannedRiskBuy := math.abs(s.level - sl)
+                s83PlannedSlBuy := sl
+                s83PlannedTpBuy := tp
+                s83PlannedRrBuy := rr
+            else
+                s83PendingSell := s
+                s83PlannedRiskSell := math.abs(s.level - sl)
+                s83PlannedSlSell := sl
+                s83PlannedTpSell := tp
+                s83PlannedRrSell := rr
+        else
+            strategy.cancel(id)
+            if live
+                s.note := why
     s83Prune()
 
 // The latest armed setups: their levels reach Fib Right Offset candles past
@@ -2565,16 +2422,6 @@ wrapText(string s) =>
 if barstate.islast or barstate.islastconfirmedhistory
     [tradability, tradeReason] = evaluateTradability(htfView, mtfView, ltfView, htfInternal, mtfInternal, ltfInternal)
     bool early = tradability == 1
-    // The timeframes correlate whenever the market is Tradable or Tradable
-    // (Early): in both, every selected timeframe agrees on the direction.
-    bool correlated = tradability != 0
-    float extension = trendExtension(htfView, lClose, mAtr, mLastLow, nz(mHaveLow) == 1, mLastHigh, nz(mHaveHigh) == 1)
-    bool healthy = na(extension) or extension <= MAX_EXTENSION_ATR
-    float volRatio = nz(lVolRatio)
-    bool goodVolume = s83VolumeNA or (nz(lVolAvg) > 0 and volRatio >= VOLUME_MIN_RATIO and volRatio <= VOLUME_MAX_RATIO)
-    float momRatio = nz(lMomRatio)
-    bool goodMomentum = nz(lTrAvg) > 0 and momRatio >= MOMENTUM_MIN_RATIO and momRatio <= MOMENTUM_MAX_RATIO
-    [optimal, optimalReason] = evaluateOptimal(correlated, healthy, extension, goodVolume, volRatio, goodMomentum, momRatio)
     table.clear(dash, 0, 0, 1, 39)
     int row = 0
     // Each Market Trend with its Internal Structure below it.
@@ -2602,34 +2449,15 @@ if barstate.islast or barstate.islastconfirmedhistory
     row += 1
     dashRow(row, "Trade Recommendations:", wrapText(tradeRecommendation(htfView, mtfView, ltfView, tradability)), DASH_TEXT_COLOR, "")
     row += 1
-    dashRow(row, " ", " ", DASH_TEXT_COLOR, "")
-    row += 1
-    dashRow(row, "Optimal Conditions:", optimal ? "OPTIMAL" : "NOT OPTIMAL", passColor(optimal), optimalReason)
-    row += 1
-    if useCorrOpt
-        dashRow(row, "Timeframe Correlation:", passText(correlated), passColor(correlated), optimalReason)
-        row += 1
-    if useExtOpt
-        dashRow(row, "Healthy Extension:", passText(healthy) + (na(extension) ? "" : " (" + extensionText(extension) + ")"), passColor(healthy), optimalReason)
-        row += 1
-    if useVolOpt
-        dashRow(row, "Market Volume:", s83VolumeNA ? "PASS (not applied: " + s83VolumeNote + ")" : passText(goodVolume) + " (" + str.tostring(volRatio, "0.00") + "x average)", passColor(goodVolume), optimalReason)
-        row += 1
-    if useMomOpt
-        dashRow(row, "Price Momentum:", passText(goodMomentum) + " (" + str.tostring(momRatio, "0.00") + "x average range)", passColor(goodMomentum), optimalReason)
-        row += 1
     // 83% Strategy: its state, the armed setups, the entry filters behind the
     // pending orders, today's risk and the latest outcome.
     dashRow(row, " ", " ", DASH_TEXT_COLOR, "")
     row += 1
     bool buyArmed = not na(s83Buy) and s83Live(s83Buy)
     bool sellArmed = not na(s83Sell) and s83Live(s83Sell)
-    string waitText = ": waiting for a " + s83ConfirmText() + " engulfing"
-    string s83State = not s83OnLtf ? "Open a " + tfName(ltfTf) + " chart to trade" : strategy.position_size > 0 ? "Buy position open" : strategy.position_size < 0 ? "Sell position open" : buyArmed and sellArmed ? "Buy and sell setups live" : buyArmed ? (s83Buy.state == S83_WAITING ? "Buy setup touched" + waitText : "Buy setup armed") : sellArmed ? (s83Sell.state == S83_WAITING ? "Sell setup touched" + waitText : "Sell setup armed") : "Waiting for a setup"
+    string s83State = not s83OnLtf ? "Open a " + tfName(ltfTf) + " chart to trade" : strategy.position_size > 0 ? "Buy position open" : strategy.position_size < 0 ? "Sell position open" : buyArmed and sellArmed ? "Buy and sell setups live" : buyArmed ? "Buy setup armed" : sellArmed ? "Sell setup armed" : "Waiting for a setup"
     color s83Color = not s83OnLtf ? DASH_NEGATIVE_COLOR : strategy.position_size > 0 or (buyArmed and not sellArmed) ? DASH_POSITIVE_COLOR : strategy.position_size < 0 or (sellArmed and not buyArmed) ? DASH_NEGATIVE_COLOR : DASH_NEUTRAL_COLOR
-    dashRow(row, "Symbol:", s83Synthetic ? "Deriv synthetic index" : "Standard symbol", DASH_TEXT_COLOR, s83Synthetic ? "Generated prices with a fixed tick rate: Market Volume is not applied." : "Set Symbol Profile to Deriv Synthetic Index if this is one.")
-    row += 1
-    dashRow(row, "83% Strategy (" + tfName(ltfTf) + "):", s83State, s83Color, "Buys (sells) at the " + s83LevelText() + " retracement of the latest " + tfName(ltfTf) + " HL-to-HH (LH-to-LL) leg with heavy pressure, within the last " + str.tostring(ltfBarsToProcess) + " " + tfName(ltfTf) + " candles" + (engulfConfirm ? ", once a " + s83ConfirmText() + " engulfing in the trade direction follows the touch." : "."))
+    dashRow(row, "83% Strategy (" + tfName(ltfTf) + "):", s83State, s83Color, "Buys (sells) at the " + s83LevelText() + " retracement of the latest " + tfName(ltfTf) + " HL-to-HH (LH-to-LL) leg with heavy pressure, within the last " + str.tostring(ltfBarsToProcess) + " " + tfName(ltfTf) + " candles.")
     row += 1
     if buyArmed
         dashRow(row, "Setup:", wrapText(s83SetupText(s83Buy)), DASH_TEXT_COLOR, "Heavy pressure " + str.tostring(s83Buy.impulse, "0.0") + " " + tfName(ltfTf) + " ATR")
