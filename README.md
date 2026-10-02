@@ -762,19 +762,30 @@ engine, labels and dashboard unchanged. Both use Fib Base's Fibonacci engine
 Buys (bullish market):
 
 1. **Market Tradability (trend identification).** The dashboard's Market
-   Tradability reads **Tradable (bullish)**. Two conditions decide it:
-   - **HTF EMA trend filter.** The HTF 50 EMA is above the HTF 200 EMA
-     (`HTF_50_EMA > HTF_200_EMA`), on the latest closed HTF candle. The
-     lengths are `HTF_Fast_EMA` and `HTF_Slow_EMA` (50 and 200).
-   - **MTF structural progression.** The MTF shows upward expansion: its
-     latest swing high is above the previous swing high (an HH,
-     `Current_Swing_High > Previous_Swing_High`).
-     - The swings are the MTF's structure swings (MTF Swing Detection
-       Length).
-     - The previous swing high is the high of the previous leg; a higher high
-       within the same leg replaces it.
+   Tradability reads **Tradable (bullish)**. All three conditions must line
+   up:
+   - **HTF EMA trend filter.** The HTF EMAs are in order, 20 > 50 > 200
+     (`HTF_20_EMA > HTF_50_EMA > HTF_200_EMA`), on the latest closed HTF
+     candle.
+     - The lengths are `HTF_EMA_Fast`, `HTF_EMA_Middle` and `HTF_EMA_Slow`
+       (20, 50 and 200).
+     - **Consistently.** `HTF_EMA_Candles` (1) sets on how many closed HTF
+       candles in a row the order must hold. 1 is the latest one only; 3
+       means each of the last three.
+   - **MTF structural progression.** The MTF shows upward expansion:
+     - a Higher High: its latest swing high is above the previous swing high
+       (`Current_Swing_High > Previous_Swing_High`); and
+     - a Higher Low: its latest swing low is above the previous swing low
+       (`Current_Swing_Low > Previous_Swing_Low`).
 
-   Otherwise the market is Not Tradable, and the reason names the missing
+     The swings are the MTF's structure swings (MTF Swing Detection Length).
+     The previous swing high is the high of the previous leg; a higher high
+     within the same leg replaces it. The same holds for lows.
+   - **Hurst exponent.** H is above `Hurst_Minimum` (0.55): the market is
+     trending, not a random walk (about 0.5) or mean-reverting (below 0.5).
+     See "The Hurst exponent" below.
+
+   Otherwise the market is Not Tradable, and the reason names every missing
    condition. This is the only market filter. The BOS / CHoCH Market Trends,
    the Internal Structure, Optimal Conditions and Tradable (Early) play no
    part. Base's own indicator keeps its rules.
@@ -799,8 +810,11 @@ Buys (bullish market):
    a new HL.
 
 Sells mirror this:
-- the HTF 50 EMA below the 200 EMA, and the MTF's latest swing low below the
-  previous swing low (an LL, downward expansion);
+- the HTF EMAs in the opposite order, 20 < 50 < 200;
+- downward expansion on the MTF: a Lower Low (`Current_Swing_Low <
+  Previous_Swing_Low`) and a Lower High (`Current_Swing_High <
+  Previous_Swing_High`);
+- the same Hurst exponent, above 0.55;
 - an LH with heavy selling pressure, and a close below the swing low before
   it;
 - the lowest low since then as B, and a sell at the 83% retracement;
@@ -808,6 +822,25 @@ Sells mirror this:
 
 How the rules are made exact:
 
+- **The Hurst exponent.** By default it is measured on the HTF over the
+  last `Hurst_Candles` (100) closed candles. `Hurst_Timeframe` can be the
+  HTF, MTF or LTF.
+  - The method uses lagged differences (the generalized Hurst exponent with
+    q = 2). With x = ln(close), for each lag tau from 2 to 20 candles,
+    sigma(tau) is the root mean square of x[t + tau] - x[t] over the window.
+  - H is the slope of the least-squares line through ln sigma(tau) against
+    ln tau.
+  - A random walk gives about 0.5. A trending market gives more, whether
+    from a steady drift or from momentum in its moves. A mean-reverting
+    market gives less.
+  - **Why this variant.** The textbook version takes the standard deviation
+    of the differences, which subtracts their average move. That removes
+    the drift, so a steady trend read about 0.41, the same as a random walk.
+  - **Simulated series** (100 closes each):
+    - a random walk read 0.47 on average;
+    - a moderate trend read 0.58, and a strong one 0.80.
+  - **Real data** (EURUSD H1 and H4, an index on M5 and M30, five stocks on
+    D1): H was above 0.55 in about 13% to 30% of 100-candle windows.
 - **Heavy pressure.** Within `Impulse_Candles` (3) candles of A, counting A's
   own candle, a candle closes at least `Impulse_Min_ATR` (2.0) LTF ATR beyond
   A. The ATR is the 14-candle ATR at A. On real data (an index on M15 and
@@ -892,14 +925,27 @@ On the LTF chart, setups are drawn as in the strategy's examples.
 
 The dashboard shows the trend and the strategy:
 
-- **HTF Trend (H4 50/200 EMA).** Bullish (50 above 200), Bearish (50 below
-  200), or not available yet. The tooltip gives both EMA values.
+- **HTF Trend (H4 20/50/200 EMA).**
+  - Bullish (20 > 50 > 200) or Bearish (20 < 50 < 200).
+  - Not in order, or in order on the latest candle but not on each of the
+    last `HTF_EMA_Candles`.
+  - Not available yet.
+
+  The tooltip gives the three EMA values.
 - **MTF Swings (H1).** The latest swing high against the previous one (HH,
-  LH or EQH) and the same for lows (LL, HL or EQL). It is green for upward
-  expansion only and red for downward expansion only. The tooltip gives the
-  prices.
-- **Market Tradability.** Tradable (bullish or bearish) or Not Tradable.
-- **Tradability Reason.** Which condition holds or is missing.
+  LH or EQH) and the same for lows (LL, HL or EQL). It is green for HH + HL
+  (upward expansion) and red for LL + LH (downward expansion). The tooltip
+  gives the prices.
+- **Hurst Exponent (H4).** H with its reading (trending above 0.55, random
+  walk from 0.45 to 0.55, mean-reverting below). It is green when H is above
+  `Hurst_Minimum` and red when it is not.
+- **Market Tradability.** Tradable (bullish or bearish) or Not Tradable. The
+  tooltip keeps Base's session, ADX and ATR readings (information only).
+- **Tradability Reason.** Which conditions hold or are missing.
+
+Base's `MA Filter (HTF)` and `MA Filter (MTF)` inputs are gone. The
+`HTF EMA Trend Filter` inputs replace them. `Show HTF EMA Lines` draws the
+three EMAs, each in its own colour.
 
 Base's BOS / CHoCH Market Trend rows, the Internal Structure rows and the
 Trade Recommendations are no longer on the dashboard.
@@ -963,6 +1009,10 @@ Then come the strategy's rows:
   - Days follow the exchange time zone.
   - A new MTF/HTF candle reaches the filters one LTF candle after it closes,
     because Base's `request.security` reads the latest closed candle.
+  - Each platform starts its EMAs from its own history, so the EMA values can
+    differ slightly where little HTF history is loaded.
+  - The Hurst exponent on the MTF or LTF takes more calculation than on the
+    HTF.
 
 ### Deriv synthetic indices
 
@@ -1021,34 +1071,55 @@ and Python mirrors:
   - the setup was not missed;
   - the entry is at the first touch, with no new HH/LL beyond a confirmed B
     first;
-  - Market Tradability read Tradable in the trade direction (HTF EMAs and
-    the MTF HH / LL, see below);
+  - Market Tradability read Tradable in the trade direction: the HTF EMA
+    order, the MTF swings and the Hurst exponent (see below);
   - the take profit, stop and 1:2 / 1:3 choice;
   - the lot size, including the risk cuts;
   - the day and trade limits;
   - breakeven.
 
-  All 198 trades passed. Every one of the 656 touches of an armed setup was
+  All 114 trades passed. Every one of the 656 touches of an armed setup was
   either traded or rejected for a genuine reason:
-  - Market Tradability not Tradable: 287;
-  - Tradable in the other direction: 168;
-  - a position already open: 6.
+  - Market Tradability not Tradable: 465;
+  - Tradable in the other direction: 77;
+  - a position already open: 2.
+
+  Two more runs of 10 markets each also passed: one with the EMA order
+  required on the last 3 HTF candles (51 trades), and one with the Hurst
+  exponent on the MTF (52 trades).
 
   The generated markets are random, so they say nothing about profitability.
 - **The Tradable rule.** Market Tradability was computed for every
-  combination of:
-  - the HTF EMAs (unavailable, fast above, below, equal);
-  - MTF swing availability;
-  - the latest swing against the previous one (above, below, equal) for
-    highs and lows.
+  combination (900 cases) of:
+  - the HTF EMAs: unavailable, bullish order, bearish order, in order on the
+    latest candle only, or not in order;
+  - MTF swing availability, and the latest swing against the previous one
+    (above, below, equal) for highs and lows;
+  - the Hurst exponent: too few candles, flat prices, or above, equal to or
+    below the minimum.
 
-  It read Tradable exactly as the rule says, with a reason in every case.
-- **The trend at each entry.** At every trade, the HTF EMAs were recomputed
-  from the latest closed HTF candle and matched the EA's values. They pointed
-  the trade direction, with an MTF HH for buys or an LL for sells.
-- **EA and Pine read the same MTF swings.** The EA's latest and previous
-  swing highs and lows matched the Pine engine's on 21,865 readings across
-  19 generated markets.
+  It read Tradable exactly as the rule says. Every reason named each
+  failing condition.
+- **The trend at each entry.** Every trade was rechecked with independent
+  code:
+  - the three HTF EMAs, recomputed from the HTF candles, matched the EA's
+    and were in the trade direction's order;
+  - the MTF made an HH and an HL for buys, or an LL and an LH for sells;
+  - the Hurst exponent, recomputed by a separately written estimator,
+    matched the EA's and was above 0.55.
+- **The Hurst estimator.** The EA's estimator was compared on 1,500 random
+  series with one written separately (one pass, long double, the slope from
+  the normal equations). The largest difference was below 1e-14.
+  - On those series, random walks read 0.47 on average, steady trends 0.98
+    and mean-reverting prices about 0.
+  - Flat prices and a zero price give no value.
+- **EA and Pine read the same trend.** Across 19 generated markets:
+  - the EA's latest and previous swing highs and lows matched the Pine
+    engine's on 21,865 readings;
+  - the EA's Hurst exponent matched a line-by-line Python copy of the Pine
+    calculation on 21,388 readings, with windows of 50, 100 and 250 closes.
+    A deliberate off-by-one in the copy made every reading differ, so the
+    comparison catches indexing mistakes.
 - **Deriv tests.** Separate tests cover:
   - sizing at the minimum, maximum and total volume limits;
   - the Journal reason while history is missing.

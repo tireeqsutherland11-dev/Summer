@@ -2,9 +2,9 @@
 // 83% Strategy - Base market structure (Base.pine v2.43) with Fib Base's
 // Fibonacci engine, as a TradingView strategy. Same rules as 83% Strategy.mq5.
 //
-// Bullish (buys only): Market Tradability reads Tradable (the HTF 50 EMA is
-// above the HTF 200 EMA and the MTF's latest swing high is above the
-// previous one, an HH); on the LTF (M30, Swing Detection level 3, 40 independent processed
+// Bullish (buys only): Market Tradability reads Tradable (all three line up:
+// the HTF EMAs 20 > 50 > 200, an MTF HH and HL, and a Hurst exponent above
+// 0.55); on the LTF (M30, Swing Detection level 3, 40 independent processed
 // bars), once a candle has closed above the swing high before the most
 // recent HL with heavy buying pressure (the break of structure), the
 // Fibonacci runs from the highest high since that HL (0%, B, which follows
@@ -64,7 +64,7 @@ strategy("83% Strategy", shorttitle = "83%", overlay = true, initial_capital = 1
 // ---------------------------------------------------------------- inputs
 grpTf = "Timeframes"
 htfTf = input.timeframe("240", "HTF", group = grpTf, tooltip = "Higher timeframe (HTF). Its structure sets the main trend, Market Tradability, the HTF MA, ADX, ATR and session filters, and the alerts.")
-mtfTf = input.timeframe("60", "MTF", group = grpTf, tooltip = "Middle timeframe (MTF). Its swings decide Market Tradability with the HTF EMAs: an HH (latest swing high above the previous) for buys, an LL for sells. It also drives the MTF MA filter.")
+mtfTf = input.timeframe("60", "MTF", group = grpTf, tooltip = "Middle timeframe (MTF). Its swings decide Market Tradability with the HTF EMAs: an HH and an HL (its latest swing high and low above the previous ones) for buys, an LL and an LH for sells.")
 ltfTf = input.timeframe("30", "LTF", group = grpTf, tooltip = "Lower timeframe (LTF), the chart the 83% Strategy trades on: its setups, entries and drawings.")
 
 // Base's Trend Analysis Timeframes are fixed: the 83% Strategy's trend is the
@@ -133,19 +133,20 @@ grpEqual = "EQH/EQL"
 showEqual = input.bool(true, "Show EQH/EQL", group = grpEqual, tooltip = "Label equal highs and lows as EQH/EQL and join each to the swing it equals with a dotted line. When off, they still act as one liquidity pool.")
 equalThreshold = input.float(0.2, "EQH/EQL Threshold (ATR, 0 = off)", minval = 0.0, maxval = 0.5, step = 0.05, group = grpEqual, tooltip = "A swing within this many ATR of the previous swing on its side is an equal high or low: it keeps that swing's role and breaks at the pool's outer edge. 0 turns it off.")
 
-grpHtfMa = "MA Filter (HTF)"
-useHtfMa = input.bool(true, "Use HTF MA Filter", group = grpHtfMa, tooltip = "Qualify setups with the latest closed HTF candle against the HTF MA (longs above, shorts below). Shown in the Market Tradability tooltip only.")
-htfMaLength = input.int(50, "HTF MA Length", minval = 1, group = grpHtfMa, tooltip = "Length of the HTF moving average.")
-htfMaType = input.string("EMA", "MA Type", options = ["EMA", "SMA"], group = grpHtfMa, tooltip = "Type of the HTF moving average.")
-showHtfMaLine = input.bool(false, "Show HTF MA Line", group = grpHtfMa, tooltip = "Plot the HTF moving average on the chart.")
-htfMaColor = input.color(color.blue, "HTF MA Color", group = grpHtfMa, tooltip = "Color of the HTF moving average line.")
+grpHtfEma = "HTF EMA Trend Filter"
+htfEmaFast = input.int(20, "HTF Fast EMA", minval = 1, maxval = 1000, group = grpHtfEma, tooltip = "One of Market Tradability's three conditions: bullish needs the HTF EMAs in order fast > middle > slow (20 > 50 > 200) on the latest closed HTF candle (or on each of the candles set below), bearish fast < middle < slow.")
+htfEmaMiddle = input.int(50, "HTF Middle EMA", minval = 2, maxval = 1000, group = grpHtfEma, tooltip = "Must be longer than the fast EMA.")
+htfEmaSlow = input.int(200, "HTF Slow EMA", minval = 3, maxval = 2000, group = grpHtfEma, tooltip = "Must be longer than the middle EMA.")
+htfEmaCandles = input.int(1, "Closed HTF Candles The Order Must Hold On", minval = 1, maxval = 50, group = grpHtfEma, tooltip = "How consistently the EMAs must be in order: on each of this many closed HTF candles up to the latest one. 1 = the latest closed candle only.")
+showHtfEmaLines = input.bool(false, "Show HTF EMA Lines", group = grpHtfEma, tooltip = "Plot the three HTF EMAs (each candle shows the value at the latest closed HTF candle).")
+htfEmaFastColor = input.color(#2962FF, "Fast EMA Color", group = grpHtfEma)
+htfEmaMiddleColor = input.color(#FF9800, "Middle EMA Color", group = grpHtfEma)
+htfEmaSlowColor = input.color(#9C27B0, "Slow EMA Color", group = grpHtfEma)
 
-grpMtfMa = "MA Filter (MTF)"
-useMtfMa = input.bool(true, "Use MTF MA Filter", group = grpMtfMa, tooltip = "Qualify setups with the latest closed MTF candle against the MTF MA (longs above, shorts below). Shown in the Market Tradability tooltip only.")
-mtfMaLength = input.int(100, "MTF MA Length", minval = 1, group = grpMtfMa, tooltip = "Length of the MTF moving average.")
-mtfMaType = input.string("EMA", "MA Type", options = ["EMA", "SMA"], group = grpMtfMa, tooltip = "Type of the MTF moving average.")
-showMtfMaLine = input.bool(false, "Show MTF MA Line", group = grpMtfMa, tooltip = "Plot the MTF moving average on the chart.")
-mtfMaColor = input.color(color.orange, "MTF MA Color", group = grpMtfMa, tooltip = "Color of the MTF moving average line.")
+grpHurst = "Hurst Exponent (Trend Persistence)"
+hurstSource = input.string("HTF", "Hurst Timeframe", options = ["HTF", "MTF", "LTF"], group = grpHurst, tooltip = "The timeframe whose closes the Hurst exponent is measured on. The MTF and LTF take more calculation.")
+hurstCandles = input.int(100, "Hurst Window (closed candles)", minval = 50, maxval = 400, group = grpHurst, tooltip = "How many closed candles, up to the latest one, the Hurst exponent is measured over.")
+hurstMin = input.float(0.55, "Tradable When H Is Above", minval = 0.0, maxval = 0.99, step = 0.01, group = grpHurst, tooltip = "One of Market Tradability's three conditions: the Hurst exponent H must be above this. About 0.5 is a random walk, above it a trending market, below it a mean-reverting one.")
 
 grpSession = "Session Filter"
 useSession = input.bool(false, "Use Session Filter", group = grpSession, tooltip = "Qualify setups only when the latest HTF candle opens inside the chosen session. Shown in the Market Tradability tooltip only.")
@@ -168,10 +169,6 @@ enableAlerts = input.bool(false, "Alert On Structure-Timeframe BOS / CHoCH / LS"
 grpS83Sym = "83% Strategy - Symbol (Deriv Synthetic Indices)"
 minQty = input.float(0.0, "Minimum Quantity (0 = none)", minval = 0.0, group = grpS83Sym, tooltip = "The symbol's minimum order size, e.g. the Deriv minimum lot. A smaller risk-based size is not traded, unless the option below allows the minimum.")
 minQtyRiskMultiple = input.float(0.0, "Trade The Minimum If It Risks At Most N x The Plan (0 = skip)", minval = 0.0, step = 0.5, group = grpS83Sym, tooltip = "When the risk-based size is below the minimum quantity, trade the minimum only if its loss at the stop is at most this many times the planned risk.")
-
-grpS83Trend = "83% Strategy - Trend (HTF EMAs + MTF Swings)"
-htfFastEma = input.int(50, "HTF Fast EMA", minval = 1, maxval = 1000, group = grpS83Trend, tooltip = "Bullish when the HTF fast EMA is above the slow EMA on the latest closed HTF candle and the MTF's latest swing high is above the previous one (an HH). Bearish when it is below and the MTF's latest swing low is below the previous one (an LL).")
-htfSlowEma = input.int(200, "HTF Slow EMA", minval = 2, maxval = 2000, group = grpS83Trend, tooltip = "The slow HTF EMA (200 by default). It must be longer than the fast EMA.")
 
 grpS83 = "83% Strategy - Setup (LTF)"
 ltfBarsToProcess = input.int(40, "LTF Independent Processed Bars", minval = 5, maxval = 400, group = grpS83, tooltip = "How many LTF candles the setup is looked for in, and how far back Base's structure is drawn on the LTF chart. A (the HL or LH) must lie within them; a setup whose A leaves them expires.")
@@ -241,8 +238,6 @@ s83Alerts = input.bool(false, "Alert On 83% Setups And Entries", group = grpS83V
 
 // ------------------------------------------------------ internal tuning
 // Kept out of the inputs, as in Base.mq5.
-HTF_MA_FULL_BODY = false
-MTF_MA_FULL_BODY = false
 ADX_MINIMUM = 25.0
 ADX_BOS_AND_CHOCH = false
 ATR_MODE = "Minimum"
@@ -282,8 +277,8 @@ LOW_LABEL_COLOR = #008080
 
 if rrHigh < rrLow
     runtime.error("The second standard R:R must be at least the first")
-if htfSlowEma <= htfFastEma
-    runtime.error("The HTF Slow EMA must be longer than the HTF Fast EMA")
+if htfEmaMiddle <= htfEmaFast or htfEmaSlow <= htfEmaMiddle
+    runtime.error("The HTF EMAs must be fast < middle < slow")
 
 // ------------------------------------------------------ structure engine
 // An equal high or low (EQH/EQL, see markEqual) keeps the role of the swing
@@ -1113,14 +1108,11 @@ sessionOk() =>
 // timeframe ([1] with lookahead on), so nothing repaints.
 htfRequest() =>
     [d, b, cons, lc, rlo, rhi, bc, bn, tc, tn, t1, t2, t3, t4, lcd, llv, nc, vhh, vlh, vll, vhl, et, hp, hk, hv, lp, lk, lv, th, tl, ph, pl] = structureRequest(htfSwingLength)
-    float maE = ta.ema(close, htfMaLength)
-    float maS = ta.sma(close, htfMaLength)
-    float maV = htfMaType == "EMA" ? maE : maS
     [diPlus, diMinus, adxV] = ta.dmi(adxLength, adxLength)
     float atrV = ta.sma(ta.tr(true), atrLength)
     int sess = sessionOk() ? 1 : 0
     [iT, iC, iL] = internalRequest(htfInternalLength)
-    [d[1], b[1], cons[1], lc[1], rlo[1], rhi[1], bc[1], bn[1], tc[1], tn[1], t1[1], t2[1], t3[1], t4[1], lcd[1], llv[1], nc[1], vhh[1], vlh[1], vll[1], vhl[1], et[1], close[1], open[1], maV[1], adxV[1], atrV[1], sess[1], th[1], tl[1], iT[1], iC[1], iL[1]]
+    [d[1], b[1], cons[1], lc[1], rlo[1], rhi[1], bc[1], bn[1], tc[1], tn[1], t1[1], t2[1], t3[1], t4[1], lcd[1], llv[1], nc[1], vhh[1], vlh[1], vll[1], vhl[1], et[1], adxV[1], atrV[1], sess[1], th[1], tl[1], iT[1], iC[1], iL[1]]
 
 mtfRequest() =>
     [d, b, cons, lc, rlo, rhi, bc, bn, tc, tn, t1, t2, t3, t4, lcd, llv, nc, vhh, vlh, vll, vhl, et, hp, hk, hv, lp, lk, lv, th, tl, ph, pl] = structureRequest(mtfSwingLength)
@@ -1138,18 +1130,83 @@ ltfRequest() =>
     [iT, iC, iL] = internalRequest(ltfInternalLength)
     [d[1], b[1], cons[1], lc[1], rlo[1], rhi[1], bc[1], bn[1], tc[1], tn[1], t1[1], t2[1], t3[1], t4[1], lcd[1], llv[1], vhh[1], vlh[1], vll[1], vhl[1], close[1], volAvg[1], volRatio[1], trAvg[1], momRatio[1], th[1], tl[1], iT[1], iC[1], iL[1]]
 
-mtfMaRequest() =>
-    float e1 = ta.ema(close, mtfMaLength)
-    float s1 = ta.sma(close, mtfMaLength)
-    float m = mtfMaType == "EMA" ? e1 : s1
-    [m[1], open[1], close[1]]
-
-[hDir, hBos, hCons, hLabels, hRangeLo, hRangeHi, hBreaks, hBreaksN, hTrap, hTrapN, hT1, hT2, hT3, hT4, hLatest, hLatestLv, hNew, hHH, hLH, hLL, hHL, hEvents, hClose, hOpen, hMa, hAdx, hAtr, hSession, hTrailHigh, hTrailLow, hInTrend, hInChoch, hInLevel] = request.security(syminfo.tickerid, htfTf, htfRequest(), lookahead = barmerge.lookahead_on)
+[hDir, hBos, hCons, hLabels, hRangeLo, hRangeHi, hBreaks, hBreaksN, hTrap, hTrapN, hT1, hT2, hT3, hT4, hLatest, hLatestLv, hNew, hHH, hLH, hLL, hHL, hEvents, hAdx, hAtr, hSession, hTrailHigh, hTrailLow, hInTrend, hInChoch, hInLevel] = request.security(syminfo.tickerid, htfTf, htfRequest(), lookahead = barmerge.lookahead_on)
 [mDir, mBos, mCons, mLabels, mRangeLo, mRangeHi, mBreaks, mBreaksN, mTrap, mTrapN, mT1, mT2, mT3, mT4, mLatest, mLatestLv, mHH, mLH, mLL, mHL, mTrailHigh, mTrailLow, mInTrend, mInChoch, mInLevel, mLastHigh, mHaveHigh, mLastLow, mHaveLow, mAtr, mPrevHigh, mPrevLow] = request.security(syminfo.tickerid, mtfTf, mtfRequest(), lookahead = barmerge.lookahead_on)
-// 83% Strategy trend: the HTF EMAs on the latest closed HTF candle.
-[s83EmaFast, s83EmaSlow] = request.security(syminfo.tickerid, htfTf, [ta.ema(close, htfFastEma)[1], ta.ema(close, htfSlowEma)[1]], lookahead = barmerge.lookahead_on)
+// 83% Strategy trend: the HTF EMAs on the latest closed HTF candles and the
+// Hurst exponent of the latest closed Hurst-timeframe candles.
+s83HurstTf = hurstSource == "MTF" ? mtfTf : hurstSource == "LTF" ? ltfTf : htfTf
+S83_HURST_MIN_LAG = 2
+S83_HURST_MAX_LAG = 20
+
+// The HTF EMAs of the latest closed HTF candle, and for how many closed
+// candles in a row (up to it) they have been in bullish and in bearish order.
+s83EmaRequest() =>
+    float f = ta.ema(close, htfEmaFast)
+    float m = ta.ema(close, htfEmaMiddle)
+    float sl = ta.ema(close, htfEmaSlow)
+    int stack = na(f) or na(m) or na(sl) ? 0 : f > m and m > sl ? 1 : f < m and m < sl ? -1 : 0
+    var int upRun = 0
+    var int downRun = 0
+    upRun := stack == 1 ? upRun + 1 : 0
+    downRun := stack == -1 ? downRun + 1 : 0
+    [f[1], m[1], sl[1], upRun[1], downRun[1]]
+
+// The Hurst exponent of the hurstCandles closes up to the latest closed
+// candle, by the lagged-difference method (the generalized Hurst exponent with
+// q = 2): x = ln(close) oldest first; for each lag tau from 2 to 20, sigma is
+// the root mean square of x[t+tau] - x[t]; H is the least-squares slope of
+// ln sigma against ln tau. About 0.5 is a random walk; a trending market
+// (a steady drift or momentum) gives more, a mean-reverting one less. The
+// same sums in the same order as 83% Strategy.mq5's S83HurstOf. Also the
+// number of closed candles (up to hurstCandles).
+s83HurstRequest() =>
+    float lc = close > 0 ? math.log(close) : na
+    float h = na
+    int n = hurstCandles
+    if bar_index >= n - 1
+        bool valid = true
+        for j = 0 to n - 1
+            if na(lc[j])
+                valid := false
+        int lags = S83_HURST_MAX_LAG - S83_HURST_MIN_LAG + 1
+        array<float> lt = array.new<float>(lags, 0.0)
+        array<float> ls = array.new<float>(lags, 0.0)
+        if valid
+            for k = 0 to lags - 1
+                int tau = S83_HURST_MIN_LAG + k
+                int m = n - tau
+                float square = 0.0
+                // x[t] is lc[n - 1 - t] (x runs oldest first).
+                for t = 0 to m - 1
+                    float move = lc[n - 1 - t - tau] - lc[n - 1 - t]
+                    square += move * move
+                square := square / m
+                // Separate ifs: their last statements differ in type.
+                if square <= 0
+                    valid := false
+                if square > 0
+                    array.set(lt, k, math.log(tau))
+                    array.set(ls, k, math.log(math.sqrt(square)))
+        if valid
+            float mt = 0.0
+            float ms = 0.0
+            for k = 0 to lags - 1
+                mt += array.get(lt, k)
+                ms += array.get(ls, k)
+            mt := mt / lags
+            ms := ms / lags
+            float sxy = 0.0
+            float sxx = 0.0
+            for k = 0 to lags - 1
+                sxy += (array.get(lt, k) - mt) * (array.get(ls, k) - ms)
+                sxx += (array.get(lt, k) - mt) * (array.get(lt, k) - mt)
+            h := sxy / sxx
+    [h[1], math.min(bar_index, n)]
+
+[s83EmaFast, s83EmaMiddle, s83EmaSlow, s83EmaUpRun, s83EmaDownRun] = request.security(syminfo.tickerid, htfTf, s83EmaRequest(), lookahead = barmerge.lookahead_on)
+[s83Hurst, s83HurstCount] = request.security(syminfo.tickerid, s83HurstTf, s83HurstRequest(), lookahead = barmerge.lookahead_on)
+
 [lDir, lBos, lCons, lLabels, lRangeLo, lRangeHi, lBreaks, lBreaksN, lTrap, lTrapN, lT1, lT2, lT3, lT4, lLatest, lLatestLv, lHH, lLH, lLL, lHL, lClose, lVolAvg, lVolRatio, lTrAvg, lMomRatio, lTrailHigh, lTrailLow, lInTrend, lInChoch, lInLevel] = request.security(syminfo.tickerid, ltfTf, ltfRequest(), lookahead = barmerge.lookahead_on)
-[mtfMaValue, mtfMaOpen, mtfMaClose] = request.security(syminfo.tickerid, mtfTf, mtfMaRequest(), lookahead = barmerge.lookahead_on)
 
 // ---------------------------------------------------- chart structure
 // Labels and signals follow the chart timeframe, while the dashboard stays on
@@ -1379,8 +1436,9 @@ if barstate.islast or barstate.islastconfirmedhistory
     if showSwingPoints and chartEngine.haveLow
         lastLowLine := line.new(chartEngine.lastLowTime, chartEngine.lastLow, time, chartEngine.lastLow, xloc = xloc.bar_time, color = LOW_LABEL_COLOR, style = line.style_dotted, width = 1)
 
-plot(useHtfMa and showHtfMaLine ? hMa : na, "HTF MA", color = htfMaColor, linewidth = 2)
-plot(useMtfMa and showMtfMaLine ? mtfMaValue : na, "MTF MA", color = mtfMaColor, linewidth = 2)
+plot(showHtfEmaLines ? s83EmaFast : na, "HTF Fast EMA", color = htfEmaFastColor, linewidth = 2)
+plot(showHtfEmaLines ? s83EmaMiddle : na, "HTF Middle EMA", color = htfEmaMiddleColor, linewidth = 2)
+plot(showHtfEmaLines ? s83EmaSlow : na, "HTF Slow EMA", color = htfEmaSlowColor, linewidth = 2)
 
 // ------------------------------------------------------- trend breakdown
 type TfView
@@ -1614,14 +1672,16 @@ joinNames(array<string> names) =>
     r
 
 // Market Tradability (83% Strategy; 2 Tradable, 0 Not Tradable): trend
-// identification from the HTF EMA trend filter and the MTF structural
-// progression (see 83% Strategy.mq5's EvaluateTradability).
-//  * Bullish: the HTF fast EMA (50) is above the slow EMA (200) on the latest
-//    closed HTF candle, and the MTF's latest swing high is above the
-//    previous swing high (an HH, upward expansion).
-//  * Bearish: the fast EMA is below the slow EMA, and the MTF's latest swing
-//    low is below the previous swing low (an LL, downward expansion).
-//  * Not Tradable otherwise; the reason names the missing condition.
+// identification from three conditions, which must all line up (see 83%
+// Strategy.mq5's EvaluateTradability).
+//  * Bullish: 1. the HTF EMAs are in order, fast > middle > slow (20 > 50 >
+//    200), on each of the last HTF EMA Candles closed HTF candles; 2. the MTF
+//    made a Higher High and a Higher Low (its latest swing high and low are
+//    above the previous ones); 3. the Hurst exponent of the last Hurst Window
+//    closed Hurst-timeframe candles is above the Hurst minimum (0.55).
+//  * Bearish: fast < middle < slow; a Lower Low and a Lower High; the same
+//    Hurst exponent.
+//  * Not Tradable otherwise; the reason names what is missing.
 // The MTF swings are its structure swings (MTF Swing Detection Length); the
 // previous swing high is the previous leg's (a higher high within the same
 // leg replaces it). The Internal Structure plays no part.
@@ -1629,32 +1689,75 @@ s83SwingTag(int side, float cur, float prev) =>
     side > 0 ? (cur > prev ? "HH" : cur < prev ? "LH" : "EQH") : (cur < prev ? "LL" : cur > prev ? "HL" : "EQL")
 
 s83EmaText() =>
-    tfName(htfTf) + " " + str.tostring(htfFastEma) + "/" + str.tostring(htfSlowEma) + " EMA"
+    tfName(htfTf) + " " + str.tostring(htfEmaFast) + "/" + str.tostring(htfEmaMiddle) + "/" + str.tostring(htfEmaSlow) + " EMA"
 
-// The HTF EMA direction: 1 fast above slow, -1 below, 0 equal or unavailable.
+// "20 > 50 > 200" (bullish) or "20 < 50 < 200" (bearish).
+s83EmaOrder(int d) =>
+    string op = d > 0 ? " > " : " < "
+    str.tostring(htfEmaFast) + op + str.tostring(htfEmaMiddle) + op + str.tostring(htfEmaSlow)
+
+s83EmaReady() =>
+    not na(s83EmaFast) and not na(s83EmaMiddle) and not na(s83EmaSlow)
+
+// The EMA order on the latest closed HTF candle: 1 fast > middle > slow, -1
+// fast < middle < slow, 0 neither or unavailable.
+s83EmaStack() =>
+    not s83EmaReady() ? 0 : s83EmaFast > s83EmaMiddle and s83EmaMiddle > s83EmaSlow ? 1 : s83EmaFast < s83EmaMiddle and s83EmaMiddle < s83EmaSlow ? -1 : 0
+
+// The HTF EMA direction: the order that held on each of the last HTF EMA
+// Candles closed HTF candles, else 0.
 s83EmaDirection() =>
-    na(s83EmaFast) or na(s83EmaSlow) ? 0 : s83EmaFast > s83EmaSlow ? 1 : s83EmaFast < s83EmaSlow ? -1 : 0
+    not s83EmaReady() ? 0 : nz(s83EmaUpRun) >= htfEmaCandles ? 1 : nz(s83EmaDownRun) >= htfEmaCandles ? -1 : 0
+
+s83HurstName() =>
+    tfName(s83HurstTf)
+
+// About 0.5 is a random walk; above it a trending (persistent) market, below
+// it a mean-reverting one.
+s83HurstWord(float h) =>
+    h > 0.55 ? "trending" : h >= 0.45 ? "random walk" : "mean-reverting"
+
+// The MTF swings for a direction: "" when they show its expansion (an HH and
+// an HL for buys, an LL and an LH for sells), else what is missing.
+s83SwingProblem(int d) =>
+    bool haveHighs = nz(mHaveHigh) == 1 and not na(mPrevHigh)
+    bool haveLows = nz(mHaveLow) == 1 and not na(mPrevLow)
+    bool ok = haveHighs and haveLows and (d > 0 ? mLastHigh > mPrevHigh and mLastLow > mPrevLow : mLastLow < mPrevLow and mLastHigh < mPrevHigh)
+    string out = ""
+    if not haveHighs or not haveLows
+        out := "the " + tfName(mtfTf) + " has no two swing " + (not haveHighs ? "highs" : "lows") + " yet"
+    else if not ok
+        out := "the " + tfName(mtfTf) + " swings are " + s83SwingTag(1, mLastHigh, mPrevHigh) + " + " + s83SwingTag(-1, mLastLow, mPrevLow) + ", not " + (d > 0 ? "HH + HL" : "LL + LH") + " (" + (d > 0 ? "upward" : "downward") + " expansion)"
+    out
+
+// The Hurst exponent: "" when it is above the minimum, else why not.
+s83HurstProblem() =>
+    string out = ""
+    if na(s83Hurst)
+        out := nz(s83HurstCount) < hurstCandles ? "the Hurst exponent needs " + str.tostring(hurstCandles) + " closed " + s83HurstName() + " candles (" + str.tostring(nz(s83HurstCount)) + " so far)" : "the Hurst exponent is not available (the " + s83HurstName() + " closes do not move)"
+    else if not (s83Hurst > hurstMin)
+        out := "the Hurst exponent " + str.tostring(s83Hurst, "0.00") + " is not above " + str.tostring(hurstMin, "0.00") + " (" + s83HurstWord(s83Hurst) + ")"
+    out
 
 evaluateTradability() =>
     int d = s83EmaDirection()
-    bool haveHighs = nz(mHaveHigh) == 1 and not na(mPrevHigh)
-    bool haveLows = nz(mHaveLow) == 1 and not na(mPrevLow)
-    string ema = tfName(htfTf) + " " + str.tostring(htfFastEma) + " EMA is " + (d > 0 ? "above" : "below") + " the " + str.tostring(htfSlowEma) + " EMA"
-    float cur = d > 0 ? mLastHigh : mLastLow
-    float prev = d > 0 ? mPrevHigh : mPrevLow
+    int stack = s83EmaStack()
+    string ema = tfName(htfTf) + " EMAs " + s83EmaOrder(d) + (htfEmaCandles > 1 ? " on the last " + str.tostring(htfEmaCandles) + " closed candles" : "")
+    string swings = s83SwingProblem(d)
+    string hurst = s83HurstProblem()
     string reason = ""
     int state = 0
-    if na(s83EmaFast) or na(s83EmaSlow)
-        reason := "The " + s83EmaText() + " is not available yet (not enough " + tfName(htfTf) + " history)."
+    if not s83EmaReady()
+        reason := "The " + s83EmaText() + "s are not available yet (not enough " + tfName(htfTf) + " history)."
+    else if d == 0 and stack != 0
+        reason := "The " + tfName(htfTf) + " EMAs are " + s83EmaOrder(stack) + " on the latest closed candle, but not on each of the last " + str.tostring(htfEmaCandles) + "."
     else if d == 0
-        reason := "The " + tfName(htfTf) + " " + str.tostring(htfFastEma) + " and " + str.tostring(htfSlowEma) + " EMAs are equal."
-    else if not (d > 0 ? haveHighs : haveLows)
-        reason := ema + ", but the " + tfName(mtfTf) + " has no two swing " + (d > 0 ? "highs" : "lows") + " yet."
-    else if d > 0 ? cur <= prev : cur >= prev
-        reason := ema + ", but the " + tfName(mtfTf) + "'s latest swing " + (d > 0 ? "high " : "low ") + priceText(cur) + " is not " + (d > 0 ? "above" : "below") + " the previous one " + priceText(prev) + " (" + s83SwingTag(d, cur, prev) + ", no " + (d > 0 ? "upward" : "downward") + " expansion)."
+        reason := "The " + tfName(htfTf) + " EMAs are not in order (" + str.tostring(htfEmaFast) + " EMA " + priceText(s83EmaFast) + ", " + str.tostring(htfEmaMiddle) + " EMA " + priceText(s83EmaMiddle) + ", " + str.tostring(htfEmaSlow) + " EMA " + priceText(s83EmaSlow) + "): bullish needs " + s83EmaOrder(1) + ", bearish " + s83EmaOrder(-1) + "."
+    else if swings != "" or hurst != ""
+        reason := ema + ", but " + swings + (swings != "" and hurst != "" ? ", and " : "") + hurst + "."
     else
         state := 2
-        reason := ema + ", and the " + tfName(mtfTf) + " made " + (d > 0 ? "an HH" : "an LL") + " (" + priceText(cur) + (d > 0 ? " above " : " below ") + priceText(prev) + ")."
+        reason := ema + ", the " + tfName(mtfTf) + " made " + (d > 0 ? "an HH and an HL" : "an LL and an LH") + ", and the Hurst exponent " + str.tostring(s83Hurst, "0.00") + " is above " + str.tostring(hurstMin, "0.00") + "."
     [state, reason]
 
 // Tradable (Early): early entries in the trend's direction while the
@@ -1722,39 +1825,18 @@ passText(bool pass) =>
     pass ? "PASS" : "BLOCKED"
 
 // Entry filters for the latest closed structure candle: the tooltip of the
-// Market Tradability row. The HTF MA filter compares the latest closed HTF
-// candle with the HTF MA, the MTF MA filter the latest closed MTF candle with
-// the MTF MA. They never change structure, trend or alerts.
+// Market Tradability row (session, ADX and ATR). They never change structure,
+// trend, alerts or the 83% Strategy's entries.
 entryFilterTooltip() =>
-    bool htfLong = true
-    bool htfShort = true
-    string htfText = "off"
-    if useHtfMa
-        htfLong := HTF_MA_FULL_BODY ? (hClose > hMa and hOpen > hMa and hClose > hOpen) : hClose > hMa
-        htfShort := HTF_MA_FULL_BODY ? (hClose < hMa and hOpen < hMa and hClose < hOpen) : hClose < hMa
-        htfText := htfLong ? "long" : htfShort ? "short" : "neutral"
-    bool mtfLong = not useMtfMa
-    bool mtfShort = not useMtfMa
-    string mtfText = "off"
-    if useMtfMa
-        mtfText := "unavailable"
-        if not na(mtfMaValue) and not na(mtfMaOpen) and not na(mtfMaClose)
-            mtfLong := MTF_MA_FULL_BODY ? (mtfMaClose > mtfMaValue and mtfMaOpen > mtfMaValue and mtfMaClose > mtfMaOpen) : mtfMaClose > mtfMaValue
-            mtfShort := MTF_MA_FULL_BODY ? (mtfMaClose < mtfMaValue and mtfMaOpen < mtfMaValue and mtfMaClose < mtfMaOpen) : mtfMaClose < mtfMaValue
-            mtfText := mtfLong ? "long" : mtfShort ? "short" : "neutral"
     bool sess = nz(hSession) == 1
     bool adxPass = not useAdx or (not na(hAdx) and hAdx >= ADX_MINIMUM)
     bool atrPass = true
     if useAtr
         atrPass := not na(hAtr) and (ATR_MODE == "Minimum" ? hAtr >= ATR_MINIMUM : ATR_MODE == "Maximum" ? hAtr <= ATR_MAXIMUM : hAtr >= ATR_MINIMUM and hAtr <= ATR_MAXIMUM)
-    bool longDir = htfLong and mtfLong and sess
-    bool shortDir = htfShort and mtfShort and sess
     bool chochAdx = not useAdx or not ADX_BOS_AND_CHOCH or adxPass
     string out = "Entry filters, latest closed " + tfName(htfTf) + " candle"
-    out := out + "\nBOS: long " + passText(longDir and adxPass and atrPass) + ", short " + passText(shortDir and adxPass and atrPass)
-    out := out + "\nCHoCH: long " + passText(longDir and chochAdx and atrPass) + ", short " + passText(shortDir and chochAdx and atrPass)
-    out := out + "\nHTF MA " + htfText + " | MTF MA " + mtfText + " | Session " + (useSession ? (sess ? "in" : "out") : "off")
-    out := out + "\nADX " + (useAdx ? str.tostring(hAdx, "0.0") + " " + passText(adxPass) : "off") + " | ATR " + (useAtr ? str.tostring(hAtr, format.mintick) + " " + passText(atrPass) : "off")
+    out := out + "\nBOS " + passText(sess and adxPass and atrPass) + " | CHoCH " + passText(sess and chochAdx and atrPass)
+    out := out + "\nSession " + (useSession ? (sess ? "in" : "out") : "off") + " | ADX " + (useAdx ? str.tostring(hAdx, "0.0") + " " + passText(adxPass) : "off") + " | ATR " + (useAtr ? str.tostring(hAtr, format.mintick) + " " + passText(atrPass) : "off")
     out
 
 // ================================================================ 83% Strategy
@@ -1762,9 +1844,10 @@ entryFilterTooltip() =>
 // established MTF trend, using Base's structure (above) for the swings and the
 // market filters, and Fib Base's Fibonacci engine for the levels. Same rules as
 // 83% Strategy.mq5:
-//  * Bullish (buys only): Market Tradability reads Tradable (bullish): the
-//    HTF 50 EMA is above the HTF 200 EMA and the MTF's latest swing high is
-//    above the previous one (an HH). On the LTF chart (M30, Swing Detection level 3
+//  * Bullish (buys only): Market Tradability reads Tradable (bullish): all
+//    three conditions line up: the HTF EMAs are in order, 20 > 50 > 200; the
+//    MTF made an HH and an HL; and the Hurst exponent is above 0.55 (bearish:
+//    20 < 50 < 200, an LL and an LH, the same Hurst exponent). On the LTF chart (M30, Swing Detection level 3
 //    by default), within the last LTF Independent Processed Bars (40)
 //    candles, A is the most recent HL with heavy buying pressure; once a
 //    candle closes above the swing high before A, B is the highest high
@@ -1898,8 +1981,8 @@ int s83MarketDir = s83EmaDirection()
 // Why an armed setup in direction `dir` cannot be entered on the next candle,
 // or "" when it can (market filters only).
 // The market filter of an entry: Market Tradability reads Tradable in its
-// direction: the HTF EMA trend and the MTF swings agree (see
-// evaluateTradability).
+// direction: the HTF EMA order, the MTF swings and the Hurst exponent line up
+// (see evaluateTradability).
 s83FilterText(int dir) =>
     string r = ""
     if s83Tradability != 2
@@ -2388,18 +2471,23 @@ if barstate.islast or barstate.islastconfirmedhistory
     [tradability, tradeReason] = evaluateTradability()
     table.clear(dash, 0, 0, 1, 39)
     int row = 0
-    // Trend: the HTF EMAs and the MTF swings, then Market Tradability.
+    // Trend: the three conditions, then Market Tradability.
     int emaDir = s83EmaDirection()
-    bool emaReady = not na(s83EmaFast) and not na(s83EmaSlow)
-    string emaTip = emaReady ? str.tostring(htfFastEma) + " EMA " + priceText(s83EmaFast) + ", " + str.tostring(htfSlowEma) + " EMA " + priceText(s83EmaSlow) + " (latest closed " + tfName(htfTf) + " candle)" : "Not enough " + tfName(htfTf) + " history yet"
-    dashRow(row, "HTF Trend (" + s83EmaText() + "):", not emaReady ? "Not available" : emaDir > 0 ? "Bullish (" + str.tostring(htfFastEma) + " above " + str.tostring(htfSlowEma) + ")" : emaDir < 0 ? "Bearish (" + str.tostring(htfFastEma) + " below " + str.tostring(htfSlowEma) + ")" : "Flat (EMAs equal)", emaDir > 0 ? DASH_POSITIVE_COLOR : emaDir < 0 ? DASH_NEGATIVE_COLOR : DASH_NEUTRAL_COLOR, emaTip)
+    int emaStack = s83EmaStack()
+    bool emaReady = s83EmaReady()
+    string emaTip = emaReady ? str.tostring(htfEmaFast) + " EMA " + priceText(s83EmaFast) + ", " + str.tostring(htfEmaMiddle) + " EMA " + priceText(s83EmaMiddle) + ", " + str.tostring(htfEmaSlow) + " EMA " + priceText(s83EmaSlow) + " (latest closed " + tfName(htfTf) + " candle)" : "Not enough " + tfName(htfTf) + " history yet"
+    string emaValue = not emaReady ? "Not available" : emaDir > 0 ? "Bullish (" + s83EmaOrder(1) + ")" : emaDir < 0 ? "Bearish (" + s83EmaOrder(-1) + ")" : emaStack != 0 ? s83EmaOrder(emaStack) + ", not on each of the last " + str.tostring(htfEmaCandles) : "Not in order"
+    dashRow(row, "HTF Trend (" + s83EmaText() + "):", emaValue, emaDir > 0 ? DASH_POSITIVE_COLOR : emaDir < 0 ? DASH_NEGATIVE_COLOR : DASH_NEUTRAL_COLOR, emaTip)
     row += 1
     bool haveHighs = nz(mHaveHigh) == 1 and not na(mPrevHigh)
     bool haveLows = nz(mHaveLow) == 1 and not na(mPrevLow)
-    bool upExp = haveHighs and mLastHigh > mPrevHigh
-    bool downExp = haveLows and mLastLow < mPrevLow
+    bool upExp = haveHighs and haveLows and mLastHigh > mPrevHigh and mLastLow > mPrevLow
+    bool downExp = haveHighs and haveLows and mLastLow < mPrevLow and mLastHigh < mPrevHigh
     string swingTip = "Latest swing high " + (haveHighs ? priceText(mLastHigh) + " vs previous " + priceText(mPrevHigh) : "-") + "; latest swing low " + (haveLows ? priceText(mLastLow) + " vs previous " + priceText(mPrevLow) : "-")
-    dashRow(row, "MTF Swings (" + tfName(mtfTf) + "):", (haveHighs ? s83SwingTag(1, mLastHigh, mPrevHigh) : "no two swing highs yet") + " + " + (haveLows ? s83SwingTag(-1, mLastLow, mPrevLow) : "no two swing lows yet"), upExp and not downExp ? DASH_POSITIVE_COLOR : downExp and not upExp ? DASH_NEGATIVE_COLOR : DASH_NEUTRAL_COLOR, swingTip)
+    dashRow(row, "MTF Swings (" + tfName(mtfTf) + "):", (haveHighs ? s83SwingTag(1, mLastHigh, mPrevHigh) : "no two swing highs yet") + " + " + (haveLows ? s83SwingTag(-1, mLastLow, mPrevLow) : "no two swing lows yet"), upExp ? DASH_POSITIVE_COLOR : downExp ? DASH_NEGATIVE_COLOR : DASH_NEUTRAL_COLOR, swingTip)
+    row += 1
+    string hurstTip = "The last " + str.tostring(hurstCandles) + " closed " + s83HurstName() + " candles. Tradable needs H above " + str.tostring(hurstMin, "0.00") + "; about 0.5 is a random walk, above it a trending market, below it a mean-reverting one."
+    dashRow(row, "Hurst Exponent (" + s83HurstName() + "):", na(s83Hurst) ? "Not available" : "H " + str.tostring(s83Hurst, "0.00") + " (" + s83HurstWord(s83Hurst) + ")", na(s83Hurst) ? DASH_NEUTRAL_COLOR : passColor(s83Hurst > hurstMin), hurstTip)
     row += 1
     dashRow(row, "Market Tradability:", tradability == 2 ? "Tradable (" + trendWord(emaDir) + ")" : "Not Tradable", passColor(tradability == 2), entryFilterTooltip())
     row += 1
