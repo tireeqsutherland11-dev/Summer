@@ -762,17 +762,18 @@ engine, labels and dashboard unchanged. Both use Fib Base's Fibonacci engine
 Buys (bullish market):
 
 1. **Market Tradability.** The dashboard's Market Tradability reads
-   **Tradable** (bullish). In the strategy, Tradable means that the Market
-   Trend and the Internal Structure of every selected timeframe (HTF, MTF and
-   LTF by default) read bullish.
+   **Tradable** (bullish). By default, that means the Market Trend and the
+   Internal Structure of every selected timeframe (HTF, MTF and LTF) read
+   bullish.
    - A Bullish Transition counts as bullish.
    - It does not matter whether the latest break was a BOS or a CHoCH.
-   - Consolidation / Undefined, or any timeframe pointing the other way, is
-     Not Tradable. The reason names the first timeframe that does not agree.
-   - There is no Tradable (Early) in the strategy. Base's own indicator keeps
-     its rule.
-2. **Optimal Conditions.** The Optimal Conditions read **OPTIMAL**.
-3. **LTF setup.** The LTF is M30 with LTF Swing Detection level 3 (3 candles
+   - Consolidation / Undefined, or any of them pointing the other way, is
+     Not Tradable. The reason names the first one that does not agree.
+   - What counts, and which kinds of break are accepted, is set in the
+     [Market Tradability inputs](#market-tradability-inputs).
+   - This is the only market filter: there are no Optimal Conditions and no
+     Tradable (Early) in the strategy. Base's own indicator keeps its rules.
+2. **LTF setup.** The LTF is M30 with LTF Swing Detection level 3 (3 candles
    each side) by default. The setup is searched within the last
    `LTF_Bars_To_Process` (the LTF Independent Processed Bars, 40) closed LTF
    candles.
@@ -785,14 +786,10 @@ Buys (bullish market):
      length) close without reaching it.
    - The Fibonacci runs from B (0%) back to A (100%), so the 83% level moves
      up with B.
-4. **Entry.** Price touches the 83% level (`Entry_Level`, 0.83). Any
+3. **Entry.** Price touches the 83% level (`Entry_Level`, 0.83). Any
    pullback to it after the break counts, including one while B is still
    forming.
-5. **Confirmation (optional, off by default).** With
-   `Engulfing_Confirmation` on, a bullish engulfing candle on M15 or M30
-   must confirm the buy after the touch, and the trade is entered at its
-   close. See [Entry confirmation](#entry-confirmation-the-engulfing) below.
-6. **Invalid.** If price makes a new HH (trades above a confirmed B) before
+4. **Invalid.** If price makes a new HH (trades above a confirmed B) before
    reaching 83%, the setup is dead and its HL is used up. A new setup needs
    a new HL.
 
@@ -831,47 +828,38 @@ How the rules are made exact:
   whose A leaves them **expires**. On the LTF chart, Base's structure is also
   drawn over just those candles.
 
-### Entry confirmation: the engulfing
+### Market Tradability inputs
 
-`Engulfing_Confirmation` is off by default: the trade is entered at the
-touch. With it on, touching the 83% level no longer enters the trade by
-itself. The setup becomes **touched** and waits
-for an engulfing candle in the trend direction.
+The **83% Strategy - Market Tradability** inputs set what Market Tradability
+takes into account. Each selected timeframe (HTF, MTF, LTF in Base's Trend
+Analysis Timeframes) has two components, each with its own switches:
 
-- **The engulfing.** For a buy, a bearish candle followed by a bullish
-  candle that:
-  - closes above the bearish candle's open; and
-  - opens at or below the bearish candle's close.
+| Component | Counts | Accepts |
+| --- | --- | --- |
+| Market Trend | `HTF_Trend_Counts` (`HTF Market Trend`) | `HTF_Trend_Accept_BOS` (`BOS`): an established trend, its latest break a BOS (e.g. Bullish). `HTF_Trend_Accept_Transition` (`Transition`): a Transition, its latest break a CHoCH (e.g. Bullish Transition). |
+| Internal Structure | `HTF_Internal_Counts` (`HTF Internal Structure`) | `HTF_Internal_Accept_BOS` (`BOS`): an internal trend whose latest break is a BOS, e.g. Bullish (BOS). `HTF_Internal_Accept_CHoCH` (`CHoCH`): one whose latest break is a CHoCH, e.g. Bullish (CHoCH). |
 
-  A sell mirrors this: a bullish candle followed by a bearish candle that
-  closes below its open and opens at or above its close. Wicks are not
-  compared; the bodies decide.
-- **The timeframes.** Either timeframe confirms, whichever comes first:
-  - the lower timeframe (`Engulfing_Lower_Timeframe`, M15), when
-    `Use_Lower_Engulfing` is on;
-  - the LTF (M30), when `Use_LTF_Engulfing` is on.
+The MTF and LTF have the same six switches (`MTF_...`, `LTF_...`; on
+TradingView, one row per component). Everything is on by default.
 
-  The lower timeframe must be below the LTF and divide it evenly.
-- **When it counts.** The engulfing candle must be the touching candle or a
-  later one. An M15 engulfing must come at or after the M15 candle that
-  touched. An M30 engulfing can be the M30 candle that touched.
-- **The wait.** The engulfing must close within
-  `Confirmation_Window_Candles` (4) LTF candles, the touching candle
-  included. Before that, the setup **fails** if:
-  - a candle closes through A (below the HL, above the LH); or
-  - price makes a new HH (LL) beyond B; or
-  - A leaves the processed candles.
-
-  A failed setup's A is used up, like an invalidated one.
-- **The entry.** The trade is entered at the market once the engulfing
-  candle has closed. The usual filters, the day's limits and the risk
-  management then apply as before.
-- **Too far from the level.** The entry is now wherever the engulfing
-  closed, which can be well past 83%. If the 1:2 or 1:3 stop would then not
-  be behind A, the trade is skipped with the reason "too far from the 83%
-  level", because the strategy's stop belongs behind the HL (LH).
-- **Turning it off.** With `Engulfing_Confirmation` off (the default), the
-  strategy enters on the first touch.
+- **Tradable** means every counted component points the same way, each
+  with an accepted kind of break.
+  - The direction is the first counted component's, in this order: HTF
+    trend, HTF internal, MTF trend, MTF internal, LTF trend, LTF internal.
+  - Consolidation / Undefined, or an undefined internal structure, never
+    agrees.
+- **Not Tradable** otherwise. The reason names the first component that
+  blocks, for example:
+  - "H1 is only a bullish Transition (a CHoCH not yet confirmed by a BOS),
+    and Transitions are not accepted.";
+  - "The M30 internal structure is bearish, not bullish.".
+- **Examples:**
+  - Untick `Transition` on the HTF to trade only an established HTF trend.
+  - Untick `CHoCH` on the LTF internal structure to require an internal BOS.
+  - Untick `LTF Internal Structure` to leave it out entirely.
+- **Valid settings.** At least one component must count, and each counted
+  component must accept at least one kind. Otherwise the EA refuses the
+  inputs, and the TradingView strategy shows an error.
 
 ### Risk management (all adjustable)
 
@@ -900,8 +888,8 @@ for an engulfing candle in the trend direction.
     the take profit. For example, 1:2.4 uses 1:2.
   - With 0.5 ATR, the natural ratio fell between 1:2.2 and 1:3.0 for 80% of
     the real-data setups, as the strategy describes.
-  - The adjusted stop is always behind A. When an engulfing entry is too far
-    from the level for that, the trade is skipped (see above).
+  - The adjusted stop is always behind A. If a gap leaves the entry too far
+    past the level for that, the trade is skipped with the reason.
 - **Breakeven.** The stop moves to the entry price once price has covered
   `Breakeven_At_Percent` (60%) of the way to the take profit.
 
@@ -919,26 +907,20 @@ On the LTF chart, setups are drawn as in the strategy's examples.
     prices instead.
   - Four optional levels (0.5, 0.618, 0.705, 0.886) can be switched on, and
     every level's ratio and colour can be changed.
-- **Points.** A, B and C (the entry).
-  - With confirmation, `touch` marks where price reached the level. C sits
-    at the engulfing candle's close, labelled `M15 engulfing` or
-    `M30 engulfing`.
-  - A setup waiting for its engulfing shows `waiting for a M15 or M30
-    engulfing`.
+- **Points.** A, B and C (the entry, where price touched the level).
 - **Position zones.** The target zone (blue, entry to take profit) and the
   stop zone (red, entry to stop loss), drawn from C.
   - An armed setup shows its planned zones from the latest candle.
   - Failed setups are drawn dotted with their reason: invalidated, expired,
-    missed, or failed. A failed setup's reason names the close through A,
-    the new HH (LL), or the window that ran out before an engulfing.
+    missed or replaced.
 
 The dashboard gains these rows under Base's own:
 
-- **83% Strategy.** Waiting, a buy or sell setup armed, a setup touched and
-  waiting for its engulfing, or a position open.
+- **83% Strategy.** Waiting, a buy or sell setup armed, or a position open.
 - **Setup.** A, B and the 83% price. B reads `(forming)` while it still
   follows price.
-- **Entry Filters.** PASS, or BLOCKED with the reason.
+- **Entry Filters.** PASS, or BLOCKED with the reason (Market Tradability
+  not Tradable, with its reason, or Tradable the other way).
 - **Risk Today.** Trades taken out of the maximum, the current risk %, and
   losses in a row.
 - **Last Setup.** What happened to the latest setup that reached its level:
@@ -950,19 +932,15 @@ The dashboard gains these rows under Base's own:
   compile it in MetaEditor, and attach it to a chart. To backtest it, open
   the Strategy Tester (Ctrl+R) and select **83% Strategy**, the symbol and a
   date range. Use **Every tick** or **Every tick based on real ticks**
-  modelling, since entries happen on the first tick after the engulfing (or
-  at the level, without confirmation).
+  modelling, since entries happen on the first tick at the level.
 - **Viewing the trades.** Choose the M30 chart in visual mode to watch the
   setups. Non-visual runs and optimisation skip all drawing.
 - **Trade Mode.** `Trade_Mode` is **Strategy Tester only** by default, so a
   chart running the EA for analysis never places orders. Choose **Strategy
   Tester and live charts** deliberately.
-- **Entries.** By default (no confirmation), the EA enters at the market on
-  the first tick at which the chart price (bid) touches the level. It
-  invalidates a setup on the first tick beyond a confirmed B.
-  - With confirmation, it enters on the first tick after the engulfing
-    candle closes. It checks the setups on every new M15 and M30 candle, so
-    an M15 engulfing in the middle of an M30 candle is entered straight away.
+- **Entries.** The EA enters at the market on the first tick at which the
+  chart price (bid) touches the level. It invalidates a setup on the first
+  tick beyond a confirmed B.
   - The take profit and stop of a sell include the spread, because they
     trigger on the ask.
   - Each untraded touch is written to the Journal once, with its reason.
@@ -981,20 +959,11 @@ The dashboard gains these rows under Base's own:
     therefore drawn on the last closed candle too.
   - Before this, on a market that was open (Deriv's synthetic indices
     always are), they stayed blank until the current M30 candle closed.
-- **Entries.**
-  - By default (no confirmation), entries are limit orders at the level,
-    placed at a candle's close. While B is forming, the order moves with the
-    level at each close. A buy and a sell order cancel each other.
-  - With confirmation, the strategy reads the M15 candles inside each M30
-    candle with `request.security_lower_tf`. It enters at the market at the
-    close of the M30 candle that holds the engulfing. TradingView's
-    Strategy Tester fills that order at the next candle's open.
+- **Entries.** Entries are limit orders at the level, placed at a candle's
+  close. While B is forming, the order moves with the level at each close. A
+  buy and a sell order cancel each other.
 - **Differences from the EA:**
-  - An M15 engulfing in the first half of an M30 candle is entered at that
-    M30 candle's close, up to 15 minutes later than the EA, and at that
-    later price.
-  - Without confirmation, a limit order fills at the level, or better on a
-    gap.
+  - A limit order fills at the level, or better on a gap.
   - Breakeven is checked at candle closes.
   - Pine has no spread.
   - Days follow the exchange time zone.
@@ -1006,23 +975,9 @@ The dashboard gains these rows under Base's own:
 Both versions are set up for Deriv's synthetic indices: Volatility (including
 the 1s versions), Crash / Boom, Jump, Step, Range Break, DEX and Drift Switch.
 
-- **Symbol Profile.** `Symbol_Profile` (`Symbol Profile` on TradingView) is
-  Auto by default.
-  - Auto recognises a synthetic index by its name, description or symbol
-    path, or by Deriv's `R_` / `1HZ` codes and the `DERIV` prefix on
-    TradingView.
-  - You can also force **Deriv Synthetic Index** or **Standard symbol**.
-  - The dashboard's new **Symbol** row shows which profile applies, and the
-    EA writes it to the Journal at start.
-- **Market Volume.** Synthetic indices tick at a fixed rate around the
-  clock, so their volume measures nothing, and on TradingView it is often
-  missing entirely.
-  - Base's Market Volume requirement is therefore not applied to them, or to
-    any symbol without volume data. The dashboard then shows
-    `PASS (not applied: ...)`.
-  - The other Optimal Conditions are unchanged.
-  - Before this change, a symbol without volume could never read OPTIMAL, so
-    the TradingView strategy took no trades.
+- **No volume needed.** The strategy uses no volume. The Optimal
+  Conditions, whose Market Volume requirement measured nothing on synthetic
+  indices, are gone, along with the Symbol Profile that switched it off.
 - **Lot size limits.** Each symbol's minimum lot, maximum lot per order and
   total volume limit are respected.
   - A risk-based size below the minimum is skipped. The Journal and the
@@ -1059,9 +1014,8 @@ and Python mirrors:
 - **Base's behaviour is unchanged.** Base's whole test suite passes against
   the EA.
 - **Every trade follows the rules.** Tick-level backtests ran on 20
-  generated markets of 120 days each, with the default settings (no
-  engulfing confirmation, 40 processed candles). Every trade was rechecked
-  with independent code, including:
+  generated markets of 120 days each, with the default settings. Every
+  trade was rechecked with independent code, including:
   - A is a swing of the LTF candles, and the setup was known only after A
     was confirmed;
   - the break level is a swing before A, and a candle closed beyond it
@@ -1073,8 +1027,7 @@ and Python mirrors:
   - the setup was not missed;
   - the entry is at the first touch, with no new HH/LL beyond a confirmed B
     first;
-  - the filters at the entry (Tradable in the trade direction, then
-    Optimal);
+  - Market Tradability read Tradable in the trade direction;
   - the take profit, stop and 1:2 / 1:3 choice;
   - the lot size, including the risk cuts;
   - the day and trade limits;
@@ -1086,23 +1039,19 @@ and Python mirrors:
   - Tradable in the other direction: 81;
   - a position already open: 5.
 
-  With the engulfing confirmation on, the same markets gave 64 trades. All
-  of them passed, including the touch and the first M15 or M30 engulfing
-  after it, recomputed from the candles. Of the 343 confirmations, 68 were
-  skipped as too far from the 83% level for a stop behind A.
-- **The Tradable rule.** Market Tradability was computed for every
-  combination of three timeframes' Market Trends (none, bullish or bearish
-  by CHoCH or BOS, ranging), Internal Structures (bullish, bearish,
-  undefined) and timeframe selections: 40,824 cases. It read Tradable
-  exactly when every selected timeframe's trend and internal structure
-  agreed, with a reason in every case. The generated
-  markets are random, so they say nothing about which version trades
-  better.
+  The generated markets are random, so they say nothing about profitability.
+- **The Market Tradability rule and its inputs.** Market Tradability was
+  computed for 369,000 cases:
+  - **Defaults:** every combination of three timeframes' Market Trends
+    (none, bullish or bearish by CHoCH or BOS, ranging) and Internal
+    Structures (undefined, bullish or bearish by BOS or CHoCH), for all
+    timeframe selections;
+  - **Other settings:** samples of 60 random settings of the 18 inputs.
+
+  It read Tradable exactly when every counted component agreed with an
+  accepted kind of break. There was a reason in every case and the right
+  direction. Invalid settings were refused and valid ones accepted.
 - **Deriv tests.** Separate tests cover:
-  - recognising synthetic indices: 18 of 18 names, codes, descriptions and
-    paths classified correctly;
-  - leaving Market Volume out on a synthetic index or a symbol without
-    volume;
   - sizing at the minimum, maximum and total volume limits;
   - the Journal reason while history is missing.
 
@@ -1114,13 +1063,10 @@ and Python mirrors:
   - the LTF drawings.
 - **The EA and the Pine strategy agree.** The EA's setup scan was compared,
   setup by setup, with a Python mirror of the Pine strategy's setup logic on
-  19 generated markets. These covered several swing levels, windows and
-  pressure settings, at both forex and gold price scales, and the
-  confirmation on and off, with the M15 or M30 engulfing alone and waits of
-  1 to 8 candles.
-  - All 3,753 setups matched: A, B (where it ended up), the level, the
-    outcome, when the setup was armed, touched, confirmed (and on which
-    timeframe) and ended, and why it ended.
+  19 generated markets. These covered several swing levels, windows (20 to
+  60 candles) and pressure settings, at both forex and gold price scales.
+  - All 3,607 setups matched: A, B (where it ended up), the level, the
+    outcome, when the setup was armed and ended, and why it ended.
   - Only 17 of them were missed (price reached 83% before A was confirmed).
 - **The drawing limit.** In a 60-day visual run, the chart was checked at
   every M30 candle. It always showed exactly the latest 2 setups plus any

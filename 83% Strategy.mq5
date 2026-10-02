@@ -1,7 +1,7 @@
 #property copyright "83% Strategy on Base (v2.43) and Fib Base"
 #property version   "1.00"
 #property strict
-#property description "83% Strategy: buys the 83% retracement of a heavy LTF HL-to-HH leg (sells mirror it) when the market is Tradable and Optimal and the MTF's latest structure is a BOS."
+#property description "83% Strategy: buys the 83% retracement of a heavy LTF HL-to-HH leg (sells mirror it) when Market Tradability reads Tradable in that direction."
 #property description "Base's market structure and dashboard, Fib Base's Fibonacci levels; trades only in the Strategy Tester by default."
 
 #include <Trade\Trade.mqh>
@@ -21,12 +21,6 @@ enum S83_TRADE_MODE
    S83_TRADING_OFF=0,       // Off (analysis only)
    S83_TRADING_TESTER=1,    // Strategy Tester only
    S83_TRADING_LIVE=2       // Strategy Tester and live charts
-  };
-enum S83_SYMBOL_PROFILE
-  {
-   S83_PROFILE_AUTO=0,      // Auto (recognise Deriv synthetic indices)
-   S83_PROFILE_SYNTHETIC=1, // Deriv Synthetic Index
-   S83_PROFILE_OTHER=2      // Standard symbol
   };
 enum S83_FIB_LABEL
   {
@@ -119,18 +113,11 @@ input group "ATR Filter"
 input bool Use_ATR_Filter=true;
 input int ATR_Length=14;
 
-input group "Optimal Conditions"
-input bool Use_Timeframe_Correlation_For_Optimal=true;
-input bool Use_Healthy_Extension_For_Optimal=false;
-input bool Use_Market_Volume_For_Optimal=true;
-input bool Use_Price_Momentum_For_Optimal=false;
-
 input group "Alerts"
 input bool Enable_Popup_Alerts=false;
 input bool Enable_Push_Notifications=false;
 
 input group "83% Strategy - Symbol (Deriv Synthetic Indices)"
-input S83_SYMBOL_PROFILE Symbol_Profile=S83_PROFILE_AUTO;      // Symbol Profile
 input double Minimum_Lot_Max_Risk_Multiple=0.0;   // Trade The Minimum Lot If It Risks At Most N x The Planned Risk (0 = skip)
 
 input group "83% Strategy - Setup (LTF)"
@@ -139,12 +126,25 @@ input double Entry_Level=0.83;                    // Entry Fibonacci Level (0.83
 input int    Impulse_Candles=3;                   // Heavy Pressure: Candles After The HL/LH
 input double Impulse_Min_ATR=2.0;                 // Heavy Pressure: Minimum Move (LTF ATR)
 
-input group "83% Strategy - Entry Confirmation"
-input bool   Engulfing_Confirmation=false;        // Wait For An Engulfing After The 83% Touch
-input bool   Use_Lower_Engulfing=true;            // Engulfing On The Lower Timeframe (M15)
-input ENUM_TIMEFRAMES Engulfing_Lower_Timeframe=PERIOD_M15; // Lower Engulfing Timeframe
-input bool   Use_LTF_Engulfing=true;              // Engulfing On The LTF (M30)
-input int    Confirmation_Window_Candles=4;       // LTF Candles To Wait For The Engulfing (touch candle included)
+input group "83% Strategy - Market Tradability"
+input bool   HTF_Trend_Counts=true;               // HTF Market Trend Counts
+input bool   HTF_Trend_Accept_BOS=true;           // HTF Market Trend: Accept An Established Trend (Latest Break A BOS)
+input bool   HTF_Trend_Accept_Transition=true;    // HTF Market Trend: Accept A Transition (Latest Break A CHoCH)
+input bool   HTF_Internal_Counts=true;            // HTF Internal Structure Counts
+input bool   HTF_Internal_Accept_BOS=true;        // HTF Internal Structure: Accept A BOS
+input bool   HTF_Internal_Accept_CHoCH=true;      // HTF Internal Structure: Accept A CHoCH
+input bool   MTF_Trend_Counts=true;               // MTF Market Trend Counts
+input bool   MTF_Trend_Accept_BOS=true;           // MTF Market Trend: Accept An Established Trend (Latest Break A BOS)
+input bool   MTF_Trend_Accept_Transition=true;    // MTF Market Trend: Accept A Transition (Latest Break A CHoCH)
+input bool   MTF_Internal_Counts=true;            // MTF Internal Structure Counts
+input bool   MTF_Internal_Accept_BOS=true;        // MTF Internal Structure: Accept A BOS
+input bool   MTF_Internal_Accept_CHoCH=true;      // MTF Internal Structure: Accept A CHoCH
+input bool   LTF_Trend_Counts=true;               // LTF Market Trend Counts
+input bool   LTF_Trend_Accept_BOS=true;           // LTF Market Trend: Accept An Established Trend (Latest Break A BOS)
+input bool   LTF_Trend_Accept_Transition=true;    // LTF Market Trend: Accept A Transition (Latest Break A CHoCH)
+input bool   LTF_Internal_Counts=true;            // LTF Internal Structure Counts
+input bool   LTF_Internal_Accept_BOS=true;        // LTF Internal Structure: Accept A BOS
+input bool   LTF_Internal_Accept_CHoCH=true;      // LTF Internal Structure: Accept A CHoCH
 
 input group "83% Strategy - Risk Management"
 input S83_TRADE_MODE Trade_Mode=S83_TRADING_TESTER;
@@ -213,14 +213,6 @@ const BASE_ADX_SCOPE Apply_ADX_Filter_To=BASE_BOS_ONLY;
 const BASE_ATR_MODE ATR_Filter_Mode=BASE_ATR_MINIMUM;
 const double ATR_Minimum=1.0;
 const double ATR_Maximum=10.0;
-const bool Use_Optimal_Conditions_Meter=true;
-const double Maximum_Extension_ATR=10.0;   // MTF ATR beyond the latest MTF swing (see TrendExtension)
-const int Volume_Average_Length=20;
-const double Volume_Minimum_Ratio=0.50;
-const double Volume_Maximum_Ratio=2.00;
-const int Momentum_Average_Length=20;
-const double Momentum_Minimum_Ratio=0.50;
-const double Momentum_Maximum_Ratio=2.00;
 
 // Swing detection (Smart Money Engine): a swing high is a pivot of N candles
 // on each side (see PivotHigh), which is also how many candles it takes to
@@ -1482,22 +1474,55 @@ string JoinNames(const string &names[],const int count)
    return result;
   }
 
-// Market Tradability (83% Strategy): Tradable when the Market Trend and the
-// Internal Structure of every selected timeframe point the same way, bullish
-// or bearish.  A Transition counts as its direction, and it does not matter
-// whether the latest break was a BOS or a CHoCH.  Not Tradable otherwise;
-// there is no Tradable (Early).  The reason names the first timeframe that
-// does not agree.
-string TradableCheck(const string name,const BASE_STRUCTURE_STATE &state,
-                     const BASE_INTERNAL_STRUCTURE &internal,const int direction)
+// Market Tradability (83% Strategy): Tradable when every counted component
+// points the same way, bullish or bearish, with an accepted kind of break.
+// The components are each selected timeframe's Market Trend and Internal
+// Structure, set in the "83% Strategy - Market Tradability" inputs:
+//  * a Market Trend counts with HTF/MTF/LTF_Trend_Counts.  It is accepted
+//    when established (latest break a BOS) with ..._Trend_Accept_BOS, and
+//    when a Transition (latest break a CHoCH) with
+//    ..._Trend_Accept_Transition.  Consolidation / Undefined never agrees.
+//  * an Internal Structure counts with ..._Internal_Counts.  It is accepted
+//    when its latest break is a BOS with ..._Internal_Accept_BOS, and a
+//    CHoCH with ..._Internal_Accept_CHoCH.  An undefined one never agrees.
+// The direction is the first counted component's (HTF trend, HTF internal,
+// MTF trend, MTF internal, LTF trend, LTF internal).  Not Tradable
+// otherwise; there is no Tradable (Early).  The reason names the first
+// component that does not agree.
+int g_tradability_direction=0;
+
+string TrendCheck(const string name,const BASE_STRUCTURE_STATE &state,const int direction,
+                  const bool accept_bos,const bool accept_transition)
   {
    int trend=BiasDirection(state);
    if(trend==0) return NoTrendText(name,state);
    if(trend!=direction) return name+" is "+TrendWord(trend)+", not "+TrendWord(direction)+".";
-   if(internal.trend!=direction)
-      return "The "+name+" internal structure is "+(internal.trend==0?"undefined":TrendWord(internal.trend))+
-             ", not "+TrendWord(direction)+".";
+   bool established=DefiniteBias(state);
+   if(established && !accept_bos)
+      return name+" is an established "+TrendWord(trend)+" trend (latest break a BOS), but only Transitions are accepted.";
+   if(!established && !accept_transition)
+      return name+" is only a "+TrendWord(trend)+" Transition (a CHoCH not yet confirmed by a BOS), and Transitions are not accepted.";
    return "";
+  }
+
+string InternalCheck(const string name,const BASE_INTERNAL_STRUCTURE &internal,const int direction,
+                     const bool accept_bos,const bool accept_choch)
+  {
+   if(internal.trend==0) return "The "+name+" internal structure is undefined.";
+   if(internal.trend!=direction)
+      return "The "+name+" internal structure is "+TrendWord(internal.trend)+", not "+TrendWord(direction)+".";
+   if(internal.last_choch && !accept_choch)
+      return "The "+name+" internal structure is "+TrendWord(internal.trend)+" by a CHoCH, and internal CHoCHs are not accepted.";
+   if(!internal.last_choch && !accept_bos)
+      return "The "+name+" internal structure is "+TrendWord(internal.trend)+" by a BOS, and internal BOSs are not accepted.";
+   return "";
+  }
+
+// "H4 trend + internal": what counts on one timeframe, for the reason.
+string CountedPart(const string name,const bool trend,const bool internal)
+  {
+   if(!trend && !internal) return "";
+   return name+(trend && internal?" trend + internal":trend?" trend":" internal");
   }
 
 BASE_TRADABILITY EvaluateTradability(const BASE_STRUCTURE_STATE &htf,const BASE_STRUCTURE_STATE &mtf,
@@ -1506,92 +1531,39 @@ BASE_TRADABILITY EvaluateTradability(const BASE_STRUCTURE_STATE &htf,const BASE_
                                      const BASE_INTERNAL_STRUCTURE &mtf_internal,
                                      const BASE_INTERNAL_STRUCTURE &ltf_internal,string &reason)
   {
-   int direction=Use_HTF?BiasDirection(htf):(Use_MTF?BiasDirection(mtf):BiasDirection(ltf));
+   bool htf_trend=Use_HTF && HTF_Trend_Counts,htf_inner=Use_HTF && HTF_Internal_Counts;
+   bool mtf_trend=Use_MTF && MTF_Trend_Counts,mtf_inner=Use_MTF && MTF_Internal_Counts;
+   bool ltf_trend=Use_LTF && LTF_Trend_Counts,ltf_inner=Use_LTF && LTF_Internal_Counts;
+   int direction=htf_trend?BiasDirection(htf):htf_inner?htf_internal.trend:
+                 mtf_trend?BiasDirection(mtf):mtf_inner?mtf_internal.trend:
+                 ltf_trend?BiasDirection(ltf):ltf_inner?ltf_internal.trend:0;
+   g_tradability_direction=direction;
    reason="";
-   if(Use_HTF) reason=TradableCheck(HTFName(),htf,htf_internal,direction);
-   if(reason=="" && Use_MTF) reason=TradableCheck(MTFName(),mtf,mtf_internal,direction);
-   if(reason=="" && Use_LTF) reason=TradableCheck(LTFName(),ltf,ltf_internal,direction);
+   if(htf_trend)
+      reason=TrendCheck(HTFName(),htf,direction,HTF_Trend_Accept_BOS,HTF_Trend_Accept_Transition);
+   if(reason=="" && htf_inner)
+      reason=InternalCheck(HTFName(),htf_internal,direction,HTF_Internal_Accept_BOS,HTF_Internal_Accept_CHoCH);
+   if(reason=="" && mtf_trend)
+      reason=TrendCheck(MTFName(),mtf,direction,MTF_Trend_Accept_BOS,MTF_Trend_Accept_Transition);
+   if(reason=="" && mtf_inner)
+      reason=InternalCheck(MTFName(),mtf_internal,direction,MTF_Internal_Accept_BOS,MTF_Internal_Accept_CHoCH);
+   if(reason=="" && ltf_trend)
+      reason=TrendCheck(LTFName(),ltf,direction,LTF_Trend_Accept_BOS,LTF_Trend_Accept_Transition);
+   if(reason=="" && ltf_inner)
+      reason=InternalCheck(LTFName(),ltf_internal,direction,LTF_Internal_Accept_BOS,LTF_Internal_Accept_CHoCH);
+   if(!htf_trend && !htf_inner && !mtf_trend && !mtf_inner && !ltf_trend && !ltf_inner)
+      reason="No Market Tradability component is counted (see the Market Tradability inputs).";
    if(reason!="" || direction==0) return BASE_NOT_TRADABLE;
-   int selected=(Use_HTF?1:0)+(Use_MTF?1:0)+(Use_LTF?1:0);
-   reason=TrendTimeframesText()+(selected==1?" is ":selected==2?" are both ":" are all ")+TrendWord(direction)+
-          ", in their Market Trend and Internal Structure.";
+   string parts[3];
+   int count=0;
+   string part=CountedPart(HTFName(),htf_trend,htf_inner);
+   if(part!="") parts[count++]=part;
+   part=CountedPart(MTFName(),mtf_trend,mtf_inner);
+   if(part!="") parts[count++]=part;
+   part=CountedPart(LTFName(),ltf_trend,ltf_inner);
+   if(part!="") parts[count++]=part;
+   reason="Every counted component is "+TrendWord(direction)+": "+JoinNames(parts,count)+".";
    return BASE_TRADABLE;
-  }
-
-// Healthy Extension blocks only an overextended market.  In the HTF trend
-// direction, the extension is how far the latest LTF close is beyond the
-// latest MTF swing on the other side (the swing low in a bullish trend, the
-// swing high in a bearish one), in MTF ATR (14 candles); more than
-// Maximum_Extension_ATR (10) is overextended.  With no trend direction or no
-// MTF swing yet, or price back beyond that swing, the market is not
-// overextended.  On real data (an index H1/M15/M5, EURUSD D1/H4/H1, five
-// stocks MN/W1/D1) the 6% of Tradable candles beyond 10 MTF ATR were
-// followed by a pullback of 1 ATR before a 1 ATR move on 56% of the time
-// (48% for the rest), and price was 0.9 ATR lower after 50 candles.  The
-// v2.40 rule (0 to 3 LTF ATR from an LTF HL/LH) blocked 83% of Tradable
-// candles without those blocked doing any worse.
-// Returns EMPTY_VALUE when there is nothing to measure.
-double TrendExtension(const BASE_STRUCTURE_STATE &htf,const BASE_STRUCTURE_STATE &mtf,
-                      const double close,const double mtf_atr)
-  {
-   int direction=BiasDirection(htf);
-   if(direction==0 || mtf_atr<=0.0) return EMPTY_VALUE;
-   if(direction>0 && mtf.have_low) return (close-mtf.last_low)/mtf_atr;
-   if(direction<0 && mtf.have_high) return (mtf.last_high-close)/mtf_atr;
-   return EMPTY_VALUE;
-  }
-
-bool HealthyExtension(const double extension)
-  {
-   return extension==EMPTY_VALUE || extension<=Maximum_Extension_ATR;
-  }
-
-// "4.2 H1 ATR" for the dashboard; empty when nothing was measured.
-string ExtensionText(const double extension)
-  {
-   return extension==EMPTY_VALUE?"":DoubleToString(extension,1)+" "+MTFName()+" ATR";
-  }
-
-// Optimal Conditions: every enabled requirement must pass.  Returns the
-// result and the reason listing each failed requirement.
-bool EvaluateOptimal(const bool bias_ready,const bool healthy_extension,
-                     const bool good_volume,const double volume_ratio,
-                     const bool good_momentum,const double momentum_ratio,string &reason,
-                     const double extension=EMPTY_VALUE)
-  {
-   bool optimal=(!Use_Timeframe_Correlation_For_Optimal || bias_ready) &&
-                (!Use_Healthy_Extension_For_Optimal || healthy_extension) &&
-                (!Use_Market_Volume_For_Optimal || good_volume) &&
-                (!Use_Price_Momentum_For_Optimal || good_momentum);
-   if(optimal)
-     {
-      reason="All selected requirements are met";
-      return true;
-     }
-   reason="";
-   if(Use_Timeframe_Correlation_For_Optimal && !bias_ready)
-      reason="the selected timeframes do not correlate (see Tradability Reason)";
-   if(Use_Healthy_Extension_For_Optimal && !healthy_extension)
-      reason+=(reason==""?"":"; ")+"price is overextended"+
-              (extension==EMPTY_VALUE?"":" ("+ExtensionText(extension)+" beyond the latest "+MTFName()+" swing)");
-   if(Use_Market_Volume_For_Optimal && !good_volume)
-      reason+=(reason==""?"":"; ")+(volume_ratio<Volume_Minimum_Ratio?"volume is too low":"volume is too high");
-   if(Use_Price_Momentum_For_Optimal && !good_momentum)
-      reason+=(reason==""?"":"; ")+(momentum_ratio<Momentum_Minimum_Ratio?
-                                    "momentum is too low (price is sluggish)":
-                                    "momentum is too high (price would need to be chased)");
-   return false;
-  }
-
-// True range captures both the candle's travel and any gap from the preceding
-// close.  Relative true range is used as a direction-neutral momentum measure:
-// quiet/sluggish bars and unusually fast chase bars are both undesirable.
-double BarTrueRange(const MqlRates &rates[],const int index)
-  {
-   double range=rates[index].high-rates[index].low;
-   if(index<=0) return range;
-   return MathMax(range,MathMax(MathAbs(rates[index].high-rates[index-1].close),
-                                MathAbs(rates[index].low-rates[index-1].close)));
   }
 
 bool ParseSession(const string source,int &start_minutes,int &end_minutes)
@@ -2081,19 +2053,15 @@ void AddInternalStructureRow(BASE_DASHBOARD_ROW &rows[],const BASE_INTERNAL_STRU
   }
 
 // Each selected timeframe's Market Trend (its breakdown is the tooltip),
-// Market Tradability (the entry filters are its tooltip), the reason, the
-// HTF trade recommendation, and Optimal Conditions with each selected
-// condition (the reason is the tooltip).
+// Market Tradability (the entry filters are its tooltip), the reason and the
+// HTF trade recommendation, then the 83% Strategy rows.
 void DrawDashboard(const BASE_STRUCTURE_STATE &htf,const string htf_breakdown,
                    const string recommendation,const BASE_STRUCTURE_STATE &mtf,
                    const string mtf_breakdown,const BASE_STRUCTURE_STATE &ltf,
                    const string ltf_breakdown,const BASE_INTERNAL_STRUCTURE &htf_internal,
                    const BASE_INTERNAL_STRUCTURE &mtf_internal,const BASE_INTERNAL_STRUCTURE &ltf_internal,
                    const BASE_TRADABILITY tradability,
-                   const string tradability_reason,const string filter_tooltip,
-                   const bool optimal,const string optimal_reason,const bool correlated,
-                   const bool healthy_extension,const double extension,const bool good_volume,const double volume_ratio,
-                   const bool good_momentum,const double momentum_ratio)
+                   const string tradability_reason,const string filter_tooltip)
   {
    Comment("");
    BASE_DASHBOARD_ROW rows[];
@@ -2121,23 +2089,6 @@ void DrawDashboard(const BASE_STRUCTURE_STATE &htf,const string htf_breakdown,
                    PassColor(tradability==BASE_TRADABLE),filter_tooltip);
    AddWrappedDashboardRow(rows,"Tradability Reason:",tradability_reason,DASHBOARD_TEXT_COLOR);
    AddWrappedDashboardRow(rows,"Trade Recommendations:",recommendation,DASHBOARD_TEXT_COLOR);
-   AddDashboardRow(rows,"","",DASHBOARD_TEXT_COLOR);
-   AddDashboardRow(rows,"Optimal Conditions:",optimal?"OPTIMAL":"NOT OPTIMAL",PassColor(optimal),
-                   optimal_reason);
-   if(Use_Timeframe_Correlation_For_Optimal)
-      AddDashboardRow(rows,"Timeframe Correlation:",PassText(correlated),PassColor(correlated),
-                      optimal_reason,true,DASHBOARD_INDENT);
-   if(Use_Healthy_Extension_For_Optimal)
-      AddDashboardRow(rows,"Healthy Extension:",PassText(healthy_extension)+
-                      (extension==EMPTY_VALUE?"":" ("+ExtensionText(extension)+")"),
-                      PassColor(healthy_extension),optimal_reason,true,DASHBOARD_INDENT);
-   if(Use_Market_Volume_For_Optimal)
-      AddDashboardRow(rows,"Market Volume:",S83VolumeText(good_volume,volume_ratio),
-                      PassColor(good_volume),optimal_reason,true,DASHBOARD_INDENT);
-   if(Use_Price_Momentum_For_Optimal)
-      AddDashboardRow(rows,"Price Momentum:",PassText(good_momentum)+" ("+
-                      DoubleToString(momentum_ratio,2)+"x average range)",PassColor(good_momentum),
-                      optimal_reason,true,DASHBOARD_INDENT);
    S83DashboardRows(rows);
    DrawDashboardRows(rows);
   }
@@ -2150,10 +2101,10 @@ void DrawDashboard(const BASE_STRUCTURE_STATE &htf,const string htf_breakdown,
 // the market filters, and Fib Base's Fibonacci engine for the levels.
 //
 // Bullish (buys only):
-//  * Market Tradability reads Tradable (bullish): the Market Trend and the
-//    Internal Structure of every selected timeframe are bullish (a Transition
-//    counts, and the latest break may be a BOS or a CHoCH).  There is no
-//    Tradable (Early).  The Optimal Conditions read OPTIMAL.
+//  * Market Tradability reads Tradable (bullish): every counted Market Trend
+//    and Internal Structure is bullish with an accepted kind of break (see
+//    EvaluateTradability and the Market Tradability inputs; by default all
+//    six count, a Transition counts, and a BOS or a CHoCH alike).
 //  * LTF setup (M30, Swing Detection level 3 by default), searched in the last
 //    LTF_Bars_To_Process (40) closed LTF candles:
 //      A: the most recent HL from which there was heavy buying pressure;
@@ -2200,20 +2151,6 @@ void DrawDashboard(const BASE_STRUCTURE_STATE &htf,const string htf_breakdown,
 
 int LTFBarsToProcess() { return MathMax(5,MathMin(LTF_Bars_To_Process,400)); }
 
-// The lower timeframe of the engulfing confirmation (M15 by default).
-ENUM_TIMEFRAMES S83LowerTimeframe()
-  {
-   return Engulfing_Lower_Timeframe==PERIOD_CURRENT?LTFTimeframe():Engulfing_Lower_Timeframe;
-  }
-
-// Lower-timeframe candles the scan needs: three processed windows, plus the
-// forming LTF candle.
-int S83LowerBars()
-  {
-   int per=MathMax(1,PeriodSeconds(LTFTimeframe())/MathMax(1,PeriodSeconds(S83LowerTimeframe())));
-   return (3*LTFBarsToProcess()+3)*per+2;
-  }
-
 // The drawn history of a chart period: LTF_Bars_To_Process candles on the
 // LTF, as for Base elsewhere.
 int ChartDisplayBars(const ENUM_TIMEFRAMES timeframe)
@@ -2228,44 +2165,8 @@ bool DrawingEnabled()
    return MQLInfoInteger(MQL_TESTER)==0 || MQLInfoInteger(MQL_VISUAL_MODE)!=0;
   }
 
-// --------------------------------------------- Deriv synthetic indices
-// Deriv's synthetic indices (Volatility, Crash / Boom, Jump, Step, Range
-// Break, DEX, Drift Switch, Hybrid ...) are generated prices that tick at a
-// fixed rate around the clock.  Their tick volume is that rate, so Base's
-// Market Volume requirement measures nothing on them and is not applied; it
-// is also not applied on any symbol without tick volume.  Auto recognises
-// them by name, description or symbol path (or Deriv's R_ / 1HZ codes).
-bool g_s83_synthetic=false;
-string g_s83_volume_note="";
+// A build waiting for data says why in the Journal, once per reason.
 string g_s83_waiting="";
-
-bool S83DetectSynthetic()
-  {
-   if(Symbol_Profile==S83_PROFILE_SYNTHETIC) return true;
-   if(Symbol_Profile==S83_PROFILE_OTHER) return false;
-   string text=_Symbol+" | "+SymbolInfoString(_Symbol,SYMBOL_DESCRIPTION)+" | "+
-               SymbolInfoString(_Symbol,SYMBOL_PATH);
-   StringToUpper(text);
-   return StringFind(text,"VOLATILITY")>=0 || StringFind(text,"CRASH")>=0 || StringFind(text,"BOOM")>=0 ||
-          StringFind(text,"JUMP")>=0 || StringFind(text,"STEP")>=0 || StringFind(text,"RANGE BREAK")>=0 ||
-          StringFind(text,"DEX ")>=0 || StringFind(text,"DRIFT SWITCH")>=0 || StringFind(text,"HYBRID")>=0 ||
-          StringFind(text,"SYNTHETIC")>=0 || StringFind(text,"DERIVED")>=0 ||
-          StringFind(text,"R_")==0 || StringFind(text,"1HZ")==0;
-  }
-
-// Whether Market Volume is left out of the Optimal Conditions (and why).
-bool S83VolumeNotApplied(const double average_volume)
-  {
-   g_s83_volume_note=g_s83_synthetic?"synthetic index":(average_volume<=0.0?"no tick volume":"");
-   return g_s83_volume_note!="";
-  }
-
-// The dashboard's Market Volume output.
-string S83VolumeText(const bool good_volume,const double volume_ratio)
-  {
-   if(g_s83_volume_note!="") return "PASS (not applied: "+g_s83_volume_note+")";
-   return PassText(good_volume)+" ("+DoubleToString(volume_ratio,2)+"x average)";
-  }
 
 // A build waiting for data says why in the Journal, once per reason (a
 // symbol with too little history otherwise just never trades).
@@ -2311,10 +2212,7 @@ enum S83_STATE
    S83_INVALID=2,     // a new HH (LL) came first
    S83_EXPIRED=3,     // A left the LTF processed bars
    S83_MISSED=4,      // the entry level was reached before the setup was known
-   S83_REPLACED=5,    // a newer setup in the same direction took over
-   S83_WAITING=6,     // touched; waiting for an engulfing (confirmation on)
-   S83_CONFIRMED=7,   // an engulfing confirmed it: the entry
-   S83_FAILED=8       // no engulfing in time, or the leg broke first
+   S83_REPLACED=5     // a newer setup in the same direction took over
   };
 
 // One setup: A (the HL/LH the heavy move started from), B (the extreme
@@ -2339,12 +2237,6 @@ struct S83_SETUP
    datetime created_time;   // the candle on whose close the setup became known
    int state;               // S83_STATE
    datetime end_time;       // the candle of the touch, invalidation, expiry or miss
-   // Engulfing confirmation (see S83ScanSetups).
-   datetime touch_time;     // the candle that touched the entry level
-   int touch_bar;           // its LTF candle
-   datetime confirm_time;   // the close of the engulfing candle (the entry time)
-   int confirm_seconds;     // the engulfing's timeframe
-   double confirm_price;    // the engulfing candle's close
    int why;                 // why it ended (S83_WHY)
   };
 
@@ -2352,12 +2244,9 @@ enum S83_WHY
   {
    S83_WHY_NONE=0,
    S83_WHY_NEW_B=1,         // a new HH (LL) before the touch
-   S83_WHY_THROUGH_A=2,     // a close through A before an engulfing
-   S83_WHY_NEW_B_WAITING=3, // a new HH (LL) before an engulfing
-   S83_WHY_WINDOW=4,        // no engulfing within the window
-   S83_WHY_EXPIRED=5,       // A left the processed candles
-   S83_WHY_MISSED=6,        // the level was reached before the setup was known
-   S83_WHY_REPLACED=7       // a newer setup in the same direction
+   S83_WHY_EXPIRED=2,       // A left the processed candles
+   S83_WHY_MISSED=3,        // the level was reached before the setup was known
+   S83_WHY_REPLACED=4       // a newer setup in the same direction
   };
 
 string S83WhyText(const S83_SETUP &setup)
@@ -2366,9 +2255,6 @@ string S83WhyText(const S83_SETUP &setup)
    switch(setup.why)
      {
       case S83_WHY_NEW_B: return "invalidated: a new "+b+" first";
-      case S83_WHY_THROUGH_A: return "failed: a close through A before an engulfing";
-      case S83_WHY_NEW_B_WAITING: return "failed: a new "+b+" before an engulfing";
-      case S83_WHY_WINDOW: return "failed: no engulfing within "+(string)Confirmation_Window_Candles+" "+LTFName()+" candles";
       case S83_WHY_EXPIRED: return "expired: A left the "+(string)LTFBarsToProcess()+" processed candles";
       case S83_WHY_MISSED: return "missed: "+S83LevelText()+" reached before the setup was known";
       case S83_WHY_REPLACED: return "replaced by a newer setup";
@@ -2405,18 +2291,12 @@ bool g_s83_ready=false;
 // Published by Rebuild for the tick handler and the dashboard.
 BASE_TRADABILITY g_s83_tradability=BASE_NOT_TRADABLE;
 int g_s83_market_direction=0;      // the direction Market Tradability refers to
-bool g_s83_optimal=false;
-string g_s83_optimal_reason="";
 int g_s83_mtf_direction=0;
 string g_s83_tradability_reason="";
 double g_s83_atr=0.0;              // LTF ATR of the latest closed LTF candle
 datetime g_s83_last_time=0;        // the latest closed LTF candle
 S83_SETUP g_s83_setups[];          // every setup found in the processed bars
-S83_SETUP g_s83_armed[2];          // [0] buy, [1] sell: the live (armed or waiting) setups
-// Setups confirmed by an engulfing on the latest closed candle: entered now.
-S83_SETUP g_s83_fresh[2];
-int g_s83_fresh_valid[2];
-datetime g_s83_last_lower_bar=0;
+S83_SETUP g_s83_armed[2];          // [0] buy, [1] sell: the armed setups
 int g_s83_armed_valid[2];          // 1 when that slot holds an armed setup
 S83_OUTCOME g_s83_outcomes[];
 S83_DAY g_s83_day;
@@ -2452,21 +2332,9 @@ bool S83Beyond(const S83_SETUP &setup,const MqlRates &bar)
    return setup.direction>0?bar.high>setup.b_price:bar.low<setup.b_price;
   }
 
-// Engulfing (body): the previous candle closed against the setup's
-// direction, this one with it, closing beyond the previous open from an open
-// at or beyond the previous close.
-bool S83Engulfing(const int direction,const MqlRates &previous,const MqlRates &candle)
-  {
-   if(direction>0)
-      return previous.close<previous.open && candle.close>candle.open &&
-             candle.close>previous.open && candle.open<=previous.close;
-   return previous.close>previous.open && candle.close<candle.open &&
-          candle.close<previous.open && candle.open>=previous.close;
-  }
-
 bool S83Live(const S83_SETUP &setup)
   {
-   return setup.state==S83_ARMED || setup.state==S83_WAITING;
+   return setup.state==S83_ARMED;
   }
 
 void S83End(S83_SETUP &setup,const int state,const datetime time,const int why)
@@ -2476,59 +2344,14 @@ void S83End(S83_SETUP &setup,const int state,const datetime time,const int why)
    setup.why=why;
   }
 
-string S83TfName(const int seconds)
+// One closed LTF candle of an armed setup: a touch of the entry level makes
+// it touched (the entry); otherwise going beyond a confirmed B invalidates
+// it (beyond a forming B, B follows at the close: S83FollowB).
+void S83Step(S83_SETUP &setup,const MqlRates &candle)
   {
-   return seconds%3600==0?"H"+(string)(seconds/3600):"M"+(string)(seconds/60);
-  }
-
-// "M15 or M30": the engulfing timeframes in use.
-string S83ConfirmText()
-  {
-   string lower=TimeframeName(S83LowerTimeframe()),ltf=LTFName();
-   if(Use_Lower_Engulfing && Use_LTF_Engulfing && lower!=ltf) return lower+" or "+ltf;
-   return Use_Lower_Engulfing?lower:ltf;
-  }
-
-// One candle of a live setup: the LTF candle itself, or with Engulfing
-// Confirmation each lower-timeframe candle in turn.
-//  * Armed: a touch of the entry level makes it touched (waiting for an
-//    engulfing with confirmation); otherwise going beyond a confirmed B
-//    invalidates it (beyond a forming B, B follows at the close: S83FollowB).
-//  * Waiting: a close beyond A (the HL/LH broke) or a high beyond B (a new
-//    HH, a low beyond B for a sell) fails it; otherwise a lower-timeframe
-//    engulfing in its direction, on the touching candle or later, confirms
-//    it at that candle's close.
-void S83Step(S83_SETUP &setup,const MqlRates &candle,const MqlRates &previous,const bool have_previous,
-             const int bar,const datetime bar_time,const bool lower,const int lower_seconds)
-  {
-   int d=setup.direction;
-   if(setup.state==S83_ARMED)
-     {
-      if(S83Touched(setup,candle))
-        {
-         if(Engulfing_Confirmation)
-           {
-            setup.state=S83_WAITING;
-            setup.touch_bar=bar;
-            setup.touch_time=candle.time;
-           }
-         else S83End(setup,S83_TOUCHED,bar_time,S83_WHY_NONE);
-        }
-      else if(setup.b_fixed!=0 && S83Beyond(setup,candle))
-         S83End(setup,S83_INVALID,lower?candle.time:bar_time,S83_WHY_NEW_B);
-     }
-   if(setup.state!=S83_WAITING) return;
-   if(d>0?candle.close<setup.a_price:candle.close>setup.a_price)
-      S83End(setup,S83_FAILED,candle.time,S83_WHY_THROUGH_A);
-   else if(S83Beyond(setup,candle))
-      S83End(setup,S83_FAILED,candle.time,S83_WHY_NEW_B_WAITING);
-   else if(lower && Use_Lower_Engulfing && have_previous && S83Engulfing(d,previous,candle))
-     {
-      S83End(setup,S83_CONFIRMED,candle.time,S83_WHY_NONE);
-      setup.confirm_time=candle.time+lower_seconds;
-      setup.confirm_seconds=lower_seconds;
-      setup.confirm_price=candle.close;
-     }
+   if(setup.state!=S83_ARMED) return;
+   if(S83Touched(setup,candle)) S83End(setup,S83_TOUCHED,candle.time,S83_WHY_NONE);
+   else if(setup.b_fixed!=0 && S83Beyond(setup,candle)) S83End(setup,S83_INVALID,candle.time,S83_WHY_NEW_B);
   }
 
 // The entry level of a setup's leg (Fib Base: 0% at B, 100% at A).
@@ -2559,14 +2382,9 @@ void S83FollowB(S83_SETUP &setup,const MqlRates &rates[],const int i)
 
 // The setups of one LTF replay, candle by candle over its last
 // LTF_Bars_To_Process closed candles.  On each candle:
-//  1. each live setup steps through the candle (see S83Step): the LTF candle
-//     itself, or with Engulfing_Confirmation each of its lower-timeframe
-//     candles in turn.  Then, at the LTF close, a waiting setup is confirmed
-//     by an LTF engulfing in its direction (on the touching candle or
-//     later), or fails when Confirmation_Window_Candles LTF candles have
-//     closed since the touch without one; an armed or waiting setup whose A
-//     is no longer within the processed candles expires.
-//     An armed setup's B follows price (S83FollowB) before these checks.
+//  1. each armed setup steps through the candle (see S83Step): touched or
+//     invalidated.  If still armed, its B follows price (S83FollowB), and it
+//     expires once its A is no longer within the processed candles.
 //  2. for buys, then sells: the latest swing low (high) confirmed so far, A,
 //     starts a setup when it is an HL (LH), has not been used, lies within
 //     the processed candles, a candle from A on has closed beyond the swing
@@ -2574,17 +2392,14 @@ void S83FollowB(S83_SETUP &setup,const MqlRates &rates[],const int i)
 //     the extreme since A.  If the entry level was reached after B (and
 //     after the break) before the setup was known, it is missed; otherwise
 //     it is armed and replaces any live setup in its direction.
-// With confirmation, the lower-timeframe candles already closed in the
-// forming LTF candle are stepped through too, so a setup can be confirmed
-// mid-candle.  A starting a setup is used up.
+// A starting a setup is used up.
 // Only the setups live now or ended within the processed candles are kept.
 // They were all created at most two windows back, and whether their A was
 // used up depends only on that A's earlier setups, all created after A within
 // one more window; so scanning from three windows back gives the same result
 // as scanning all of history.
 void S83ScanSetups(const MqlRates &rates[],const int total,const BASE_STRUCTURE_POINT &points[],
-                   const double &atr[],const MqlRates &lower[],const int lower_total,
-                   S83_SETUP &setups[],int &live_buy,int &live_sell)
+                   const double &atr[],S83_SETUP &setups[],int &live_buy,int &live_sell)
   {
    ArrayResize(setups,0);
    live_buy=-1;
@@ -2592,66 +2407,20 @@ void S83ScanSetups(const MqlRates &rates[],const int total,const BASE_STRUCTURE_
    int window=LTFBarsToProcess();
    int first=MathMax(0,total-window);
    int start=MathMax(0,total-3*window);
-   int period=PeriodSeconds(LTFTimeframe());
-   int lower_seconds=PeriodSeconds(S83LowerTimeframe());
    int count=ArraySize(points);
    int next=0;
    while(next<count && points[next].confirmed<start) next++;
-   int li=0;
-   while(li<lower_total && lower[li].time<rates[start].time) li++;
-   MqlRates previous;
-   ZeroMemory(previous);
-   bool have_previous=li>0;
-   if(have_previous) previous=lower[li-1];
    datetime used_buy[],used_sell[];
-   for(int i=start;i<=total;i++)
+   for(int i=start;i<total;i++)
      {
-      // i==total: the closed lower candles of the forming LTF candle.
-      if(i==total && !Engulfing_Confirmation) break;
-      datetime bar_time=i<total?rates[i].time:rates[total-1].time+period;
-      if(Engulfing_Confirmation)
-        {
-         for(;li<lower_total && (i==total || lower[li].time<bar_time+period);li++)
-           {
-            if(lower[li].time>=bar_time)
-               for(int slot=0;slot<2;slot++)
-                 {
-                  int index=slot==0?live_buy:live_sell;
-                  if(index<0) continue;
-                  S83Step(setups[index],lower[li],previous,have_previous,i,bar_time,true,lower_seconds);
-                 }
-            previous=lower[li];
-            have_previous=true;
-           }
-        }
-      else
-         for(int slot=0;slot<2;slot++)
-           {
-            int index=slot==0?live_buy:live_sell;
-            if(index>=0) S83Step(setups[index],rates[i],rates[i],false,i,bar_time,false,lower_seconds);
-           }
-      if(i==total) break;
       for(int slot=0;slot<2;slot++)
         {
          int index=slot==0?live_buy:live_sell;
          if(index<0) continue;
+         S83Step(setups[index],rates[i]);
          S83FollowB(setups[index],rates,i);
-         if(setups[index].state==S83_WAITING)
-           {
-            if(Use_LTF_Engulfing && i>0 && i>=setups[index].touch_bar &&
-               S83Engulfing(setups[index].direction,rates[i-1],rates[i]))
-              {
-               S83End(setups[index],S83_CONFIRMED,rates[i].time,S83_WHY_NONE);
-               setups[index].confirm_time=rates[i].time+period;
-               setups[index].confirm_seconds=period;
-               setups[index].confirm_price=rates[i].close;
-              }
-            else if(i-setups[index].touch_bar+1>=Confirmation_Window_Candles)
-               S83End(setups[index],S83_FAILED,rates[i].time,S83_WHY_WINDOW);
-           }
          if(S83Live(setups[index]) && setups[index].a_bar<i-window+1)
-            S83End(setups[index],setups[index].state==S83_ARMED?S83_EXPIRED:S83_FAILED,rates[i].time,
-                   S83_WHY_EXPIRED);
+            S83End(setups[index],S83_EXPIRED,rates[i].time,S83_WHY_EXPIRED);
          if(S83Live(setups[index])) continue;
          if(slot==0) live_buy=-1;
          else live_sell=-1;
@@ -2697,11 +2466,6 @@ void S83ScanSetups(const MqlRates &rates[],const int total,const BASE_STRUCTURE_
          setups[index].created_time=rates[i].time;
          setups[index].state=S83_ARMED;
          setups[index].end_time=0;
-         setups[index].touch_time=0;
-         setups[index].touch_bar=-1;
-         setups[index].confirm_time=0;
-         setups[index].confirm_seconds=0;
-         setups[index].confirm_price=0.0;
          setups[index].why=S83_WHY_NONE;
          if(direction>0) S83Use(used_buy,points[a].time);
          else S83Use(used_sell,points[a].time);
@@ -2718,8 +2482,7 @@ void S83ScanSetups(const MqlRates &rates[],const int total,const BASE_STRUCTURE_
          if(direction>0) live_buy=index; else live_sell=index;
         }
      }
-   // Keep the setups live now or ended within the processed candles (a
-   // setup can also end on a lower candle of the forming LTF candle).
+   // Keep the setups live now or ended within the processed candles.
    live_buy=-1;
    live_sell=-1;
    int kept=0;
@@ -3039,8 +2802,8 @@ string S83Plan(const S83_SETUP &setup,const double entry,const double spread,con
    sl=d>0?AlignPrice(entry-risk,-1):AlignPrice(entry+risk,1);
    double minimum=MinimumStopDistance();
    if((d>0?entry-sl:sl-entry)<minimum || reward<minimum) return "the stop or target is too close to the price";
-   // An entry well past the entry level (after a strong engulfing) leaves a
-   // 1:2 / 1:3 stop in front of A; the stop must stay behind the HL (LH).
+   // An entry well past the entry level (a gap through it) can leave a 1:2 /
+   // 1:3 stop in front of A; the stop must stay behind the HL (LH).
    if(d>0?sl>=setup.a_price:sl<=setup.a_price)
       return "the price is too far from the "+S83LevelText()+" level: a 1:"+DoubleToString(rr,0)+
              " stop would not be behind the "+S83ALabel(d);
@@ -3056,20 +2819,11 @@ string S83Plan(const S83_SETUP &setup,const double entry,const double spread,con
    return "";
   }
 
-// "83% touched" or "M15 engulfing after the 83% touch".
-string S83EventText(const S83_SETUP &setup)
-  {
-   if(setup.state==S83_CONFIRMED)
-      return S83TfName(setup.confirm_seconds)+" engulfing after the "+S83LevelText()+" touch";
-   return S83LevelText()+" touched";
-  }
-
-// The entry moment of a setup: price touched the entry level, or with
-// Engulfing_Confirmation an engulfing confirmed it.
+// The entry moment of a setup: price touched the entry level.
 void S83Enter(const S83_SETUP &setup,const MqlTick &tick)
   {
    string what=S83Side(setup.direction)+" setup ("+S83SetupText(setup)+")";
-   string event=S83EventText(setup);
+   string event=S83LevelText()+" touched";
    if(!TradingActive())
      {
       S83Record(setup,false,event+"; not traded (Trade Mode)",0.0,0.0,0.0,0.0,0.0);
@@ -3128,21 +2882,6 @@ void S83CheckEntry()
    MqlTick tick;
    if(!SymbolInfoTick(_Symbol,tick) || tick.bid<=0.0 || tick.ask<=0.0) return;
    bool changed=false;
-   // With Engulfing_Confirmation, a setup is entered on the first tick after
-   // its engulfing candle closed (found by the scan at that candle's close).
-   if(Engulfing_Confirmation)
-     {
-      for(int slot=0;slot<2;slot++)
-        {
-         if(g_s83_fresh_valid[slot]==0) continue;
-         S83_SETUP fresh=g_s83_fresh[slot];
-         if(S83OutcomeIndex(fresh.direction,fresh.a_time)>=0) continue;
-         S83Enter(fresh,tick);
-         changed=true;
-        }
-      if(changed && DrawingEnabled()) S83Redraw();
-      return;
-     }
    for(int slot=0;slot<2;slot++)
      {
       if(g_s83_armed_valid[slot]==0) continue;
@@ -3205,15 +2944,12 @@ void S83OnTick()
 // timeframes: publishes the market filters and finds the LTF setups.
 void S83Update(const BASE_STRUCTURE_STATE &htf,const BASE_STRUCTURE_STATE &mtf,
                const BASE_STRUCTURE_STATE &ltf,const MqlRates &ltf_rates[],const int ltf_total,
-               const BASE_STRUCTURE_POINT &ltf_points[],const MqlRates &lower_rates[],const int lower_total,
-               const BASE_TRADABILITY tradability,const string tradability_reason,const bool optimal,
-               const string optimal_reason)
+               const BASE_STRUCTURE_POINT &ltf_points[],
+               const BASE_TRADABILITY tradability,const string tradability_reason)
   {
    g_s83_tradability=tradability;
    g_s83_tradability_reason=tradability_reason;
-   g_s83_market_direction=Use_HTF?BiasDirection(htf):(Use_MTF?BiasDirection(mtf):BiasDirection(ltf));
-   g_s83_optimal=optimal;
-   g_s83_optimal_reason=optimal_reason;
+   g_s83_market_direction=g_tradability_direction;
    g_s83_mtf_direction=BiasDirection(mtf);
    double atr[];
    SwingATR(ltf_rates,ltf_total,atr);
@@ -3227,24 +2963,11 @@ void S83Update(const BASE_STRUCTURE_STATE &htf,const BASE_STRUCTURE_STATE &mtf,
       was_armed[slot]=g_s83_ready && g_s83_armed_valid[slot]!=0?1:0;
       was_time[slot]=g_s83_armed[slot].a_time;
      }
-   S83ScanSetups(ltf_rates,ltf_total,ltf_points,atr,lower_rates,lower_total,g_s83_setups,armed_buy,armed_sell);
+   S83ScanSetups(ltf_rates,ltf_total,ltf_points,atr,g_s83_setups,armed_buy,armed_sell);
    g_s83_armed_valid[0]=armed_buy>=0?1:0;
    g_s83_armed_valid[1]=armed_sell>=0?1:0;
    if(armed_buy>=0) g_s83_armed[0]=g_s83_setups[armed_buy];
    if(armed_sell>=0) g_s83_armed[1]=g_s83_setups[armed_sell];
-   // Confirmed on the latest closed candle (lower timeframe or LTF): fresh.
-   datetime latest=ltf_rates[ltf_total-1].time+PeriodSeconds(LTFTimeframe());
-   if(lower_total>0 && lower_rates[lower_total-1].time+PeriodSeconds(S83LowerTimeframe())>latest)
-      latest=lower_rates[lower_total-1].time+PeriodSeconds(S83LowerTimeframe());
-   g_s83_fresh_valid[0]=0;
-   g_s83_fresh_valid[1]=0;
-   for(int k=0;k<ArraySize(g_s83_setups);k++)
-      if(g_s83_setups[k].state==S83_CONFIRMED && g_s83_setups[k].confirm_time==latest)
-        {
-         int slot=S83Slot(g_s83_setups[k].direction);
-         g_s83_fresh[slot]=g_s83_setups[k];
-         g_s83_fresh_valid[slot]=1;
-        }
    S83LoadDay(g_s83_day);
    // A newly armed setup is announced once.
    for(int slot=0;slot<2;slot++)
@@ -3274,24 +2997,18 @@ void S83DashboardRows(BASE_DASHBOARD_ROW &rows[])
    else if(g_s83_armed_valid[0]!=0 && g_s83_armed_valid[1]!=0) state="Buy and sell setups live";
    else if(g_s83_armed_valid[0]!=0)
      {
-      state=g_s83_armed[0].state==S83_WAITING?"Buy setup touched: waiting for a "+S83ConfirmText()+" engulfing":
-            "Buy setup armed";
+      state="Buy setup armed";
       state_color=DASHBOARD_POSITIVE_COLOR;
      }
    else if(g_s83_armed_valid[1]!=0)
      {
-      state=g_s83_armed[1].state==S83_WAITING?"Sell setup touched: waiting for a "+S83ConfirmText()+" engulfing":
-            "Sell setup armed";
+      state="Sell setup armed";
       state_color=DASHBOARD_NEGATIVE_COLOR;
      }
-   AddDashboardRow(rows,"Symbol:",g_s83_synthetic?"Deriv synthetic index":"Standard symbol",DASHBOARD_TEXT_COLOR,
-                   g_s83_synthetic?"Generated prices with a fixed tick rate: Market Volume is not applied.":
-                   "Set Symbol_Profile to Deriv Synthetic Index if this is one.");
    AddDashboardRow(rows,"83% Strategy ("+LTFName()+"):",state,state_color,
                    "Buys (sells) at the "+S83LevelText()+" retracement of the latest "+LTFName()+
                    " HL-to-HH (LH-to-LL) leg with heavy pressure, within the last "+(string)LTFBarsToProcess()+
-                   " "+LTFName()+" candles"+(Engulfing_Confirmation?", once a "+S83ConfirmText()+
-                   " engulfing in the trade direction follows the touch.":"."));
+                   " "+LTFName()+" candles.");
    for(int slot=0;slot<2;slot++)
       if(g_s83_armed_valid[slot]!=0)
          AddWrappedDashboardRow(rows,"Setup:",S83SetupText(g_s83_armed[slot]),DASHBOARD_TEXT_COLOR,
@@ -3319,15 +3036,14 @@ void S83DashboardRows(BASE_DASHBOARD_ROW &rows[])
 
 // The market filters alone (no position, day or trade-count checks), for the
 // dashboard.
-// The market filters of an entry: Tradable in its direction (every selected
-// timeframe's Market Trend and Internal Structure agree), then Optimal.
+// The market filter of an entry: Market Tradability reads Tradable in its
+// direction (see EvaluateTradability and the Market Tradability inputs).
 string S83FilterText(const int direction)
   {
    if(g_s83_tradability!=BASE_TRADABLE)
       return "Market Tradability is not Tradable ("+g_s83_tradability_reason+")";
    if(g_s83_market_direction!=direction)
       return "Market Tradability is "+TrendWord(g_s83_market_direction)+", not "+TrendWord(direction);
-   if(!g_s83_optimal) return "not Optimal ("+g_s83_optimal_reason+")";
    return "";
   }
 
@@ -3377,7 +3093,7 @@ void S83DrawSetup(const S83_SETUP &setup,const int index,const datetime right)
    string key=(setup.direction>0?"BUY_":"SELL_")+(string)setup.a_time;
    bool armed=S83Live(setup);
    int outcome=S83OutcomeIndex(setup.direction,setup.a_time);
-   bool touched=setup.state==S83_TOUCHED || setup.state==S83_CONFIRMED ||
+   bool touched=setup.state==S83_TOUCHED ||
                 (outcome>=0 && StringFind(g_s83_outcomes[outcome].text,"invalidated")<0);
    bool failed=!armed && !touched;
    int period=PeriodSeconds(LTFTimeframe());
@@ -3404,24 +3120,10 @@ void S83DrawSetup(const S83_SETUP &setup,const int index,const datetime right)
      }
    string why=S83WhyText(setup);
    if(outcome>=0 && !g_s83_outcomes[outcome].traded) why=g_s83_outcomes[outcome].text;
-   // With confirmation: the touch, then C at the engulfing candle's close.
-   if(setup.touch_time>0 && Show_Setup_Points)
-      S83Text(key+"_TOUCH",setup.touch_time,setup.level,"touch",point_color,
-              setup.direction>0?ANCHOR_UPPER:ANCHOR_LOWER,(int)Label_Size);
-   if(setup.state==S83_WAITING && why=="")
-      why="waiting for a "+S83ConfirmText()+" engulfing";
    if(touched && Show_Setup_Points)
      {
-      datetime c_time=setup.end_time;
-      double c_price=setup.level;
-      if(setup.state==S83_CONFIRMED)
-        {
-         c_price=setup.confirm_price;
-         S83Text(key+"_ENGULF",c_time,c_price,S83TfName(setup.confirm_seconds)+" engulfing",point_color,
-                 setup.direction>0?ANCHOR_LOWER:ANCHOR_UPPER,(int)Label_Size);
-        }
-      else if(setup.state!=S83_TOUCHED && outcome>=0) c_time=g_s83_outcomes[outcome].time;
-      S83Text(key+"_C",c_time,c_price,"C",point_color,setup.direction>0?ANCHOR_UPPER:ANCHOR_LOWER,
+      datetime c_time=setup.state!=S83_TOUCHED && outcome>=0?g_s83_outcomes[outcome].time:setup.end_time;
+      S83Text(key+"_C",c_time,setup.level,"C",point_color,setup.direction>0?ANCHOR_UPPER:ANCHOR_LOWER,
               (int)Label_Size+1);
      }
    if(why!="")
@@ -3491,14 +3193,18 @@ string S83InputProblem()
       return "the standard reward-to-risk ratios must be positive, the second at least the first";
    if(Breakeven_At_Percent<0.0 || Breakeven_At_Percent>=100.0) return "Breakeven_At_Percent must be 0 to 99";
    if(Minimum_Lot_Max_Risk_Multiple<0.0) return "Minimum_Lot_Max_Risk_Multiple cannot be negative";
-   if(Engulfing_Confirmation)
-     {
-      int lower=PeriodSeconds(S83LowerTimeframe()),ltf=PeriodSeconds(LTFTimeframe());
-      if(!Use_Lower_Engulfing && !Use_LTF_Engulfing) return "enable the lower-timeframe or the LTF engulfing";
-      if(lower>ltf || ltf%lower!=0)
-         return "Engulfing_Lower_Timeframe must be at or below the LTF and divide it (M15 for M30)";
-      if(Confirmation_Window_Candles<1) return "Confirmation_Window_Candles must be at least 1";
-     }
+   // Market Tradability: something counts, and each counted part accepts a kind.
+   if(!(Use_HTF && (HTF_Trend_Counts || HTF_Internal_Counts)) && !(Use_MTF && (MTF_Trend_Counts || MTF_Internal_Counts)) &&
+      !(Use_LTF && (LTF_Trend_Counts || LTF_Internal_Counts)))
+      return "count at least one Market Trend or Internal Structure of a selected timeframe for Market Tradability";
+   if((HTF_Trend_Counts && !HTF_Trend_Accept_BOS && !HTF_Trend_Accept_Transition) ||
+      (MTF_Trend_Counts && !MTF_Trend_Accept_BOS && !MTF_Trend_Accept_Transition) ||
+      (LTF_Trend_Counts && !LTF_Trend_Accept_BOS && !LTF_Trend_Accept_Transition))
+      return "a counted Market Trend must accept an established trend (BOS), a Transition (CHoCH) or both";
+   if((HTF_Internal_Counts && !HTF_Internal_Accept_BOS && !HTF_Internal_Accept_CHoCH) ||
+      (MTF_Internal_Counts && !MTF_Internal_Accept_BOS && !MTF_Internal_Accept_CHoCH) ||
+      (LTF_Internal_Counts && !LTF_Internal_Accept_BOS && !LTF_Internal_Accept_CHoCH))
+      return "a counted Internal Structure must accept a BOS, a CHoCH or both";
    return "";
   }
 
@@ -3507,17 +3213,10 @@ void S83Init()
    g_s83_ready=false;
    g_s83_armed_valid[0]=0;
    g_s83_armed_valid[1]=0;
-   g_s83_fresh_valid[0]=0;
-   g_s83_fresh_valid[1]=0;
-   g_s83_last_lower_bar=0;
    ArrayResize(g_s83_setups,0);
    g_s83_breakeven_failed=0;
    g_s83_journaled="";
    g_s83_waiting="";
-   g_s83_synthetic=S83DetectSynthetic();
-   if(MQLInfoInteger(MQL_OPTIMIZATION)==0)
-      Print("83% Strategy: ",_Symbol,g_s83_synthetic?" is treated as a Deriv synthetic index (Market Volume not applied)":
-            " is treated as a standard symbol");
    g_trade.SetExpertMagicNumber(Magic_Number);
    g_trade.SetDeviationInPoints(20);
    g_trade.SetTypeFillingBySymbol(_Symbol);
@@ -3562,14 +3261,6 @@ bool Rebuild(const bool permit_alert)
                         LTFSwingLength(),ltf_state,ltf_rates,ltf_points,ltf_events))
       return S83Wait("not enough "+LTFName()+" history yet");
    int ltf_total=ArraySize(ltf_rates);
-   MqlRates lower_rates[];
-   ArraySetAsSeries(lower_rates,false);
-   int lower_total=0;
-   if(Engulfing_Confirmation)
-     {
-      lower_total=CopyRates(_Symbol,S83LowerTimeframe(),1,S83LowerBars(),lower_rates);
-      if(lower_total<=0) return S83Wait("not enough "+TimeframeName(S83LowerTimeframe())+" history yet");
-     }
 
    // Labels follow the chart period, while the dashboard state stays on
    // Structure_Timeframe.
@@ -3590,7 +3281,7 @@ bool Rebuild(const bool permit_alert)
    ReplayStructure(rates,total,length,structure_state,points,events);
 
    // The internal structure of each trend timeframe, for the dashboard and
-   // Tradable (Early).
+   // Market Tradability.
    BASE_INTERNAL_STRUCTURE htf_internal,mtf_internal,ltf_internal;
    BASE_BREAK_MARK unused[];
    ReplayInternalStructure(rates,total,HTFInternalLength(),htf_internal,unused);
@@ -3633,47 +3324,14 @@ bool Rebuild(const bool permit_alert)
    string tradability_reason="";
    BASE_TRADABILITY tradability=EvaluateTradability(structure_state,setup_state,ltf_state,htf_internal,
                                                     mtf_internal,ltf_internal,tradability_reason);
-   // The timeframes correlate whenever the market is Tradable or Tradable
-   // (Early): in both, every selected timeframe agrees on the direction.
-   bool bias_ready=tradability!=BASE_NOT_TRADABLE;
-   double setup_atr[];
-   int setup_total=ArraySize(setup_rates);
-   SwingATR(setup_rates,setup_total,setup_atr);
-   double extension=TrendExtension(structure_state,setup_state,ltf_rates[ltf_total-1].close,
-                                   setup_total>0?setup_atr[setup_total-1]:0.0);
-   bool healthy_extension=HealthyExtension(extension);
+   S83Update(structure_state,setup_state,ltf_state,ltf_rates,ltf_total,ltf_points,
+             tradability,tradability_reason);
 
-   int volume_length=MathMin(Volume_Average_Length,ltf_total-1);
-   double average_volume=0.0;
-   for(int i=ltf_total-1-volume_length;i<ltf_total-1;i++) average_volume+=(double)ltf_rates[i].tick_volume;
-   if(volume_length>0) average_volume/=volume_length;
-   double volume_ratio=average_volume>0.0?(double)ltf_rates[ltf_total-1].tick_volume/average_volume:0.0;
-   bool good_volume=average_volume>0.0 && volume_ratio>=Volume_Minimum_Ratio &&
-                    volume_ratio<=Volume_Maximum_Ratio;
-   if(S83VolumeNotApplied(average_volume)) good_volume=true;
-   int momentum_length=MathMin(Momentum_Average_Length,ltf_total-2);
-   double average_true_range=0.0;
-   for(int i=ltf_total-1-momentum_length;i<ltf_total-1;i++)
-      average_true_range+=BarTrueRange(ltf_rates,i);
-   if(momentum_length>0) average_true_range/=momentum_length;
-   double momentum_ratio=average_true_range>0.0?
-                         BarTrueRange(ltf_rates,ltf_total-1)/average_true_range:0.0;
-   bool good_momentum=average_true_range>0.0 &&
-                      momentum_ratio>=Momentum_Minimum_Ratio &&
-                      momentum_ratio<=Momentum_Maximum_Ratio;
-   string optimal_reason="";
-   bool optimal=EvaluateOptimal(bias_ready,healthy_extension,good_volume,volume_ratio,
-                                good_momentum,momentum_ratio,optimal_reason,extension);
-   S83Update(structure_state,setup_state,ltf_state,ltf_rates,ltf_total,ltf_points,lower_rates,lower_total,
-             tradability,tradability_reason,optimal,optimal_reason);
-
-   if(DrawingEnabled()) DrawDashboard(structure_state,BreakdownText(structure_state,points,events),
+   if(DrawingEnabled())    DrawDashboard(structure_state,BreakdownText(structure_state,points,events),
                  TradeRecommendation(structure_state,points,setup_state,ltf_state,tradability),
                  setup_state,BreakdownText(setup_state,setup_points,setup_events),
                  ltf_state,BreakdownText(ltf_state,ltf_points,ltf_events),
-                 htf_internal,mtf_internal,ltf_internal,tradability,tradability_reason,EntryFilterTooltip(rates[total-1],ma,adx,atr),
-                 optimal,optimal_reason,bias_ready,healthy_extension,extension,good_volume,volume_ratio,
-                 good_momentum,momentum_ratio);
+                 htf_internal,mtf_internal,ltf_internal,tradability,tradability_reason,EntryFilterTooltip(rates[total-1],ma,adx,atr));
    if(DrawingEnabled()) S83DrawAll();
    g_s83_waiting="";
    // Alert every event that became known on the newest closed candle (a CHoCH
@@ -3714,9 +3372,6 @@ bool ValidInputs()
       problem="HTF MA, MTF MA, ADX and ATR lengths must be positive";
    else if(Equal_Highs_Lows_Threshold<0.0 || Equal_Highs_Lows_Threshold>0.5)
       problem="the EQH/EQL Threshold must be between 0 and 0.5";
-   else if(!Use_Timeframe_Correlation_For_Optimal && !Use_Healthy_Extension_For_Optimal &&
-           !Use_Market_Volume_For_Optimal && !Use_Price_Momentum_For_Optimal)
-      problem="enable at least one Optimal Conditions requirement";
    else if(!Use_HTF && !Use_MTF && !Use_LTF)
       problem="enable at least one trend analysis timeframe";
    if(problem=="") problem=S83InputProblem();
@@ -3766,15 +3421,13 @@ void CheckForBar()
    datetime current=iTime(_Symbol,LTFTimeframe(),0);
    datetime structure_current=iTime(_Symbol,BASETimeframe(),0);
    datetime setup_current=iTime(_Symbol,SetupTimeframe(),0);
-   datetime lower_current=Engulfing_Confirmation?iTime(_Symbol,S83LowerTimeframe(),0):current;
-   if(current==0 || structure_current==0 || setup_current==0 || lower_current==0)
+   if(current==0 || structure_current==0 || setup_current==0)
      {
-      S83Wait("no "+(structure_current==0?HTFName():setup_current==0?MTFName():
-                     current==0?LTFName():TimeframeName(S83LowerTimeframe()))+" candles yet");
+      S83Wait("no "+(structure_current==0?HTFName():setup_current==0?MTFName():LTFName())+" candles yet");
       return;
      }
    bool changed=current!=g_last_ltf_bar || structure_current!=g_last_structure_bar ||
-                setup_current!=g_last_setup_bar || lower_current!=g_s83_last_lower_bar;
+                setup_current!=g_last_setup_bar;
    if(changed)
      {
       // The first build after attaching never alerts.
@@ -3787,7 +3440,6 @@ void CheckForBar()
          g_last_ltf_bar=current;
          g_last_structure_bar=structure_current;
          g_last_setup_bar=setup_current;
-         g_s83_last_lower_bar=lower_current;
         }
      }
   }
