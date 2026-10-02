@@ -1446,10 +1446,11 @@ and Python mirrors:
   - entry at 70.5% (136 trades), 78.6% (149 trades) and 88.6% (120 trades);
   - HTF H2 / MTF H1 (117 trades);
   - the Hurst exponent on the MTF (88 trades).
-- **Market direction.** Every live setup was checked against the market's
-  direction at every candle (20,957 checks). Each of the 1,509 setups that
-  ended was audited over its life; 85 of them were cancelled when the market
-  turned, on the right candle.
+- **Market direction.** Across these backtests and the limit tests, every
+  live setup was checked against the market's direction at every candle
+  (30,134 checks). Each of the 2,143 setups that ended was audited over its
+  life; 113 of them were cancelled when the market turned, on the right
+  candle.
 - **Market Tradability.** The 2.0 EA's state and reason equal Base's (only
   the HTF selected) word for word on all 1,715 rule cases. A line-by-line
   Python copy of the 2.0 Pine rule gave the same on every case.
