@@ -474,8 +474,9 @@ The black text is made for a light chart background.
 
   `Show_Internal_On_Dashboard` hides these rows.
 - **Hurst Exponent (H1).** The Hurst exponent H of the last 100 closed HTF
-  candles, with its reading: trending (above 0.55), random walk (0.45 to
-  0.55) or mean-reverting (below 0.45). See **Hurst exponent** below.
+  candles, with its reading: trending (above `Hurst_Minimum`, 0.50), random
+  walk (0.45 up to the minimum) or mean-reverting (below 0.45). See **Hurst
+  exponent** below.
 - **Market Tradability.** Tradable, Tradable (Early) or Not Tradable. It is
   an analytical state, not an instruction to place a trade.
   - **Tradable** needs all of these to line up in one direction:
@@ -489,7 +490,7 @@ The black text is made for a light chart background.
        a Lower High.
     3. **HTF Internal Structure** in that direction, its latest break a BOS
        (not a CHoCH).
-    4. **Hurst exponent** above `Hurst_Minimum` (0.55).
+    4. **Hurst exponent** above `Hurst_Minimum` (0.50).
   - **Tradable (Early)**, in amber, off by default
     (`Allow_Early_Tradability`): every selected timeframe agrees with the
     HTF, but the HTF (or a selected MTF or LTF) is only in transition (a
@@ -510,9 +511,9 @@ The black text is made for a light chart background.
   Recommendations, it wraps onto further lines of at most 48 characters so
   the dashboard stays narrow:
   - `H1 is bullish (BOS) with HH + HL, the H1 internal structure is bullish
-    (BOS), and the Hurst exponent 0.62 is above 0.55.` (Tradable)
+    (BOS), and the Hurst exponent 0.62 is above 0.50.` (Tradable)
   - `H1 is bearish (BOS), but the H1 swings are LH + HL (bearish needs LL +
-    LH); the Hurst exponent 0.48 is not above 0.55 (random walk).`
+    LH); the Hurst exponent 0.48 is not above 0.50 (random walk).`
   - `H1 is bullish (BOS), but the H1 internal structure is bullish (CHoCH),
     not bullish (BOS).`
   - `H1 is bullish but M30 is bearish.` (MTF selected)
@@ -589,7 +590,8 @@ The black text is made for a light chart background.
     internal structure.
 - **Hurst exponent.** `Hurst_Timeframe` (HTF, MTF or LTF; HTF by default),
   `Hurst_Candles` (100 closed candles, 50 to 400) and `Hurst_Minimum`
-  (0.55). It is calculated as in the 83% Strategy:
+  (0.50; the 83% Strategy uses 0.55). It is calculated as in the 83%
+  Strategy:
   - **Method.** With x = ln(close), for each lag tau from 2 to 20 candles,
     sigma(tau) is the root mean square of x[t + tau] - x[t] over the window.
     H is the least-squares slope of ln sigma(tau) against ln tau (the
@@ -600,9 +602,13 @@ The black text is made for a light chart background.
   - **Why this variant.** The textbook version takes the standard deviation
     of the differences, which subtracts their average move. That removes the
     drift, so a steady trend read about 0.41, the same as a random walk.
-  - **Real data.** On EURUSD H1 and H4, an index on M5 and M30 and five
-    stocks on D1, H was above 0.55 in about 13% to 30% of 100-candle
-    windows.
+  - **How often it passes.** On EURUSD H1 and H4, an index on M5 and M30
+    and five stocks on D1, H was above 0.50 in about 29% to 47% of
+    100-candle windows (13% to 30% above 0.55).
+    - Over 100 candles even a pure random walk reads above 0.50 about 43%
+      of the time (26% above 0.55), because the estimate is noisy.
+    - So 0.50 lets through many markets with no real persistence. Raise
+      `Hurst_Minimum` for a stricter filter.
 - **Tradable (Early).** `Allow_Early_Tradability` (default off) shows it. It
   passes Optimal Conditions' Timeframe Correlation, like Tradable.
 

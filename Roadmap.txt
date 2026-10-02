@@ -83,7 +83,7 @@ Allow_Early_Tradability (Allow Tradable (Early), default false)
 
 Hurst Exponent (Trend Persistence): Hurst_Timeframe (default HTF; HTF, MTF
 or LTF), Hurst_Candles (default 100; valid 50..400), Hurst_Minimum (default
-0.55; valid 0 to below 1)
+0.50; valid 0 to below 1)
   The Hurst exponent H of the last Hurst_Candles closed candles of the Hurst
   timeframe (HurstOf). Market Tradability needs H above Hurst_Minimum
   (section 9). With x = ln(close), for each lag tau from 2 to 20 candles,
@@ -93,8 +93,10 @@ or LTF), Hurst_Candles (default 100; valid 50..400), Hurst_Minimum (default
   trending market more (a steady drift, which is not subtracted, or
   momentum in the moves), a mean-reverting one less. With the standard
   deviation instead, a steady trend read about 0.41, like a random walk. On
-  real data (EURUSD H1/H4, an index M5/M30, five stocks D1) H was above 0.55
-  in about 13-30% of 100-candle windows. Fewer closed candles than the
+  real data (EURUSD H1/H4, an index M5/M30, five stocks D1) H was above 0.50
+  in about 29-47% of 100-candle windows (13-30% above 0.55); over 100
+  candles even a random walk reads above 0.50 about 43% of the time (26%
+  above 0.55), so 0.50 is a loose filter. Fewer closed candles than the
   window, or prices that do not move, give no value (Not Tradable).
 
 Bars_To_Process (default 100; valid 100..100000)
@@ -630,7 +632,7 @@ these line up in one direction:
      same leg replaces it.
   3. The HTF Internal Structure in that direction, its latest break a BOS
      (not a CHoCH).
-  4. The Hurst exponent above Hurst_Minimum (0.55).
+  4. The Hurst exponent above Hurst_Minimum (0.50).
 It prints Tradable (Early), in amber, when Allow_Early_Tradability is on (off
 by default) and the only thing missing is confirmation:
   * the HTF has a direction and every selected timeframe has the same one;
@@ -657,14 +659,14 @@ The Tradability Reason row is one sentence that names the timeframes (H1,
 M30, M15 for the defaults):
   Tradable          "H1 is bullish (BOS) with HH + HL, the H1 internal
                     structure is bullish (BOS), and the Hurst exponent 0.62
-                    is above 0.55." (with MTF selected: "H1 and M30 are both
+                    is above 0.50." (with MTF selected: "H1 and M30 are both
                     bullish (BOS) ...")
   Trend in place,   "H1 is bearish (BOS), but " and every failing condition,
   others missing    separated by "; ": "the H1 swings are LH + HL (bearish
                     needs LL + LH)", "the H1 has no two swing lows yet",
                     "the H1 internal structure is bullish (CHoCH), not
                     bearish (BOS)", "the H1 internal structure has no break
-                    yet", "the Hurst exponent 0.48 is not above 0.55 (random
+                    yet", "the Hurst exponent 0.48 is not above 0.50 (random
                     walk)", "the Hurst exponent needs 100 closed H1 candles
                     (80 so far)".
   Tradable (Early)  "H1 and M30 are both bearish and their internal structure
@@ -712,10 +714,11 @@ coloured. Rows, top to bottom:
                                 "Bullish (CHoCH)". The tooltip gives the break
                                 that set the internal trend and whether it
                                 agrees with the Market Trend (section 9).
-  Hurst Exponent                "H 0.62 (trending)": trending above 0.55,
-                                random walk from 0.45 to 0.55, mean-reverting
-                                below; green above Hurst_Minimum, red
-                                otherwise, grey when not available.
+  Hurst Exponent                "H 0.62 (trending)": trending above
+                                Hurst_Minimum (0.50), random walk from 0.45
+                                up to it, mean-reverting below 0.45; green
+                                above Hurst_Minimum, red otherwise, grey when
+                                not available.
   Market Tradability            Tradable (green), Tradable (Early) (amber) or
                                 Not Tradable (red). The tooltip holds the
                                 entry-filter diagnostics.
