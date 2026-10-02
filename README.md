@@ -1252,7 +1252,7 @@ and Python mirrors:
 the 83% Strategy built in, keeping the existing Fibonacci and execution logic
 but with much less around it.
 
-- **Fewer inputs.** 48 inputs in each file, against 107 in the first version
+- **Fewer inputs.** 50 inputs in each file, against 107 in the first version
   and 63 in Base itself.
 - **Removed:**
   - Base's MA, session, ADX and ATR filters;
@@ -1269,7 +1269,8 @@ but with much less around it.
   - Market Tradability, the internal structure and the Hurst exponent.
 - **Drawing settings:** colours, line styles and widths are fixed.
 
-The first version (`83% Strategy.mq5` / `.pine`) is unchanged.
+The first version (`83% Strategy.mq5` / `.pine`) has since been removed from
+the repository; 2.0 replaces it.
 
 ### The rules
 
@@ -1305,7 +1306,9 @@ candles.
 - **B** is the highest high since A. It follows price until it is a
   confirmed swing.
 - **Fibonacci.** It runs from B (0%) to A (100%).
-- **Entry.** Price touches the entry level.
+- **Entry.** Price touches the entry level. With the engulfing confirmation
+  (on by default), an engulfing candle must then confirm it; see
+  [Engulfing confirmation](#engulfing-confirmation).
 - **Invalid.** A new HH beyond a confirmed B before the entry level. The HL
   is then used up.
 
@@ -1328,6 +1331,47 @@ the setups whose A lies within the last 25 LTF candles, created since the
 market last changed direction, so all of them are in the market's
 direction. A live setup expires when its A leaves the processed bars.
 
+### Engulfing confirmation
+
+With `Engulfing_Confirmation` on (the default; "Engulfing Confirmation After
+The Touch" on TradingView), touching the entry level does not enter the
+trade by itself. The setup is **touched** and waits for an engulfing candle
+in its direction on the LTF.
+
+- **The engulfing.** For a buy, a bearish candle followed by a bullish
+  candle that:
+  - opens at or below the bearish candle's close; and
+  - closes above the bearish candle's open.
+
+  A sell mirrors this. Wicks are not compared; the bodies decide.
+- **At or just after the touch.** The engulfing candle can be the touching
+  candle itself or a later one, within `Engulfing_Window_Candles` (2) LTF
+  candles, the touching candle included. With 2, that is the touching candle
+  or the next one.
+- **The wait fails** if, before the engulfing:
+  - a candle closes through A (below the HL, above the LH);
+  - price makes a new HH beyond B (a new LL for a sell); or
+  - the window runs out.
+
+  The setup also expires when A leaves the processed bars, and is cancelled
+  when the market changes direction. A failed setup's A is used up, like an
+  invalidated one.
+- **The entry.** The trade is entered at the market once the engulfing
+  candle has closed: on the first tick of the next candle in the EA, and by
+  a market order at the engulfing candle's close on TradingView (filled at
+  the next open). The market filters, the day's limits and the risk
+  management then apply as usual.
+- **The stop.** For an engulfing entry, the stop goes behind the engulfing
+  candle instead of A:
+  - the ATR stop is `SL_Buffer_ATR` (0.5) LTF ATR below the engulfing
+    candle's low (above its high for a sell);
+  - the take profit stays just before B;
+  - the closer of 1:2 and 1:3 is used, moving the stop to match, as long as
+    the stop stays behind the engulfing candle. If a 1:2 stop would sit
+    inside the engulfing candle, the trade is skipped with that reason.
+- **Turning it off.** With `Engulfing_Confirmation` off, the strategy enters
+  at the first touch of the level, with the stop behind A, as before.
+
 ### Risk management (all adjustable)
 
 - **Trading days.** Monday to Saturday (`Trade_Monday` ... `Trade_Sunday`).
@@ -1344,9 +1388,11 @@ direction. A live setup expires when its A leaves the processed bars.
 - **Take profit.** `TP_Buffer_ATR` (0.1) LTF ATR before B.
 - **Stop loss and reward-to-risk.**
   - A stop `SL_Buffer_ATR` (0.5) LTF ATR behind A gives the natural ratio.
+    An engulfing entry uses the engulfing candle instead of A (see
+    [Engulfing confirmation](#engulfing-confirmation)).
   - The closer of 1:2 and 1:3 is used, moving the stop to match (1:2.4 uses
     1:2).
-  - The stop always stays behind A.
+  - The stop always stays behind A (or the engulfing candle).
 - **Breakeven.** The stop moves to the entry at `Breakeven_At_Percent` (60%)
   of the way to the take profit.
 - **Deriv sizing.** `Minimum_Lot_Max_Risk_Multiple` (EA) and the minimum
@@ -1380,8 +1426,9 @@ direction. A live setup expires when its A leaves the processed bars.
 - Market Tradability and its Tradability Reason.
 
 **Strategy rows:**
-- **83% Strategy.** The state: a setup armed, a position open, or waiting
-  for a buy or sell setup.
+- **83% Strategy.** The state: a setup armed, a setup touched and waiting for
+  its engulfing (with the candles waited so far), a position open, or
+  waiting for a buy or sell setup.
 - **Setup.** A, B and the entry price. B reads `(forming)` while it still
   follows price.
 - **Entry Filters.** PASS, or BLOCKED with the reason:
@@ -1395,15 +1442,24 @@ direction. A live setup expires when its A leaves the processed bars.
 On the LTF chart each shown setup has its Fibonacci (0%, the entry level
 with its price, 100%), A / B / C and the target and stop zones. Failed
 setups are dotted with their reason.
+- With the engulfing confirmation, `touch` marks where price reached the
+  level. C sits at the engulfing candle's close, labelled with the engulfing
+  (for example `C (bullish M30 engulfing)`).
+- A setup waiting for its engulfing reads `waiting for a bullish M30
+  engulfing`.
 
 ### MetaTrader 5 and TradingView
 
 - **MetaTrader 5.** Install `83% Strategy 2.0.mq5` in `MQL5/Experts`, compile
   it, and backtest it with **Every tick** modelling.
   - `Trade_Mode` is **Strategy Tester only** by default.
-  - Entries are market orders on the first tick at the level.
+  - Entries are market orders: on the first tick after the engulfing candle
+    closes, or without the confirmation on the first tick at the level.
 - **TradingView.** Add `83% Strategy 2.0.pine` to an M30 chart (the LTF).
-  Entries are limit orders at the level, placed at a candle's close.
+  Entries are market orders at the engulfing candle's close, or without the
+  confirmation limit orders at the level, placed at a candle's close. For a
+  market order the stop and target are planned from that close; the EA plans
+  them from its actual entry price.
 - **Differences on TradingView:**
   - breakeven is checked at candle closes;
   - Pine has no spread;
@@ -1423,8 +1479,9 @@ and Python mirrors:
 - **Base's behaviour is unchanged.** Base's whole test suite passes against
   the 2.0 EA.
 - **Every trade follows the rules.** Tick-level backtests ran on 30
-  generated markets of 120 days each, with the default settings. Every trade
-  was rechecked with independent code:
+  generated markets of 120 days each, with the default settings and the
+  engulfing confirmation off. Every trade was rechecked with independent
+  code:
   - A, the break of structure, B, the heavy pressure and the processed
     bars;
   - the entry level at the selected Fibonacci ratio, and the first touch;
@@ -1440,6 +1497,34 @@ and Python mirrors:
   All 120 trades passed. Every one of the 426 touches of a live setup was
   traded or rejected for a genuine reason. Most rejections were Not
   Tradable; 22 were for the MTF not being a BOS in the setup's direction.
+  These results are the same as before the engulfing confirmation was
+  added.
+- **The engulfing confirmation.** The same 30 markets with the defaults
+  (the confirmation on):
+  - 57 setups were confirmed by an engulfing;
+  - 11 were traded, 2 of them on an engulfing that was the touching candle
+    itself;
+  - 36 were rejected as Not Tradable and 2 for the MTF, and 8 because a 1:2
+    stop would not be behind the engulfing candle.
+
+  Every engulfing trade was rechecked with independent code, as well as the
+  checks above:
+  - the touch of the level;
+  - the engulfing, found by separately written code within the window;
+  - no close through A and no new HH (LL) before it;
+  - the entry on the first tick after the engulfing candle closed;
+  - the stop behind the engulfing candle.
+
+  All 11 passed, and every confirmed setup was traded or rejected for a
+  genuine reason. A separate test checked the engulfing rule on all 625
+  combinations of two candle bodies (15 bullish and 15 bearish engulfings).
+- **Engulfing confirmation with other settings, all passing.** These runs
+  used 60 markets and a Hurst minimum of 0.30:
+  - 83%: 22 trades;
+  - 70.5%: 12 trades;
+  - 78.6%: 18 trades;
+  - 88.6%: 18 trades;
+  - a window of 4 candles: 39 trades.
 - **Other settings, all passing.** Most runs used a Hurst minimum of 0.30, so
   that there were more trades:
   - Hurst minimum 0.30 at 83% (135 trades);
@@ -1461,6 +1546,10 @@ and Python mirrors:
     flipping every 2 to 30 candles; several swing levels, windows (10 to 60),
     pressure settings and all four entry levels.
   - **Setups:** all 2,115 setups and 132,265 candle snapshots matched.
+  - **Engulfing confirmation:** it was on in 17 of the markets, with windows
+    of 2 to 4 candles. The touches, the waits (648 candle snapshots of a
+    setup waiting), the 133 confirmations (with their close and stop) and
+    the 368 failed waits all matched.
   - **Drawn setups:** the set the Pine draws matched the EA's on every
     candle, 40,086 setup-candles in all.
   - **Market direction:** the EA's (its replay window) and the Pine's (all
@@ -1472,12 +1561,17 @@ and Python mirrors:
     differences;
   - an EA without the MTF filter: rule violations in 8 markets;
   - an EA that never ends the day: caught by the unit test and the
-    backtests.
-- **Drawing.** Three visual runs of 120 days checked the chart at every M30
-  candle (17,280 checks):
-  - the live setup showed its three levels, A and B (2,066 checks);
-  - the traded setups showed C and their zones (19 trades);
-  - the drawn setups followed the display rule exactly, including 53 clears
+    backtests;
+  - no engulfing allowed on the touching candle: 180 differences;
+  - an engulfing window one candle too long: 3,068 differences;
+  - an engulfing that ignores the open: caught by the 625-combination test
+    (the generated markets always open at the previous close, so the
+    backtests alone could not catch it).
+- **Drawing.** Five visual runs of 120 days checked the chart at every M30
+  candle (28,800 checks). Two of them had the engulfing confirmation on:
+  - the live setup showed its three levels, A and B (3,294 checks);
+  - the traded setups showed C and their zones (22 trades);
+  - the drawn setups followed the display rule exactly, including 85 clears
     by a change of direction on the forming candle;
   - structure stayed within the processed candles.
 - **The Pine file parses** with pynescript (a syntax check only).

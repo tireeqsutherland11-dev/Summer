@@ -72,6 +72,8 @@ input int    LTF_Bars_To_Process=25;              // LTF Independent Processed B
 input S83_ENTRY_LEVEL Entry_Fib_Level=S83_ENTRY_83; // Entry Fibonacci Level
 input int    Impulse_Candles=3;                   // Heavy Pressure: Candles After The HL/LH
 input double Impulse_Min_ATR=2.0;                 // Heavy Pressure: Minimum Move (LTF ATR)
+input bool   Engulfing_Confirmation=true;         // Engulfing Confirmation After The Touch
+input int    Engulfing_Window_Candles=2;          // Engulfing Within N LTF Candles (2 = the touching candle or the next)
 
 input group "83% Strategy - Risk Management"
 input S83_TRADE_MODE Trade_Mode=S83_TRADING_TESTER;
@@ -1874,7 +1876,11 @@ void AddInternalStructureRow(BASE_DASHBOARD_ROW &rows[],const BASE_INTERNAL_STRU
 //   so a pullback while B is forming counts.
 // The Fibonacci runs from B (0%) to A (100%); the entry level is the
 // Entry Fibonacci Level (83% by default).
-//  * Entry: price touches the entry level.
+//  * Entry: price touches the entry level.  With Engulfing_Confirmation
+//    (on by default) the touch alone does not enter: an engulfing candle in
+//    the trade's direction must follow (see S83Step), and the trade is
+//    entered at the market once it has closed, with its stop behind the
+//    engulfing candle instead of A (see S83Plan).
 //  * Invalid: price makes a new HH (trades above a confirmed B) before
 //    touching the entry level.  The HL is then used up; a new setup needs a
 //    new HL.
@@ -1901,10 +1907,11 @@ void AddInternalStructureRow(BASE_DASHBOARD_ROW &rows[],const BASE_INTERNAL_STRU
 // which is the "(Balance x Risk %) / Stop Loss in points" rule for any symbol.
 //
 // Stop loss and take profit: the take profit is TP_Buffer_ATR LTF ATR before
-// B.  The stop loss SL_Buffer_ATR LTF ATR behind A gives the position's
+// B.  The stop loss SL_Buffer_ATR LTF ATR behind A (an engulfing entry:
+// behind the engulfing candle's low, high for a sell) gives the position's
 // natural reward-to-risk; the trade uses whichever of Reward_Risk_Low (1:2)
 // and Reward_Risk_High (1:3) is closer and moves the stop to match (1:2.4
-// becomes 1:2), as long as the stop stays behind A.  The stop moves to the
+// becomes 1:2), as long as the stop stays behind A (the engulfing candle).  The stop moves to the
 // entry price once price has covered Breakeven_At_Percent of the way to the
 // take profit.
 
@@ -1956,7 +1963,19 @@ enum S83_STATE
    S83_EXPIRED=3,     // A left the LTF processed bars
    S83_MISSED=4,      // the entry level was reached before the setup was known
    S83_REPLACED=5,    // a newer setup took over
-   S83_CANCELLED=6    // the market no longer points its direction
+   S83_CANCELLED=6,   // the market no longer points its direction
+   S83_WAITING=7,     // touched; waiting for an engulfing (Engulfing_Confirmation)
+   S83_CONFIRMED=8,   // an engulfing confirmed it: the entry
+   S83_FAILED=9       // no engulfing in time, or the leg broke first
+  };
+
+// Why a waiting setup failed.
+enum S83_FAIL
+  {
+   S83_FAIL_NONE=0,
+   S83_FAIL_THROUGH_A=1,    // a close through A
+   S83_FAIL_NEW_B=2,        // a new HH (LL) beyond B
+   S83_FAIL_WINDOW=3        // no engulfing within Engulfing_Window_Candles
   };
 
 // One setup: A (the HL/LH the heavy move started from), B (the extreme
@@ -1979,6 +1998,13 @@ struct S83_SETUP
    datetime created_time;   // the candle on whose close the setup became known
    int state;               // S83_STATE
    datetime end_time;       // the candle of the touch, invalidation, expiry or miss
+   // Engulfing confirmation (see S83Step).
+   datetime touch_time;     // the candle that touched the entry level (0 if none)
+   int touch_bar;
+   int waited;              // candles closed since, the touching one included
+   double confirm_price;    // the engulfing candle's close
+   double confirm_stop;     // its low (high for a sell): the stop's anchor
+   int fail;                // S83_FAIL
   };
 
 // What happened live (between candle closes) when the live setup was
@@ -2017,8 +2043,10 @@ double g_s83_atr=0.0;              // LTF ATR of the latest closed LTF candle
 datetime g_s83_last_time=0;        // the latest closed LTF candle
 datetime g_s83_shown_from=0;       // setups created from this candle on are drawn
 S83_SETUP g_s83_setups[];          // the setups whose A lies within the processed candles
-S83_SETUP g_s83_live;              // the live (armed) setup, when g_s83_have_live
+S83_SETUP g_s83_live;              // the live (armed or waiting) setup, when g_s83_have_live
 bool g_s83_have_live=false;
+S83_SETUP g_s83_entry;             // a setup an engulfing confirmed on the latest closed candle
+bool g_s83_have_entry=false;
 S83_OUTCOME g_s83_outcomes[];
 S83_DAY g_s83_day;
 ulong g_s83_breakeven_failed=0;
@@ -2052,7 +2080,21 @@ bool S83Touched(const S83_SETUP &setup,const MqlRates &bar)
    return setup.direction>0?bar.low<=setup.level:bar.high>=setup.level;
   }
 
-bool S83Live(const S83_SETUP &setup) { return setup.state==S83_ARMED; }
+bool S83Live(const S83_SETUP &setup) { return setup.state==S83_ARMED || setup.state==S83_WAITING; }
+
+// Engulfing (bodies): the previous candle closed against the setup's
+// direction and this one with it, opening at or beyond the previous close
+// and closing beyond the previous open.
+bool S83Engulfing(const int direction,const MqlRates &previous,const MqlRates &candle)
+  {
+   if(direction>0)
+      return previous.close<previous.open && candle.close>candle.open &&
+             candle.open<=previous.close && candle.close>previous.open;
+   return previous.close>previous.open && candle.close<candle.open &&
+          candle.open>=previous.close && candle.close<previous.open;
+  }
+
+string S83EngulfingText(const int direction) { return (direction>0?"bullish":"bearish")+" "+LTFName()+" engulfing"; }
 
 void S83End(S83_SETUP &setup,const int state,const datetime time)
   {
@@ -2060,15 +2102,53 @@ void S83End(S83_SETUP &setup,const int state,const datetime time)
    setup.end_time=time;
   }
 
-// One closed LTF candle of the live setup: a touch of the entry level makes
-// it touched (the entry); otherwise going beyond a confirmed B invalidates
-// it (beyond a forming B, B follows at the close: S83FollowB).
-void S83Step(S83_SETUP &setup,const MqlRates &candle)
+// One closed LTF candle (rates[i]) of the live setup:
+//  * armed: a touch of the entry level makes it touched (the entry), or
+//    with Engulfing_Confirmation waiting; otherwise going beyond a confirmed
+//    B invalidates it (beyond a forming B, B follows at the close:
+//    S83FollowB).
+//  * waiting, from the touching candle on (B no longer moves):
+//     1. a close through A (below the HL, above the LH) fails it;
+//     2. else a new HH beyond B (a new LL for a sell) fails it;
+//     3. else an engulfing in its direction (this candle against the one
+//        before, see S83Engulfing) confirms it: the entry, on the next tick;
+//     4. else it fails once Engulfing_Window_Candles candles, the touching
+//        one included, have closed.
+void S83Step(S83_SETUP &setup,const MqlRates &rates[],const int i)
   {
-   if(setup.state!=S83_ARMED) return;
-   if(S83Touched(setup,candle)) S83End(setup,S83_TOUCHED,candle.time);
-   else if(setup.b_fixed && (setup.direction>0?candle.high>setup.b_price:candle.low<setup.b_price))
-      S83End(setup,S83_INVALID,candle.time);
+   int d=setup.direction;
+   if(setup.state==S83_ARMED)
+     {
+      if(S83Touched(setup,rates[i]))
+        {
+         if(!Engulfing_Confirmation)
+           {
+            S83End(setup,S83_TOUCHED,rates[i].time);
+            return;
+           }
+         setup.state=S83_WAITING;
+         setup.touch_time=rates[i].time;
+         setup.touch_bar=i;
+        }
+      else if(setup.b_fixed && (d>0?rates[i].high>setup.b_price:rates[i].low<setup.b_price))
+         S83End(setup,S83_INVALID,rates[i].time);
+     }
+   if(setup.state!=S83_WAITING) return;
+   setup.waited=i-setup.touch_bar+1;
+   if(d>0?rates[i].close<setup.a_price:rates[i].close>setup.a_price)
+      setup.fail=S83_FAIL_THROUGH_A;
+   else if(d>0?rates[i].high>setup.b_price:rates[i].low<setup.b_price)
+      setup.fail=S83_FAIL_NEW_B;
+   else if(i>0 && S83Engulfing(d,rates[i-1],rates[i]))
+     {
+      S83End(setup,S83_CONFIRMED,rates[i].time);
+      setup.confirm_price=rates[i].close;
+      setup.confirm_stop=d>0?rates[i].low:rates[i].high;
+      return;
+     }
+   else if(setup.waited>=Engulfing_Window_Candles)
+      setup.fail=S83_FAIL_WINDOW;
+   if(setup.fail!=S83_FAIL_NONE) S83End(setup,S83_FAILED,rates[i].time);
   }
 
 // At the close of LTF candle i, the B of the live setup follows price until
@@ -2141,7 +2221,8 @@ bool S83MarketHistory(const MqlRates &ltf[],const int ltf_total,const int from,i
 // the open of candle i (see S83MarketHistory).  On each candle:
 //  1. the live setup is cancelled if the market no longer points its
 //     direction, before the candle can touch it; otherwise it steps through
-//     the candle (see S83Step): touched or invalidated.  If still live, its B
+//     the candle (see S83Step): touched, invalidated, or with the engulfing
+//     confirmation waiting, confirmed or failed.  If still live, its B
 //     follows price (S83FollowB), and it expires once its A is no longer
 //     within the processed candles.
 //  2. in a bullish market, the latest swing low confirmed so far, A, starts
@@ -2174,7 +2255,7 @@ void S83ScanSetups(const MqlRates &rates[],const int total,const BASE_STRUCTURE_
       if(live>=0)
         {
          if(market[i]!=setups[live].direction) S83End(setups[live],S83_CANCELLED,rates[i].time);
-         S83Step(setups[live],rates[i]);
+         S83Step(setups[live],rates,i);
          S83FollowB(setups[live],rates,i);
          if(S83Live(setups[live]) && setups[live].a_bar<i-window+1)
             S83End(setups[live],S83_EXPIRED,rates[i].time);
@@ -2217,6 +2298,12 @@ void S83ScanSetups(const MqlRates &rates[],const int total,const BASE_STRUCTURE_
       setups[index].created_time=rates[i].time;
       setups[index].state=S83_ARMED;
       setups[index].end_time=0;
+      setups[index].touch_time=0;
+      setups[index].touch_bar=-1;
+      setups[index].waited=0;
+      setups[index].confirm_price=0.0;
+      setups[index].confirm_stop=0.0;
+      setups[index].fail=S83_FAIL_NONE;
       used[a]=true;
       bool missed=false;
       for(int k=MathMax(b,broke)+1;k<=i && !missed;k++)
@@ -2279,7 +2366,7 @@ string S83SetupText(const S83_SETUP &setup)
   {
    return (setup.direction>0?"Buy":"Sell")+": A "+S83ALabel(setup.direction)+" "+PriceText(setup.a_price)+
           " -> B "+S83BLabel(setup.direction)+" "+PriceText(setup.b_price)+
-          (S83Live(setup) && !setup.b_fixed?" (forming)":"")+"; "+S83LevelText()+" at "+PriceText(setup.level);
+          (setup.state==S83_ARMED && !setup.b_fixed?" (forming)":"")+"; "+S83LevelText()+" at "+PriceText(setup.level);
   }
 
 void S83Journal(const string text)
@@ -2513,7 +2600,10 @@ string S83Blocker(const int direction)
 
 // Stop loss, take profit and reward-to-risk for an entry at `entry`.
 // Returns "" or why the trade cannot be planned.  A sell's take profit and
-// stop are hit on the ask, so the spread is added to both.
+// stop are hit on the ask, so the spread is added to both.  The stop's
+// anchor is A, or for a setup an engulfing confirmed the engulfing candle's
+// low (high for a sell): the ATR stop sits SL_Buffer_ATR beyond it, and the
+// stop adjusted to 1:2 / 1:3 must stay beyond it.
 string S83Plan(const S83_SETUP &setup,const double entry,const double spread,const double atr,
                double &sl,double &tp,double &rr)
   {
@@ -2522,7 +2612,9 @@ string S83Plan(const S83_SETUP &setup,const double entry,const double spread,con
    tp=d>0?AlignPrice(setup.b_price-TP_Buffer_ATR*atr,-1):AlignPrice(setup.b_price+TP_Buffer_ATR*atr+spread,1);
    double reward=d>0?tp-entry:entry-tp;
    if(reward<=0.0) return "the take profit is not beyond the entry";
-   double atr_stop=d>0?setup.a_price-SL_Buffer_ATR*atr:setup.a_price+SL_Buffer_ATR*atr+spread;
+   bool engulfing=setup.state==S83_CONFIRMED;
+   double anchor=engulfing?setup.confirm_stop:setup.a_price;
+   double atr_stop=d>0?anchor-SL_Buffer_ATR*atr:anchor+SL_Buffer_ATR*atr+spread;
    double atr_risk=d>0?entry-atr_stop:atr_stop-entry;
    if(atr_risk<=0.0) return "the entry is beyond the stop loss";
    double natural=reward/atr_risk;
@@ -2532,9 +2624,11 @@ string S83Plan(const S83_SETUP &setup,const double entry,const double spread,con
    double minimum=MinimumStopDistance();
    if((d>0?entry-sl:sl-entry)<minimum || reward<minimum) return "the stop or target is too close to the price";
    // An entry well past the entry level (a gap through it) can leave a 1:2 /
-   // 1:3 stop in front of A; the stop must stay behind the HL (LH).
-   if(d>0?sl>=setup.a_price:sl<=setup.a_price)
-      return "the price is too far from the "+S83LevelText()+" level: a 1:"+DoubleToString(rr,0)+
+   // 1:3 stop in front of A; the stop must stay behind the HL (LH), or the
+   // engulfing candle.
+   if(d>0?sl>=anchor:sl<=anchor)
+      return engulfing?"a 1:"+DoubleToString(rr,0)+" stop would not be behind the engulfing candle":
+             "the price is too far from the "+S83LevelText()+" level: a 1:"+DoubleToString(rr,0)+
              " stop would not be behind the "+S83ALabel(d);
    return "";
   }
@@ -2559,7 +2653,8 @@ string S83Size(const S83_SETUP &setup,const double entry,const double sl,double 
 void S83Enter(const S83_SETUP &setup,const MqlTick &tick)
   {
    string what=S83Side(setup.direction)+" setup ("+S83SetupText(setup)+")";
-   string event=S83LevelText()+" touched";
+   string event=setup.state==S83_CONFIRMED?S83EngulfingText(setup.direction)+" after the "+S83LevelText()+" touch":
+                S83LevelText()+" touched";
    if(!TradingActive())
      {
       S83Record(setup,S83_TOUCHED,false,event+"; not traded (Trade Mode)",0.0,0.0,0.0,0.0);
@@ -2608,11 +2703,43 @@ void S83Enter(const S83_SETUP &setup,const MqlTick &tick)
      }
   }
 
+// Whether this EA opened a position on this symbol since `from`.
+bool S83EnteredSince(const datetime from)
+  {
+   if(!HistorySelect(from,TimeCurrent()+86400)) return false;
+   for(int i=HistoryDealsTotal()-1;i>=0;i--)
+     {
+      ulong deal=HistoryDealGetTicket(i);
+      if(deal!=0 && HistoryDealGetString(deal,DEAL_SYMBOL)==_Symbol &&
+         (ulong)HistoryDealGetInteger(deal,DEAL_MAGIC)==Magic_Number &&
+         HistoryDealGetInteger(deal,DEAL_ENTRY)==DEAL_ENTRY_IN &&
+         (datetime)HistoryDealGetInteger(deal,DEAL_TIME)>=from) return true;
+     }
+   return false;
+  }
+
 // Every tick: the live setup is entered when the chart price (bid) touches
 // its entry level and invalidated when it goes beyond a confirmed B first.
+// With Engulfing_Confirmation the setups are decided at candle closes, and
+// a setup an engulfing confirmed on the latest closed candle is entered on
+// the first tick after it.
 void S83CheckEntry()
   {
-   if(!g_s83_ready || !g_s83_have_live) return;
+   if(!g_s83_ready) return;
+   if(Engulfing_Confirmation)
+     {
+      if(!g_s83_have_entry || S83OutcomeIndex(g_s83_entry.direction,g_s83_entry.a_time)>=0) return;
+      // Only during the candle after the engulfing, and only once (a restart
+      // must not enter again).
+      datetime opened=g_s83_entry.end_time+PeriodSeconds(LTFTimeframe());
+      if(TimeCurrent()>=opened+PeriodSeconds(LTFTimeframe()) || S83EnteredSince(opened)) return;
+      MqlTick now;
+      if(!SymbolInfoTick(_Symbol,now) || now.bid<=0.0 || now.ask<=0.0) return;
+      S83Enter(g_s83_entry,now);
+      if(DrawingEnabled()) S83Redraw();
+      return;
+     }
+   if(!g_s83_have_live) return;
    if(S83OutcomeIndex(g_s83_live.direction,g_s83_live.a_time)>=0) return;
    MqlTick tick;
    if(!SymbolInfoTick(_Symbol,tick) || tick.bid<=0.0 || tick.ask<=0.0) return;
@@ -2690,6 +2817,15 @@ void S83Update(const BASE_STRUCTURE_STATE &htf,const BASE_STRUCTURE_STATE &mtf,c
      }
    g_s83_have_live=live>=0;
    if(g_s83_have_live) g_s83_live=g_s83_setups[live];
+   // A setup an engulfing confirmed on the latest closed candle is entered
+   // on the next tick (see S83CheckEntry).
+   g_s83_have_entry=false;
+   for(int k=0;k<ArraySize(g_s83_setups);k++)
+      if(g_s83_setups[k].state==S83_CONFIRMED && g_s83_setups[k].end_time==g_s83_last_time)
+        {
+         g_s83_entry=g_s83_setups[k];
+         g_s83_have_entry=true;
+        }
    S83LoadDay(g_s83_day);
    // A newly armed setup is announced once.
    if(g_s83_have_live && g_s83_ready &&
@@ -2716,6 +2852,12 @@ void S83DashboardRows(BASE_DASHBOARD_ROW &rows[])
       state=(buy?"Buy":"Sell")+" position open";
       state_color=buy?DASHBOARD_POSITIVE_COLOR:DASHBOARD_NEGATIVE_COLOR;
      }
+   else if(g_s83_have_live && g_s83_live.state==S83_WAITING)
+     {
+      state=(g_s83_live.direction>0?"Buy":"Sell")+" setup touched: waiting for a "+S83EngulfingText(g_s83_live.direction)+
+            " ("+(string)g_s83_live.waited+"/"+(string)Engulfing_Window_Candles+" candles)";
+      state_color=g_s83_live.direction>0?DASHBOARD_POSITIVE_COLOR:DASHBOARD_NEGATIVE_COLOR;
+     }
    else if(g_s83_have_live)
      {
       state=(g_s83_live.direction>0?"Buy":"Sell")+" setup armed";
@@ -2724,7 +2866,9 @@ void S83DashboardRows(BASE_DASHBOARD_ROW &rows[])
    AddDashboardRow(rows,"83% Strategy ("+LTFName()+"):",state,state_color,
                    "Buys (sells) at the "+S83LevelText()+" retracement of the latest "+LTFName()+
                    " HL-to-HH (LH-to-LL) leg with heavy pressure, within the last "+(string)LTFBarsToProcess()+
-                   " "+LTFName()+" candles. Only buy setups are scanned and shown in a bullish market and only "+
+                   " "+LTFName()+" candles"+(Engulfing_Confirmation?", once a bullish (bearish) "+LTFName()+
+                   " engulfing follows the touch within "+(string)Engulfing_Window_Candles+" candles":"")+
+                   ". Only buy setups are scanned and shown in a bullish market and only "+
                    "sell setups in a bearish one (the "+HTFName()+" Market Trend).");
    if(g_s83_have_live)
       AddWrappedDashboardRow(rows,"Setup:",S83SetupText(g_s83_live),DASHBOARD_TEXT_COLOR,
@@ -2793,6 +2937,11 @@ string S83WhyText(const S83_SETUP &setup)
       case S83_EXPIRED: return "expired: A left the "+(string)LTFBarsToProcess()+" processed candles";
       case S83_MISSED: return "missed: "+S83LevelText()+" reached before the setup was known";
       case S83_REPLACED: return "replaced by a newer setup";
+      case S83_WAITING: return "waiting for a "+S83EngulfingText(setup.direction);
+      case S83_FAILED:
+         if(setup.fail==S83_FAIL_THROUGH_A) return "failed: a close through A before an engulfing";
+         if(setup.fail==S83_FAIL_NEW_B) return "failed: a new "+S83BLabel(setup.direction)+" before an engulfing";
+         return "failed: no engulfing within "+(string)Engulfing_Window_Candles+" "+LTFName()+" candles";
      }
    return "";
   }
@@ -2802,7 +2951,8 @@ void S83DrawSetup(const S83_SETUP &setup,const datetime right)
    string key=(setup.direction>0?"BUY_":"SELL_")+(string)setup.a_time;
    bool armed=S83Live(setup);
    int outcome=S83OutcomeIndex(setup.direction,setup.a_time);
-   bool touched=setup.state==S83_TOUCHED || (outcome>=0 && g_s83_outcomes[outcome].state==S83_TOUCHED);
+   bool touched=setup.state==S83_TOUCHED || setup.state==S83_CONFIRMED ||
+                (outcome>=0 && g_s83_outcomes[outcome].state==S83_TOUCHED);
    bool failed=!armed && !touched;
    int period=PeriodSeconds(LTFTimeframe());
    datetime end=right;
@@ -2822,7 +2972,15 @@ void S83DrawSetup(const S83_SETUP &setup,const datetime right)
               (int)Label_Size+1);
       S83Text(key+"_B",setup.b_time,setup.b_price,"B",point_color,setup.direction>0?ANCHOR_LOWER:ANCHOR_UPPER,
               (int)Label_Size+1);
-      if(touched)
+      // With the confirmation: where price touched the level, then C at
+      // the engulfing candle's close.
+      if(setup.touch_time>0)
+         S83Text(key+"_TOUCH",setup.touch_time,setup.level,"touch",point_color,
+                 setup.direction>0?ANCHOR_UPPER:ANCHOR_LOWER,(int)Label_Size);
+      if(setup.state==S83_CONFIRMED)
+         S83Text(key+"_C",setup.end_time,setup.confirm_price,"C ("+S83EngulfingText(setup.direction)+")",point_color,
+                 setup.direction>0?ANCHOR_UPPER:ANCHOR_LOWER,(int)Label_Size+1);
+      else if(touched)
         {
          datetime c_time=setup.state!=S83_TOUCHED && outcome>=0?g_s83_outcomes[outcome].time:setup.end_time;
          S83Text(key+"_C",c_time,setup.level,"C",point_color,setup.direction>0?ANCHOR_UPPER:ANCHOR_LOWER,
@@ -2881,6 +3039,7 @@ string S83InputProblem()
   {
    if(LTF_Bars_To_Process<5) return "LTF_Bars_To_Process must be at least 5";
    if(Impulse_Candles<0 || Impulse_Min_ATR<0.0) return "the heavy-pressure inputs cannot be negative";
+   if(Engulfing_Window_Candles<1) return "Engulfing_Window_Candles must be at least 1";
    if(Risk_Percent<=0.0 || Risk_Percent>100.0) return "Risk_Percent must be above 0 and at most 100";
    if(Max_Trades_Per_Day<1) return "Max_Trades_Per_Day must be at least 1";
    if(Losses_To_End_Day<0) return "Losses_To_End_Day cannot be negative";
@@ -2896,6 +3055,7 @@ void S83Init()
   {
    g_s83_ready=false;
    g_s83_have_live=false;
+   g_s83_have_entry=false;
    ArrayResize(g_s83_setups,0);
    g_s83_breakeven_failed=0;
    g_s83_journaled="";
