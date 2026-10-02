@@ -1245,3 +1245,239 @@ and Python mirrors:
 - **The drawing limit.** In a 60-day visual run, the chart was checked at
   every M30 candle. It always showed exactly the latest 2 setups plus any
   live one. In 213 of those checks, older setups were hidden.
+
+## 83% Strategy 2.0 (`83% Strategy 2.0.mq5` and `83% Strategy 2.0.pine`)
+
+83% Strategy 2.0 follows the updated strategy guide. It is Base (v2.44) with
+the 83% Strategy built in, keeping the existing Fibonacci and execution logic
+but with much less around it.
+
+- **Fewer inputs.** 48 inputs in each file, against 107 in the first version
+  and 63 in Base itself.
+- **Removed:**
+  - Base's MA, session, ADX and ATR filters;
+  - Optimal Conditions and Tradable (Early);
+  - the Use HTF / MTF / LTF switches;
+  - the trade recommendations;
+  - the structure alerts;
+  - the six optional Fibonacci levels and their settings;
+  - the HTF EMA filter of the first version;
+  - `Setups_To_Show`;
+  - the risk cut after losses.
+- **Kept:**
+  - Base's structure engine and drawings, unchanged;
+  - Market Tradability, the internal structure and the Hurst exponent.
+- **Drawing settings:** colours, line styles and widths are fixed.
+
+The first version (`83% Strategy.mq5` / `.pine`) is unchanged.
+
+### The rules
+
+**Market direction.** The direction is the HTF Market Trend (H4 by
+default).
+- In a bullish market (Bullish or Bullish Transition), only buy setups are
+  scanned, shown and traded.
+- In a bearish market, only sell setups.
+- In Consolidation / Undefined, none.
+- When the direction changes, the live setup is cancelled and the drawn
+  setups are cleared.
+- The direction at each LTF candle is the HTF trend as a build at that
+  candle's open saw it.
+
+**Market filters.** An entry needs both, in the setup's direction:
+1. **Market Tradability reads Tradable.** This is Base's rule with only the
+   HTF selected:
+   - the HTF trend is Bullish (Bearish) by a BOS;
+   - its latest swings are an HH and an HL (an LL and an LH);
+   - its internal structure is bullish (bearish) by a BOS;
+   - the Hurst exponent is above `Hurst_Minimum` (0.50).
+
+   The reasons are word for word Base's.
+2. **The MTF's most recent structure is a BOS that formed an HH** (an LL
+   for sells). The MTF Market Trend (H1 by default) must read Bullish or
+   Bearish, not a Transition.
+
+**LTF setup.** The LTF is M30, with LTF Swing Detection level 3, and the
+setup must be found within the last `LTF_Bars_To_Process` (25) closed
+candles.
+- **A** is the most recent HL from which there was heavy buying pressure.
+- **Break of structure.** A candle closes above the swing high before A.
+- **B** is the highest high since A. It follows price until it is a
+  confirmed swing.
+- **Fibonacci.** It runs from B (0%) to A (100%).
+- **Entry.** Price touches the entry level.
+- **Invalid.** A new HH beyond a confirmed B before the entry level. The HL
+  is then used up.
+
+Sells mirror this with an LH, a close below the swing low before it, the
+lowest low since then as B, and a new LL as the invalidation. Heavy pressure,
+missed setups and how B moves are as in the first version.
+
+**Entry Fibonacci Level.** `Entry_Fib_Level` (Entry Fibonacci Level on
+TradingView) is a dropdown with one level: 70.5%, 78.6%, **83%** (the
+default) or 88.6%.
+- **Levels below two thirds are not offered.** With the take profit just
+  before B, a 1:2 stop at 61.8% or 50% could never stay behind A, so those
+  levels could never trade.
+- **At 70.5% some trades are skipped.** The 1:2 stop often only just fits
+  behind A. In the backtests below, 41 of 558 touches were skipped because
+  the stop would not have been behind A.
+
+**Only setups found within the processed bars are shown.** The chart shows
+the setups whose A lies within the last 25 LTF candles, created since the
+market last changed direction, so all of them are in the market's
+direction. A live setup expires when its A leaves the processed bars.
+
+### Risk management (all adjustable)
+
+- **Trading days.** Monday to Saturday (`Trade_Monday` ... `Trade_Sunday`).
+- **Trades per day.** At most `Max_Trades_Per_Day` (3) a day, one position
+  at a time.
+- **Losses end the day.** After `Losses_To_End_Day` (2) consecutive losses,
+  trading ends for that day.
+  - A loss closes more than half its initial risk beyond the entry.
+  - A breakeven exit is not a loss, and it ends a run of losses.
+  - The EA reads the day back from the deal history, so a restart keeps it.
+  - 0 switches this rule off.
+- **Risk per trade.** `Risk_Percent` (5%) of the balance is lost at the
+  stop. Lot size = balance x risk % / the loss of one lot at the stop.
+- **Take profit.** `TP_Buffer_ATR` (0.1) LTF ATR before B.
+- **Stop loss and reward-to-risk.**
+  - A stop `SL_Buffer_ATR` (0.5) LTF ATR behind A gives the natural ratio.
+  - The closer of 1:2 and 1:3 is used, moving the stop to match (1:2.4 uses
+    1:2).
+  - The stop always stays behind A.
+- **Breakeven.** The stop moves to the entry at `Breakeven_At_Percent` (60%)
+  of the way to the take profit.
+- **Deriv sizing.** `Minimum_Lot_Max_Risk_Multiple` (EA) and the minimum
+  quantity settings (TradingView) work as in the first version.
+
+### Defaults and inputs
+
+- **Timeframes.** HTF H4, MTF H1, LTF M30.
+  - The guide sets the LTF to 30 minutes, and the MTF must sit between the
+    LTF and the HTF.
+  - Both files check that the HTF is longer than the MTF and the MTF longer
+    than the LTF.
+  - Base's own default HTF (H1) would leave no room for an H1 MTF.
+- **Swing Detection.** HTF 3, MTF 5, LTF 3.
+- **Internal Structure.** One `Internal_Structure_Level` (4) for every
+  timeframe. Its chart drawing (`Show_Internal_Structure`) is off by
+  default.
+- **Hurst exponent.** `Hurst_Timeframe` (HTF), `Hurst_Candles` (100) and
+  `Hurst_Minimum` (0.50, as in Base; the first version used 0.55).
+- **Alerts.** Popup and push alerts announce armed setups and entries only.
+- **Magic number.** `Magic_Number` is 20261002, so the two versions keep
+  separate trades and daily counts on one account.
+
+### The dashboard
+
+**Market rows:**
+- HTF Market Trend, with its Swing Structure and Internal Structure below
+  it;
+- MTF Market Trend;
+- Hurst Exponent;
+- Market Tradability and its Tradability Reason.
+
+**Strategy rows:**
+- **83% Strategy.** The state: a setup armed, a position open, or waiting
+  for a buy or sell setup.
+- **Setup.** A, B and the entry price. B reads `(forming)` while it still
+  follows price.
+- **Entry Filters.** PASS, or BLOCKED with the reason:
+  - Market Tradability is Not Tradable;
+  - the MTF is a Transition or the other way;
+  - the market has no direction.
+- **Risk Today.** Trades out of the maximum and losses in a row, with
+  "(done for today)" once the losses have ended the day.
+- **Last Setup.** What happened to the latest setup that reached its level.
+
+On the LTF chart each shown setup has its Fibonacci (0%, the entry level
+with its price, 100%), A / B / C and the target and stop zones. Failed
+setups are dotted with their reason.
+
+### MetaTrader 5 and TradingView
+
+- **MetaTrader 5.** Install `83% Strategy 2.0.mq5` in `MQL5/Experts`, compile
+  it, and backtest it with **Every tick** modelling.
+  - `Trade_Mode` is **Strategy Tester only** by default.
+  - Entries are market orders on the first tick at the level.
+- **TradingView.** Add `83% Strategy 2.0.pine` to an M30 chart (the LTF).
+  Entries are limit orders at the level, placed at a candle's close.
+- **Differences on TradingView:**
+  - breakeven is checked at candle closes;
+  - Pine has no spread;
+  - days follow the exchange time zone;
+  - a new HTF or MTF candle reaches the filters, and the market's direction,
+    one LTF candle after it closes.
+  - The structure is calculated on all loaded history. The EA replays three
+    times Bars To Process, the same as for its direction. On the test
+    markets the two directions always agreed (see below).
+
+### How it was checked
+
+Nothing here has been compiled in MetaEditor or run in TradingView. The
+checks used the test harness (MQL5 compiled as C++ against a mock terminal)
+and Python mirrors:
+
+- **Base's behaviour is unchanged.** Base's whole test suite passes against
+  the 2.0 EA.
+- **Every trade follows the rules.** Tick-level backtests ran on 30
+  generated markets of 120 days each, with the default settings. Every trade
+  was rechecked with independent code:
+  - A, the break of structure, B, the heavy pressure and the processed
+    bars;
+  - the entry level at the selected Fibonacci ratio, and the first touch;
+  - Market Tradability recomputed: the HTF trend, its swings, an
+    independently written internal structure, and a separately written
+    Hurst estimator;
+  - the MTF's latest break a BOS in the trade's direction;
+  - the market's direction from the setup's candle to the entry;
+  - the take profit, stop, 1:2 / 1:3 choice and lot size;
+  - 3 trades a day, the end of the day after 2 consecutive losses, the
+    trading days, and breakeven.
+
+  All 120 trades passed. Every one of the 426 touches of a live setup was
+  traded or rejected for a genuine reason. Most rejections were Not
+  Tradable; 22 were for the MTF not being a BOS in the setup's direction.
+- **Other settings, all passing.** Most runs used a Hurst minimum of 0.30, so
+  that there were more trades:
+  - Hurst minimum 0.30 at 83% (135 trades);
+  - entry at 70.5% (136 trades), 78.6% (149 trades) and 88.6% (120 trades);
+  - HTF H2 / MTF H1 (117 trades);
+  - the Hurst exponent on the MTF (88 trades).
+- **Market direction.** Across these backtests and the limit tests, every
+  live setup was checked against the market's direction at every candle
+  (30,134 checks). Each of the 2,143 setups that ended was audited over its
+  life; 113 of them were cancelled when the market turned, on the right
+  candle.
+- **Market Tradability.** The 2.0 EA's state and reason equal Base's (only
+  the HTF selected) word for word on all 1,715 rule cases. A line-by-line
+  Python copy of the 2.0 Pine rule gave the same on every case.
+- **The EA and the Pine strategy agree.** The EA's setups after every closed
+  candle were compared with a line-by-line Python copy of the 2.0 Pine setup
+  logic:
+  - **Coverage:** 23 generated markets, 4 of them with market directions
+    flipping every 2 to 30 candles; several swing levels, windows (10 to 60),
+    pressure settings and all four entry levels.
+  - **Setups:** all 2,115 setups and 132,265 candle snapshots matched.
+  - **Drawn setups:** the set the Pine draws matched the EA's on every
+    candle, 40,086 setup-candles in all.
+  - **Market direction:** the EA's (its replay window) and the Pine's (all
+    history) matched on all 109,421 candles.
+- **The tests catch mistakes.** Planting a mistake made them fail:
+  - no cancellation when the market turns: 2,528 differences;
+  - a fixed 83% level: 27,780 differences;
+  - a Pine copy without the clear on a change of direction: 3,402
+    differences;
+  - an EA without the MTF filter: rule violations in 8 markets;
+  - an EA that never ends the day: caught by the unit test and the
+    backtests.
+- **Drawing.** Three visual runs of 120 days checked the chart at every M30
+  candle (17,280 checks):
+  - the live setup showed its three levels, A and B (2,066 checks);
+  - the traded setups showed C and their zones (19 trades);
+  - the drawn setups followed the display rule exactly, including 53 clears
+    by a change of direction on the forming candle;
+  - structure stayed within the processed candles.
+- **The Pine file parses** with pynescript (a syntax check only).
