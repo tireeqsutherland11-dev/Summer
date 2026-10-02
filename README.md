@@ -1307,7 +1307,7 @@ candles.
   confirmed swing.
 - **Fibonacci.** It runs from B (0%) to A (100%).
 - **Entry.** Price touches the entry level. With the engulfing confirmation
-  (on by default), an engulfing candle must then confirm it; see
+  (off by default), an engulfing candle must then confirm it; see
   [Engulfing confirmation](#engulfing-confirmation).
 - **Invalid.** A new HH beyond a confirmed B before the entry level. The HL
   is then used up.
@@ -1333,10 +1333,14 @@ direction. A live setup expires when its A leaves the processed bars.
 
 ### Engulfing confirmation
 
-With `Engulfing_Confirmation` on (the default; "Engulfing Confirmation After
-The Touch" on TradingView), touching the entry level does not enter the
-trade by itself. The setup is **touched** and waits for an engulfing candle
-in its direction on the LTF.
+`Engulfing_Confirmation` ("Engulfing Confirmation After The Touch" on
+TradingView) is off by default. Switched on, touching the entry level does
+not enter the trade by itself. The setup is **touched** and waits for an
+engulfing candle in its direction on the LTF.
+
+It makes trades much rarer: in the backtests below most 120-day runs had no
+trade at all with it on (see
+[Why a backtest shows no trades](#why-a-backtest-shows-no-trades)).
 
 - **The engulfing.** For a buy, a bearish candle followed by a bullish
   candle that:
@@ -1353,14 +1357,16 @@ in its direction on the LTF.
   - price makes a new HH beyond B (a new LL for a sell); or
   - the window runs out.
 
-  The setup also expires when A leaves the processed bars, and is cancelled
-  when the market changes direction. A failed setup's A is used up, like an
+  The setup also expires when A leaves the processed bars: the touch and the
+  engulfing must both come while A is within them. It is cancelled when the
+  market changes direction. A failed setup's A is used up, like an
   invalidated one.
 - **The entry.** The trade is entered at the market once the engulfing
   candle has closed: on the first tick of the next candle in the EA, and by
   a market order at the engulfing candle's close on TradingView (filled at
-  the next open). The market filters, the day's limits and the risk
-  management then apply as usual.
+  the next open). After a weekend or session break the next candle is the
+  first one after the break. The market filters, the day's limits and the
+  risk management then apply as usual.
 - **The stop.** For an engulfing entry, the stop goes behind the engulfing
   candle instead of A:
   - the ATR stop is `SL_Buffer_ATR` (0.5) LTF ATR below the engulfing
@@ -1369,8 +1375,8 @@ in its direction on the LTF.
   - the closer of 1:2 and 1:3 is used, moving the stop to match, as long as
     the stop stays behind the engulfing candle. If a 1:2 stop would sit
     inside the engulfing candle, the trade is skipped with that reason.
-- **Turning it off.** With `Engulfing_Confirmation` off, the strategy enters
-  at the first touch of the level, with the stop behind A, as before.
+- **Off (the default).** The strategy enters at the first touch of the
+  level, with the stop behind A.
 
 ### Risk management (all adjustable)
 
@@ -1438,6 +1444,10 @@ in its direction on the LTF.
 - **Risk Today.** Trades out of the maximum and losses in a row, with
   "(done for today)" once the losses have ended the day.
 - **Last Setup.** What happened to the latest setup that reached its level.
+- **This Run.** Since the EA started (on TradingView, since the start of the
+  chart's history): the setups found, how many reached the entry level (and
+  with the confirmation, how many an engulfing confirmed), the trades, and
+  the most frequent reason a setup that reached its entry was not traded.
 
 On the LTF chart each shown setup has its Fibonacci (0%, the entry level
 with its price, 100%), A / B / C and the target and stop zones. Failed
@@ -1453,13 +1463,16 @@ setups are dotted with their reason.
 - **MetaTrader 5.** Install `83% Strategy 2.0.mq5` in `MQL5/Experts`, compile
   it, and backtest it with **Every tick** modelling.
   - `Trade_Mode` is **Strategy Tester only** by default.
-  - Entries are market orders: on the first tick after the engulfing candle
-    closes, or without the confirmation on the first tick at the level.
+  - Entries are market orders: on the first tick at the level, or with the
+    confirmation on the first tick after the engulfing candle closes.
+  - At the end of a test run, a run summary is printed in the Journal (see
+    [Why a backtest shows no trades](#why-a-backtest-shows-no-trades)).
 - **TradingView.** Add `83% Strategy 2.0.pine` to an M30 chart (the LTF).
-  Entries are market orders at the engulfing candle's close, or without the
-  confirmation limit orders at the level, placed at a candle's close. For a
-  market order the stop and target are planned from that close; the EA plans
-  them from its actual entry price.
+  On any other timeframe it places no orders, and the dashboard reads "Open a
+  30m chart to trade". Entries are limit orders at the level, placed at a
+  candle's close, or with the confirmation market orders at the engulfing
+  candle's close. For a market order the stop and target are planned from
+  that close; the EA plans them from its actual entry price.
 - **Differences on TradingView:**
   - breakeven is checked at candle closes;
   - Pine has no spread;
@@ -1470,6 +1483,79 @@ setups are dotted with their reason.
     times Bars To Process, the same as for its direction. On the test
     markets the two directions always agreed (see below).
 
+### Why a backtest shows no trades
+
+The strategy trades rarely by design. Every entry needs all of these at
+once:
+- a market direction (the HTF Market Trend);
+- Market Tradability reading Tradable: the HTF trend Bullish (Bearish) by a
+  BOS with HH + HL (LL + LH), a BOS internal structure, and a Hurst exponent
+  above 0.50;
+- the MTF's latest break a BOS in the same direction;
+- an LTF setup (an HL with heavy pressure and a break of structure) whose
+  entry level is touched while A is within the last 25 LTF candles;
+- with the engulfing confirmation, an engulfing within 2 candles of the
+  touch.
+
+**How often it trades.** Backtests with the default settings on 30
+generated markets of 120 days each:
+
+| Generated markets | Confirmation off (the default) | Confirmation on |
+|---|---|---|
+| Trending | 120 trades; 2 of the 30 markets had none | 11 trades; 20 had none |
+| Mildly trending | 96 trades; 2 had none | 10 trades; 22 had none |
+| Random walk (like Deriv's Volatility indices) | 80 trades; 7 had none | 5 trades; 25 had none |
+
+With the confirmation on, most 120-day backtests make no trade at all, which
+is why it is now off by default. Even with it off, expect roughly one trade
+a month on one market, and none in some months. Real markets may differ from
+these generated ones.
+
+**What blocks most.** On the random-walk markets, 532 of the 612 touches were
+not traded, 518 of them (97%) because Market Tradability was Not Tradable.
+In those 518:
+- the Hurst exponent was not above 0.50 in 58%;
+- the internal structure was not a BOS in the direction in 37%;
+- the swings were not HH + HL (LL + LH) in 37%;
+- the HTF was only in a Transition in 20%.
+
+One touch can fail several of these.
+
+**When a backtest shows no trades:**
+- **TradingView.** The strategy must be on an M30 chart (the LTF). On any
+  other timeframe it places no orders and the dashboard reads "Open a 30m
+  chart to trade". The test covers only the history the chart has loaded,
+  which depends on the TradingView plan; a few months may well have no
+  trade.
+- **MetaTrader 5.** Test a long period (a year or more) with Every tick or
+  1 minute OHLC modelling. `Trade_Mode` Off makes no trades.
+- **Read the run summary.** The EA prints one in the Journal at the end of
+  every test run, and the dashboard's This Run row shows the same in short.
+  For example:
+
+  ```
+  83% Strategy 2.0 run summary (<symbol>, M30 setups):
+    67 setups found, 15 reached the 83% level, 2 traded.
+    Other endings: 32 invalidated (a new HH/LL first), 16 expired,
+    4 cancelled (the market turned), 0 missed, 0 replaced.
+    Not traded: Market Tradability is Not Tradable (12)
+    Not traded: the H1 Market Trend was not a BOS in the setup's direction (1)
+  ```
+
+  With the confirmation it also gives the setups confirmed and the failed
+  waits by cause. A run with no trades ends with why: no setup formed, none
+  reached the level, none was confirmed, or the ones that reached it were
+  skipped for the reasons listed.
+
+**Trading more often.** Each of these changes the strategy, so test it:
+- leave the engulfing confirmation off;
+- lower `Hurst_Minimum`. At 0.30 the random-walk markets gave 164 trades
+  instead of 80, and every market traded, but those trades lost 15.1R in
+  total (the 80 at 0.50 made +1.9R). On the trending markets 0.30 gave 135
+  trades instead of 120;
+- with the confirmation, a longer `Engulfing_Window_Candles`: 4 candles gave
+  39 trades against 22 with 2 (Hurst minimum 0.30, 60 trending markets).
+
 ### How it was checked
 
 Nothing here has been compiled in MetaEditor or run in TradingView. The
@@ -1479,8 +1565,8 @@ and Python mirrors:
 - **Base's behaviour is unchanged.** Base's whole test suite passes against
   the 2.0 EA.
 - **Every trade follows the rules.** Tick-level backtests ran on 30
-  generated markets of 120 days each, with the default settings and the
-  engulfing confirmation off. Every trade was rechecked with independent
+  generated markets of 120 days each, with the default settings (the
+  engulfing confirmation off). Every trade was rechecked with independent
   code:
   - A, the break of structure, B, the heavy pressure and the processed
     bars;
@@ -1494,13 +1580,13 @@ and Python mirrors:
   - 3 trades a day, the end of the day after 2 consecutive losses, the
     trading days, and breakeven.
 
-  All 120 trades passed. Every one of the 426 touches of a live setup was
-  traded or rejected for a genuine reason. Most rejections were Not
-  Tradable; 22 were for the MTF not being a BOS in the setup's direction.
-  These results are the same as before the engulfing confirmation was
-  added.
-- **The engulfing confirmation.** The same 30 markets with the defaults
-  (the confirmation on):
+  All 120 trades passed. Every one of the 428 touches of a live setup was
+  traded or rejected for a genuine reason. Most rejections (285 of 308) were
+  Not Tradable; 22 were for the MTF not being a BOS in the setup's
+  direction. The 120 trades are the same as before the engulfing
+  confirmation was added.
+- **The engulfing confirmation.** The same 30 markets with the
+  confirmation on:
   - 57 setups were confirmed by an engulfing;
   - 11 were traded, 2 of them on an engulfing that was the touching candle
     itself;
@@ -1518,6 +1604,17 @@ and Python mirrors:
   All 11 passed, and every confirmed setup was traded or rejected for a
   genuine reason. A separate test checked the engulfing rule on all 625
   combinations of two candle bodies (15 bullish and 15 bearish engulfings).
+- **After a weekend.** A unit test confirms a setup on Friday's last M30
+  candle and checks that the EA enters on Monday's first tick, once, and not
+  on a later candle. Before this fix the EA dropped such a setup without
+  entering or recording it; on the mildly trending markets one was dropped.
+- **Random-walk and mildly trending markets.** The same checks passed on 30
+  of each, with the confirmation off and on (the trade counts are in the
+  table above).
+- **The run summary.** In every backtest its trades equalled the positions
+  opened, and its skipped setups the touches (or confirmations) the checks
+  saw rejected. Every setup that reached its entry was either traded or
+  skipped.
 - **Engulfing confirmation with other settings, all passing.** These runs
   used 60 markets and a Hurst minimum of 0.30:
   - 83%: 22 trades;
@@ -1548,8 +1645,15 @@ and Python mirrors:
   - **Setups:** all 2,115 setups and 132,265 candle snapshots matched.
   - **Engulfing confirmation:** it was on in 17 of the markets, with windows
     of 2 to 4 candles. The touches, the waits (648 candle snapshots of a
-    setup waiting), the 133 confirmations (with their close and stop) and
-    the 368 failed waits all matched.
+    setup waiting), the 127 confirmations (with their close and stop) and
+    the 360 failed waits all matched.
+  - **Expiry with the confirmation:** the Pine now expires a setup before
+    the candle on which its A leaves the processed candles, as the EA does.
+    Before, the Pine could confirm (and trade) a setup on that candle that
+    the EA never saw: 6 of 133 confirmations on these markets.
+  - **Run counts:** the EA's run summary equalled the Pine's This Run
+    counters on all 23 markets: 2,115 setups found, 629 reached the level,
+    127 confirmed.
   - **Drawn setups:** the set the Pine draws matched the EA's on every
     candle, 40,086 setup-candles in all.
   - **Market direction:** the EA's (its replay window) and the Pine's (all
@@ -1566,7 +1670,11 @@ and Python mirrors:
   - an engulfing window one candle too long: 3,068 differences;
   - an engulfing that ignores the open: caught by the 625-combination test
     (the generated markets always open at the previous close, so the
-    backtests alone could not catch it).
+    backtests alone could not catch it);
+  - the Pine without the expiry before the candle A leaves on: the run
+    counts differed on 13 of the 17 markets with the confirmation;
+  - the EA's old entry window, which ran by the clock: the weekend test
+    fails.
 - **Drawing.** Five visual runs of 120 days checked the chart at every M30
   candle (28,800 checks). Two of them had the engulfing confirmation on:
   - the live setup showed its three levels, A and B (3,294 checks);

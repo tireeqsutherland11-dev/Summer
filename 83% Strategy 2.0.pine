@@ -106,7 +106,7 @@ ltfBarsToProcess = input.int(25, "LTF Independent Processed Bars", minval = 5, m
 entryLevelInput = input.string("83%", "Entry Fibonacci Level", options = ["70.5%", "78.6%", "83%", "88.6%"], group = grpS83, tooltip = "The retracement of the leg from B (0%) to A (100%) that is the entry. Levels below two thirds are not offered: with the take profit just before B, a 1:2 stop would never stay behind A.")
 impulseCandles = input.int(3, "Heavy Pressure: Candles After The HL/LH", minval = 0, maxval = 20, group = grpS83, tooltip = "Heavy pressure must show within this many candles of A (A's candle included).")
 impulseMinAtr = input.float(2.0, "Heavy Pressure: Minimum Move (LTF ATR)", minval = 0.0, step = 0.1, group = grpS83, tooltip = "How far beyond A a candle must close within those candles, in 14-candle LTF ATR at A.")
-engulfingConfirmation = input.bool(true, "Engulfing Confirmation After The Touch", group = grpS83, tooltip = "On: touching the entry level does not enter by itself. A bullish (bearish) engulfing LTF candle must follow, on the touching candle or within the window, and the trade is entered at the market once it has closed, with its stop behind the engulfing candle's low (high) instead of A. The wait fails on a close through A, a new HH (LL) beyond B, or the window running out. Off: the entry is a limit order at the level.")
+engulfingConfirmation = input.bool(false, "Engulfing Confirmation After The Touch", group = grpS83, tooltip = "On: touching the entry level does not enter by itself. A bullish (bearish) engulfing LTF candle must follow, on the touching candle or within the window, and the trade is entered at the market once it has closed, with its stop behind the engulfing candle's low (high) instead of A. The wait fails on a close through A, a new HH (LL) beyond B, or the window running out. Off: the entry is a limit order at the level.")
 engulfingWindow = input.int(2, "Engulfing Within N LTF Candles (2 = the touching candle or the next)", minval = 1, maxval = 50, group = grpS83, tooltip = "How many LTF candles, the touching one included, the engulfing may take.")
 
 grpS83Risk = "83% Strategy - Risk Management"
@@ -1726,6 +1726,14 @@ var float s83PlannedSl = na
 var float s83PlannedTp = na
 var float s83PlannedRr = na
 var string s83LastNote = ""
+// The run so far, for the dashboard's This Run row (the EA's run summary):
+// the setups found, those that reached the entry level, those an engulfing
+// confirmed, and why the setups that reached their entry were not traded.
+var int s83RunFound = 0
+var int s83RunReached = 0
+var int s83RunConfirmed = 0
+var array<string> s83SkipWhy = array.new<string>()
+var array<int> s83SkipCount = array.new<int>()
 var bool s83Breakeven = false
 // The entry filters behind the pending order, for the dashboard.
 var int s83FilterDir = 0
@@ -1733,6 +1741,31 @@ var string s83FilterNow = ""
 
 s83DayEnded(int losses) =>
     lossesToEndDay > 0 and losses >= lossesToEndDay
+
+// Why a setup was not traded, grouped as in the EA: the market filters by
+// filter and the day's limits by limit; the rest as they read.
+s83SkipCategory(string why) =>
+    string r = why
+    if str.startswith(why, "Market Tradability is Not Tradable")
+        r := "Market Tradability is Not Tradable"
+    else if str.startswith(why, "the " + tfName(mtfTf) + " Market Trend is")
+        r := "the " + tfName(mtfTf) + " Market Trend was not a BOS in the setup's direction"
+    else if str.contains(why, "is not a trading day")
+        r := "not a trading day"
+    else if str.contains(why, "trades today is reached")
+        r := "the maximum trades for the day"
+    else if str.contains(why, "consecutive losses ended trading")
+        r := "losses ended the day"
+    r
+
+s83Skip(string why) =>
+    string key = s83SkipCategory(why)
+    int i = s83SkipWhy.indexof(key)
+    if i < 0
+        s83SkipWhy.push(key)
+        s83SkipCount.push(1)
+    if i >= 0
+        s83SkipCount.set(i, s83SkipCount.get(i) + 1)
 
 // ------------------------------------------------------------------ setups
 var S83Setup s83Current = na
@@ -1947,12 +1980,24 @@ if barstate.isconfirmed and s83OnLtf
         S83Setup s = s83Current
         if s83MarketDir != s.dir and not s.traded
             s83End(s, S83_CANCELLED, time, "cancelled: the market is no longer " + trendWord(s.dir))
+        // With the confirmation, the touch and the engulfing must come while A
+        // is within the processed candles, as the EA's replay sees them: the
+        // setup expires before the candle on which A leaves them.
+        if engulfingConfirmation and s83IsLive(s) and s.aBar < bar_index - ltfBarsToProcess + 1
+            s83End(s, S83_EXPIRED, time, "expired: A left the processed candles")
+        int before = s.state
         s83Step(s)
+        if before == S83_ARMED and (s.state == S83_TOUCHED or s.state == S83_WAITING or s.state == S83_CONFIRMED or s.state == S83_FAILED)
+            s83RunReached += 1
         s83FollowB(s)
         if s83IsLive(s) and s.aBar < bar_index - ltfBarsToProcess + 1
             s83End(s, S83_EXPIRED, time, "expired: A left the processed candles")
         if not s83IsLive(s)
             // A touched (limit) setup: traded on this candle, or why not.
+            if s.state == S83_TOUCHED and not s.traded
+                s83Skip(s.note == "" ? "the limit order was not filled" : s.note)
+            if s.state == S83_CONFIRMED
+                s83RunConfirmed += 1
             if s.state == S83_TOUCHED
                 s.note := s.traded ? "" : entryLevelInput + " touched; not traded: " + s.note
                 if not s.traded
@@ -2002,6 +2047,7 @@ if barstate.isconfirmed and s83OnLtf
                     s83UsedBuy.push(a.pivotTime)
                 else
                     s83UsedSell.push(a.pivotTime)
+                s83RunFound += 1
                 bool missed = false
                 int firstAfter = math.max(bBar, broke) + 1
                 if firstAfter <= bar_index
@@ -2114,6 +2160,7 @@ if barstate.isconfirmed and s83OnLtf
         s83Current.note := why
     // A confirmed setup that is not traded says why on the chart.
     if confirmedNow and not place
+        s83Skip(why)
         s83Current.note := s83EngulfingText(s83Current.dir) + " after the " + entryLevelInput + " touch; not traded: " + why
         s83LastNote := s83Current.note
         if not s83Current.pruned and not na(s83Current.labels)
@@ -2246,4 +2293,17 @@ if barstate.islast or barstate.islastconfirmedhistory
         row += 1
     if s83LastNote != ""
         dashRow(row, "Last Setup:", wrapText(s83LastNote), DASH_TEXT_COLOR, "")
+        row += 1
+    if s83OnLtf
+        string runText = str.tostring(s83RunFound) + " setups, " + str.tostring(s83RunReached) + " reached the " + entryLevelInput + " level" + (engulfingConfirmation ? ", " + str.tostring(s83RunConfirmed) + " confirmed by an engulfing" : "") + ", " + str.tostring(strategy.closedtrades + strategy.opentrades) + " traded"
+        int top = -1
+        int topCount = 0
+        if s83SkipCount.size() > 0
+            for i = 0 to s83SkipCount.size() - 1
+                if s83SkipCount.get(i) > topCount
+                    top := i
+                    topCount := s83SkipCount.get(i)
+        if top >= 0
+            runText += "; most often not traded: " + s83SkipWhy.get(top) + " (" + str.tostring(topCount) + ")"
+        dashRow(row, "This Run:", wrapText(runText), DASH_TEXT_COLOR, "Since the start of the chart's history: the setups found, those that reached the entry level, the trades, and the most frequent reason a setup that reached its entry was not traded.")
         row += 1

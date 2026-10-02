@@ -72,7 +72,7 @@ input int    LTF_Bars_To_Process=25;              // LTF Independent Processed B
 input S83_ENTRY_LEVEL Entry_Fib_Level=S83_ENTRY_83; // Entry Fibonacci Level
 input int    Impulse_Candles=3;                   // Heavy Pressure: Candles After The HL/LH
 input double Impulse_Min_ATR=2.0;                 // Heavy Pressure: Minimum Move (LTF ATR)
-input bool   Engulfing_Confirmation=true;         // Engulfing Confirmation After The Touch
+input bool   Engulfing_Confirmation=false;        // Engulfing Confirmation After The Touch
 input int    Engulfing_Window_Candles=2;          // Engulfing Within N LTF Candles (2 = the touching candle or the next)
 
 input group "83% Strategy - Risk Management"
@@ -2052,6 +2052,23 @@ S83_DAY g_s83_day;
 ulong g_s83_breakeven_failed=0;
 string g_s83_journaled="";
 
+// The run so far, for the run summary (see S83RunSummary): every setup
+// created since the EA started with its latest state, the trades, and why
+// the setups that reached their entry were not traded.
+struct S83_RUN_SETUP
+  {
+   int direction;
+   datetime a_time;
+   int state;
+   int fail;
+   bool reached;            // price reached the entry level
+  };
+S83_RUN_SETUP g_s83_run[];
+datetime g_s83_run_from=0;         // setups created before the start are not counted
+int g_s83_run_trades=0;
+string g_s83_skip_reasons[];
+int g_s83_skip_counts[];
+
 string S83Side(const int direction) { return direction>0?"buy":"sell"; }
 string S83ALabel(const int direction) { return direction>0?"HL":"LH"; }
 string S83BLabel(const int direction) { return direction>0?"HH":"LL"; }
@@ -2362,6 +2379,194 @@ void S83Record(const S83_SETUP &setup,const int state,const bool traded,const st
    g_s83_outcomes[n].rr=rr;
   }
 
+// ----------------------------------------------------------- run summary
+// Where a setup is in the run (see S83_RUN_SETUP), or -1.  The setups of a
+// replay are recent, so only the latest entries are searched.
+int S83RunIndex(const int direction,const datetime a_time)
+  {
+   int n=ArraySize(g_s83_run);
+   for(int i=n-1;i>=0 && i>=n-200;i--)
+      if(g_s83_run[i].direction==direction && g_s83_run[i].a_time==a_time) return i;
+   return -1;
+  }
+
+int S83RunAdd(const S83_SETUP &setup)
+  {
+   int n=ArraySize(g_s83_run);
+   ArrayResize(g_s83_run,n+1,256);
+   g_s83_run[n].direction=setup.direction;
+   g_s83_run[n].a_time=setup.a_time;
+   g_s83_run[n].state=setup.state;
+   g_s83_run[n].fail=setup.fail;
+   g_s83_run[n].reached=false;
+   return n;
+  }
+
+// Adds the setups of a replay created since the start to the run, or
+// updates their state.  A setup leaves the replay once its A leaves the
+// processed candles, so an entry still armed (or waiting) that is not the
+// live setup has expired (see S83RunCounts).
+void S83RunNote(const S83_SETUP &setups[])
+  {
+   for(int k=0;k<ArraySize(setups);k++)
+     {
+      if(setups[k].created_time<g_s83_run_from) continue;
+      int at=S83RunIndex(setups[k].direction,setups[k].a_time);
+      if(at<0) at=S83RunAdd(setups[k]);
+      g_s83_run[at].state=setups[k].state;
+      g_s83_run[at].fail=setups[k].fail;
+      if(setups[k].state==S83_TOUCHED || setups[k].touch_time>0) g_s83_run[at].reached=true;
+     }
+  }
+
+// A setup entered (or skipped) between candle closes: it reached its entry.
+void S83RunReached(const S83_SETUP &setup)
+  {
+   int at=S83RunIndex(setup.direction,setup.a_time);
+   if(at<0) at=S83RunAdd(setup);
+   g_s83_run[at].reached=true;
+   if(g_s83_run[at].state==S83_ARMED) g_s83_run[at].state=S83_TOUCHED;
+  }
+
+// A setup invalidated between candle closes (by the tick handler).
+void S83RunInvalid(const S83_SETUP &setup)
+  {
+   int at=S83RunIndex(setup.direction,setup.a_time);
+   if(at<0) at=S83RunAdd(setup);
+   if(g_s83_run[at].state==S83_ARMED) g_s83_run[at].state=S83_INVALID;
+  }
+
+// Why a setup was not traded, grouped: the market filters by filter and the
+// day's limits by limit; the rest as they read.
+string S83SkipCategory(const string reason)
+  {
+   if(StringFind(reason,"Market Tradability is Not Tradable")==0) return "Market Tradability is Not Tradable";
+   if(StringFind(reason,"the "+MTFName()+" Market Trend is")==0)
+      return "the "+MTFName()+" Market Trend was not a BOS in the setup's direction";
+   if(StringFind(reason,"is not a trading day")>=0) return "not a trading day";
+   if(StringFind(reason,"trades today is reached")>=0) return "the maximum trades for the day";
+   if(StringFind(reason,"consecutive losses ended trading")>=0) return "losses ended the day";
+   return reason;
+  }
+
+void S83Skip(const string reason)
+  {
+   string key=S83SkipCategory(reason);
+   int n=ArraySize(g_s83_skip_reasons);
+   for(int i=0;i<n;i++)
+      if(g_s83_skip_reasons[i]==key)
+        {
+         g_s83_skip_counts[i]++;
+         return;
+        }
+   ArrayResize(g_s83_skip_reasons,n+1);
+   ArrayResize(g_s83_skip_counts,n+1);
+   g_s83_skip_reasons[n]=key;
+   g_s83_skip_counts[n]=1;
+  }
+
+// The run's setups: found, reached the entry level, and by state (indexed
+// by S83_STATE) and failure (by S83_FAIL).
+void S83RunCounts(int &found,int &reached,int &states[],int &fails[])
+  {
+   ArrayResize(states,10);
+   ArrayResize(fails,4);
+   ArrayInitialize(states,0);
+   ArrayInitialize(fails,0);
+   found=ArraySize(g_s83_run);
+   reached=0;
+   for(int i=0;i<found;i++)
+     {
+      int st=g_s83_run[i].state;
+      if((st==S83_ARMED || st==S83_WAITING) &&
+         !(g_s83_have_live && g_s83_live.direction==g_s83_run[i].direction && g_s83_live.a_time==g_s83_run[i].a_time))
+         st=S83_EXPIRED;
+      if(st>=0 && st<10) states[st]++;
+      if(st==S83_FAILED && g_s83_run[i].fail>=1 && g_s83_run[i].fail<=3) fails[g_s83_run[i].fail]++;
+      if(g_s83_run[i].reached) reached++;
+     }
+  }
+
+void S83Line(string &lines[],const string text)
+  {
+   int n=ArraySize(lines);
+   ArrayResize(lines,n+1);
+   lines[n]=text;
+  }
+
+// The run summary, one line per element: what became of the setups found
+// since the start, the trades, and why the setups that reached their entry
+// were not traded, most frequent first.
+void S83RunSummary(string &lines[])
+  {
+   int found=0,reached=0;
+   int states[],fails[];
+   S83RunCounts(found,reached,states,fails);
+   ArrayResize(lines,0);
+   S83Line(lines,(string)found+" setups found, "+(string)reached+" reached the "+S83LevelText()+" level, "+
+           (string)g_s83_run_trades+" traded.");
+   if(Engulfing_Confirmation)
+      S83Line(lines,"Engulfing confirmation: "+(string)states[S83_CONFIRMED]+" confirmed; "+
+              (string)states[S83_FAILED]+" failed ("+(string)fails[S83_FAIL_THROUGH_A]+" closed through A, "+
+              (string)fails[S83_FAIL_NEW_B]+" made a new HH/LL first, "+(string)fails[S83_FAIL_WINDOW]+
+              " had no engulfing within "+(string)Engulfing_Window_Candles+" candles).");
+   S83Line(lines,"Other endings: "+(string)states[S83_INVALID]+" invalidated (a new HH/LL first), "+
+           (string)states[S83_EXPIRED]+" expired, "+(string)states[S83_CANCELLED]+" cancelled (the market turned), "+
+           (string)states[S83_MISSED]+" missed, "+(string)states[S83_REPLACED]+" replaced"+
+           (states[S83_ARMED]+states[S83_WAITING]>0?", 1 live now":"")+".");
+   int n=ArraySize(g_s83_skip_counts);
+   int order[];
+   ArrayResize(order,n);
+   for(int i=0;i<n;i++) order[i]=i;
+   for(int i=0;i<n;i++)
+      for(int j=i+1;j<n;j++)
+         if(g_s83_skip_counts[order[j]]>g_s83_skip_counts[order[i]])
+           {
+            int t=order[i];
+            order[i]=order[j];
+            order[j]=t;
+           }
+   for(int i=0;i<n;i++)
+      S83Line(lines,"Not traded: "+g_s83_skip_reasons[order[i]]+" ("+(string)g_s83_skip_counts[order[i]]+")");
+   if(g_s83_run_trades>0) return;
+   if(found==0)
+      S83Line(lines,"No trades: no setup formed. A setup needs the "+HTFName()+" Market Trend to point a "+
+              "direction and an "+LTFName()+" HL (LH) with heavy pressure and a break of structure.");
+   else if(reached==0)
+      S83Line(lines,"No trades: no setup reached the "+S83LevelText()+" level before it ended.");
+   else if(Engulfing_Confirmation && states[S83_CONFIRMED]==0)
+      S83Line(lines,"No trades: no touched setup was confirmed by an engulfing in time.");
+   else
+      S83Line(lines,"No trades: the setups that reached their entry were not traded, for the reasons above.");
+  }
+
+// The run in one line, for the dashboard.
+string S83RunLine()
+  {
+   int found=0,reached=0;
+   int states[],fails[];
+   S83RunCounts(found,reached,states,fails);
+   string text=(string)found+" setups, "+(string)reached+" reached the "+S83LevelText()+" level"+
+               (Engulfing_Confirmation?", "+(string)states[S83_CONFIRMED]+" confirmed by an engulfing":"")+
+               ", "+(string)g_s83_run_trades+" traded";
+   int top=-1;
+   for(int i=0;i<ArraySize(g_s83_skip_counts);i++)
+      if(top<0 || g_s83_skip_counts[i]>g_s83_skip_counts[top]) top=i;
+   if(top>=0) text+="; most often not traded: "+g_s83_skip_reasons[top]+" ("+(string)g_s83_skip_counts[top]+")";
+   return text;
+  }
+
+// At the end of a Strategy Tester run, the summary goes to the Journal, so a
+// run without trades says why.
+void S83PrintRunSummary()
+  {
+   if(MQLInfoInteger(MQL_TESTER)==0 || MQLInfoInteger(MQL_OPTIMIZATION)!=0) return;
+   string lines[];
+   S83RunSummary(lines);
+   Print("83% Strategy 2.0 run summary (",_Symbol,", ",LTFName()," setups):");
+   for(int i=0;i<ArraySize(lines);i++) Print("  ",lines[i]);
+  }
+
 string S83SetupText(const S83_SETUP &setup)
   {
    return (setup.direction>0?"Buy":"Sell")+": A "+S83ALabel(setup.direction)+" "+PriceText(setup.a_price)+
@@ -2655,8 +2860,10 @@ void S83Enter(const S83_SETUP &setup,const MqlTick &tick)
    string what=S83Side(setup.direction)+" setup ("+S83SetupText(setup)+")";
    string event=setup.state==S83_CONFIRMED?S83EngulfingText(setup.direction)+" after the "+S83LevelText()+" touch":
                 S83LevelText()+" touched";
+   S83RunReached(setup);
    if(!TradingActive())
      {
+      S83Skip("Trade Mode is Off");
       S83Record(setup,S83_TOUCHED,false,event+"; not traded (Trade Mode)",0.0,0.0,0.0,0.0);
       S83Alert(event+" on the "+what);
       return;
@@ -2673,6 +2880,7 @@ void S83Enter(const S83_SETUP &setup,const MqlTick &tick)
       reason="Algo Trading is disabled";
    if(reason!="")
      {
+      S83Skip(reason);
       S83Record(setup,S83_TOUCHED,false,event+"; not traded: "+reason,0.0,0.0,0.0,0.0);
       S83Journal(what+" not traded: "+reason);
       return;
@@ -2686,6 +2894,7 @@ void S83Enter(const S83_SETUP &setup,const MqlTick &tick)
    if(sent && (retcode==TRADE_RETCODE_DONE || retcode==TRADE_RETCODE_PLACED))
      {
       g_s83_day.trades++;
+      g_s83_run_trades++;
       string order=S83Side(setup.direction)+" "+DoubleToString(lots,2)+" lots at "+PriceText(entry)+", SL "+
                    PriceText(sl)+", TP "+PriceText(tp)+" (1:"+DoubleToString(rr,0)+")"+
                    (g_s83_size_note==""?"":"; "+g_s83_size_note);
@@ -2697,6 +2906,7 @@ void S83Enter(const S83_SETUP &setup,const MqlTick &tick)
      {
       // A setup is used up even when the request fails, so a rejected order
       // is not resent on every tick.
+      S83Skip("the order failed ("+g_trade.ResultRetcodeDescription()+")");
       S83Record(setup,S83_TOUCHED,false,event+"; the order failed ("+g_trade.ResultRetcodeDescription()+")",
                 0.0,0.0,0.0,0.0);
       Print("83% Strategy 2.0: the order for the ",what," failed - ",g_trade.ResultRetcodeDescription());
@@ -2729,10 +2939,12 @@ void S83CheckEntry()
    if(Engulfing_Confirmation)
      {
       if(!g_s83_have_entry || S83OutcomeIndex(g_s83_entry.direction,g_s83_entry.a_time)>=0) return;
-      // Only during the candle after the engulfing, and only once (a restart
-      // must not enter again).
-      datetime opened=g_s83_entry.end_time+PeriodSeconds(LTFTimeframe());
-      if(TimeCurrent()>=opened+PeriodSeconds(LTFTimeframe()) || S83EnteredSince(opened)) return;
+      // Only during the candle after the engulfing, whenever it opens (after
+      // a weekend or session break too), and only once (a restart must not
+      // enter again).
+      datetime opened=iTime(_Symbol,LTFTimeframe(),0);
+      if(opened<=g_s83_entry.end_time || iTime(_Symbol,LTFTimeframe(),1)!=g_s83_entry.end_time ||
+         S83EnteredSince(opened)) return;
       MqlTick now;
       if(!SymbolInfoTick(_Symbol,now) || now.bid<=0.0 || now.ask<=0.0) return;
       S83Enter(g_s83_entry,now);
@@ -2746,8 +2958,11 @@ void S83CheckEntry()
    bool buy=g_s83_live.direction>0;
    if(buy?tick.bid<=g_s83_live.level:tick.bid>=g_s83_live.level) S83Enter(g_s83_live,tick);
    else if(g_s83_live.b_fixed && (buy?tick.bid>g_s83_live.b_price:tick.bid<g_s83_live.b_price))
+     {
       S83Record(g_s83_live,S83_INVALID,false,"invalidated: a new "+S83BLabel(g_s83_live.direction)+
                 " before the "+S83LevelText()+" retracement",0.0,0.0,0.0,0.0);
+      S83RunInvalid(g_s83_live);
+     }
    else return;
    if(DrawingEnabled()) S83Redraw();
   }
@@ -2826,6 +3041,7 @@ void S83Update(const BASE_STRUCTURE_STATE &htf,const BASE_STRUCTURE_STATE &mtf,c
          g_s83_entry=g_s83_setups[k];
          g_s83_have_entry=true;
         }
+   S83RunNote(g_s83_setups);
    S83LoadDay(g_s83_day);
    // A newly armed setup is announced once.
    if(g_s83_have_live && g_s83_ready &&
@@ -2895,6 +3111,7 @@ void S83DashboardRows(BASE_DASHBOARD_ROW &rows[])
    if(last>=0)
       AddWrappedDashboardRow(rows,"Last Setup:",g_s83_outcomes[last].text,
                              g_s83_outcomes[last].traded?DASHBOARD_POSITIVE_COLOR:DASHBOARD_TEXT_COLOR);
+   AddWrappedDashboardRow(rows,"This Run:",S83RunLine(),DASHBOARD_TEXT_COLOR);
    if(!TradingActive())
       AddDashboardRow(rows,"Trading:","Off on this chart (Trade Mode)",DASHBOARD_NEUTRAL_COLOR);
   }
@@ -3060,6 +3277,11 @@ void S83Init()
    g_s83_breakeven_failed=0;
    g_s83_journaled="";
    g_s83_waiting="";
+   ArrayResize(g_s83_run,0);
+   g_s83_run_from=TimeCurrent();
+   g_s83_run_trades=0;
+   ArrayResize(g_s83_skip_reasons,0);
+   ArrayResize(g_s83_skip_counts,0);
    g_trade.SetExpertMagicNumber(Magic_Number);
    g_trade.SetDeviationInPoints(20);
    g_trade.SetTypeFillingBySymbol(_Symbol);
@@ -3238,6 +3460,7 @@ int OnInit()
 
 void OnDeinit(const int reason)
   {
+   S83PrintRunSummary();
    EventKillTimer();
    ObjectsDeleteAll(0,g_prefix);
    Comment("");
