@@ -770,21 +770,31 @@ Buys (bullish market):
    Undefined.
 3. **LTF setup.** The LTF is M30 with LTF Swing Detection level 3 (3 candles
    each side) by default. The setup is searched within the last
-   `LTF_Bars_To_Process` (the LTF Independent Processed Bars, 25) closed LTF
+   `LTF_Bars_To_Process` (the LTF Independent Processed Bars, 40) closed LTF
    candles.
    - **A** is the most recent HL from which there was heavy buying pressure.
-   - **B** is the HH that move formed.
-   - The Fibonacci runs from B (0%) back to A (100%).
-4. **Touch.** Price touches the 83% level (`Entry_Level`, 0.83).
-5. **Confirmation.** After the touch, a bullish engulfing candle on M15 or
-   M30 confirms the buy, and the trade is entered at its close. See
-   [Entry confirmation](#entry-confirmation-the-engulfing) below.
-6. **Invalid.** If price makes a new HH (trades above B) before reaching 83%,
-   the setup is dead and its HL is used up. A new setup needs a new HL.
+   - **Break of structure.** After A has formed, a candle closes above the
+     swing high before A (its break level, as for Base's BOS). The setup is
+     armed from that close.
+   - **B** is the highest high since A. While B is forming, it follows price
+     up. It becomes a confirmed swing once 3 candles (the swing detection
+     length) close without reaching it.
+   - The Fibonacci runs from B (0%) back to A (100%), so the 83% level moves
+     up with B.
+4. **Entry.** Price touches the 83% level (`Entry_Level`, 0.83). Any
+   pullback to it after the break counts, including one while B is still
+   forming.
+5. **Confirmation (optional, off by default).** With
+   `Engulfing_Confirmation` on, a bullish engulfing candle on M15 or M30
+   must confirm the buy after the touch, and the trade is entered at its
+   close. See [Entry confirmation](#entry-confirmation-the-engulfing) below.
+6. **Invalid.** If price makes a new HH (trades above a confirmed B) before
+   reaching 83%, the setup is dead and its HL is used up. A new setup needs
+   a new HL.
 
-Sells mirror this: an LH with heavy selling pressure, the LL it formed, a
-touch of the 83% retracement, a bearish engulfing, and invalidation on a new
-LL.
+Sells mirror this: an LH with heavy selling pressure, a close below the
+swing low before it, the lowest low since then as B, a sell at the 83%
+retracement, and invalidation on a new LL beyond a confirmed B.
 
 How the rules are made exact:
 
@@ -793,19 +803,35 @@ How the rules are made exact:
   A. The ATR is the 14-candle ATR at A. On real data (an index on M15 and
   M30, EURUSD H1 and five stocks D1), 2.0 selected the strongest 43% of
   HL-to-HH legs. Set it to 0 to accept every leg.
-- **HL and HH labels.** A must be an HL (or an EQL with an HL's role). B must
-  be a true HH, not an EQH.
-- **When a setup becomes known.** A setup exists once B is a confirmed swing,
-  3 candles after it. If price already reached 83% during those candles, the
-  setup is **missed** and is not traded late.
+- **HL label.** A must be Base's latest swing low and an HL (or an EQL with an
+  HL's role). The break level is Base's swing high just before it: its price,
+  or the outer edge of an EQH pair.
+- **When a setup becomes known.** A setup is armed at the close of the first
+  candle by which:
+  - A is a confirmed swing (3 candles after it);
+  - the break of structure has closed; and
+  - the heavy pressure is met.
+
+  Usually that is the breaking candle itself. If A was confirmed later and
+  price had already pulled back to 83% after B and the break, the setup is
+  **missed** and is not traded late.
+- **How B moves.** B moves only at candle closes:
+  - each closed candle that reaches B becomes B, and the 83% level is
+    recomputed;
+  - the EA checks the touch on every tick against the level of the latest
+    closed candle.
+
+  A tick beyond a forming B does not invalidate the setup; B follows it at
+  the close. Once the level is touched, B is fixed for that trade.
 - **The processed bars.** A must lie within the processed candles. A setup
   whose A leaves them **expires**. On the LTF chart, Base's structure is also
   drawn over just those candles.
 
 ### Entry confirmation: the engulfing
 
-With `Engulfing_Confirmation` on (the default), touching the 83% level no
-longer enters the trade by itself. The setup becomes **touched** and waits
+`Engulfing_Confirmation` is off by default: the trade is entered at the
+touch. With it on, touching the 83% level no longer enters the trade by
+itself. The setup becomes **touched** and waits
 for an engulfing candle in the trend direction.
 
 - **The engulfing.** For a buy, a bearish candle followed by a bullish
@@ -840,8 +866,8 @@ for an engulfing candle in the trend direction.
   closed, which can be well past 83%. If the 1:2 or 1:3 stop would then not
   be behind A, the trade is skipped with the reason "too far from the 83%
   level", because the strategy's stop belongs behind the HL (LH).
-- **Turning it off.** With `Engulfing_Confirmation` off, the strategy enters
-  on the first touch, exactly as before.
+- **Turning it off.** With `Engulfing_Confirmation` off (the default), the
+  strategy enters on the first touch.
 
 ### Risk management (all adjustable)
 
@@ -877,8 +903,11 @@ for an engulfing candle in the trend direction.
 
 ### What you see on the LTF chart
 
-On the LTF chart, each setup within the processed candles is drawn as in the
-strategy's examples:
+On the LTF chart, setups are drawn as in the strategy's examples.
+
+- **Setups shown.** To keep the chart clean, only the latest
+  `Setups_To_Show` (2) setups are drawn (`Setups To Show` on TradingView). A
+  live setup is always drawn, even if it is older.
 
 - **Fibonacci levels.** Fib Base's levels: 0% at B, 100% at A, and the entry
   level in orange.
@@ -903,7 +932,8 @@ The dashboard gains these rows under Base's own:
 
 - **83% Strategy.** Waiting, a buy or sell setup armed, a setup touched and
   waiting for its engulfing, or a position open.
-- **Setup.** A, B and the 83% price.
+- **Setup.** A, B and the 83% price. B reads `(forming)` while it still
+  follows price.
 - **Entry Filters.** PASS, or BLOCKED with the reason.
 - **Risk Today.** Trades taken out of the maximum, the current risk %, and
   losses in a row.
@@ -923,13 +953,12 @@ The dashboard gains these rows under Base's own:
 - **Trade Mode.** `Trade_Mode` is **Strategy Tester only** by default, so a
   chart running the EA for analysis never places orders. Choose **Strategy
   Tester and live charts** deliberately.
-- **Entries.** With confirmation, the EA enters at the market on the first
-  tick after the engulfing candle closes. It checks the setups on every new
-  M15 and M30 candle, so an M15 engulfing in the middle of an M30 candle is
-  entered straight away.
-  - Without confirmation, it enters on the first tick at which the chart
-    price (bid) touches the level, and invalidates a setup on the first tick
-    beyond B.
+- **Entries.** By default (no confirmation), the EA enters at the market on
+  the first tick at which the chart price (bid) touches the level. It
+  invalidates a setup on the first tick beyond a confirmed B.
+  - With confirmation, it enters on the first tick after the engulfing
+    candle closes. It checks the setups on every new M15 and M30 candle, so
+    an M15 engulfing in the middle of an M30 candle is entered straight away.
   - The take profit and stop of a sell include the spread, because they
     trigger on the ask.
   - Each untraded touch is written to the Journal once, with its reason.
@@ -949,12 +978,13 @@ The dashboard gains these rows under Base's own:
   - Before this, on a market that was open (Deriv's synthetic indices
     always are), they stayed blank until the current M30 candle closed.
 - **Entries.**
+  - By default (no confirmation), entries are limit orders at the level,
+    placed at a candle's close. While B is forming, the order moves with the
+    level at each close. A buy and a sell order cancel each other.
   - With confirmation, the strategy reads the M15 candles inside each M30
     candle with `request.security_lower_tf`. It enters at the market at the
     close of the M30 candle that holds the engulfing. TradingView's
     Strategy Tester fills that order at the next candle's open.
-  - Without confirmation, entries are limit orders at the level, placed at a
-    candle's close. A buy and a sell order cancel each other.
 - **Differences from the EA:**
   - An M15 engulfing in the first half of an M30 candle is entered at that
     M30 candle's close, up to 15 minutes later than the EA, and at that
@@ -1025,32 +1055,38 @@ and Python mirrors:
 - **Base's behaviour is unchanged.** Base's whole test suite passes against
   the EA.
 - **Every trade follows the rules.** Tick-level backtests ran on 20
-  generated markets of 120 days each, with the engulfing confirmation on.
-  Every trade was rechecked with independent code, including:
-  - A and B are swings of the LTF candles;
-  - the level is the 83% retracement;
+  generated markets of 120 days each, with the default settings (no
+  engulfing confirmation, 40 processed candles). Every trade was rechecked
+  with independent code, including:
+  - A is a swing of the LTF candles, and the setup was known only after A
+    was confirmed;
+  - the break level is a swing before A, and a candle closed beyond it
+    before the setup was armed;
+  - B is the extreme since A, following price at each close until it was
+    confirmed, and the level is the 83% retracement of that leg;
   - the heavy-pressure rule;
   - A lies within the processed candles;
   - the setup was not missed;
-  - the touch, then the first M15 or M30 engulfing after it, recomputed from
-    the candles, with no close through A, new HH/LL or expired wait first;
-  - the entry on the first tick after the engulfing candle closed;
+  - the entry is at the first touch, with no new HH/LL beyond a confirmed B
+    first;
   - the filters at the entry;
   - the take profit, stop and 1:2 / 1:3 choice;
   - the lot size, including the risk cuts;
   - the day and trade limits;
   - breakeven.
 
-  All 42 trades passed. Every one of the 244 engulfing confirmations was
+  All 200 trades passed. Every one of the 656 touches of an armed setup was
   either traded or rejected for a genuine reason:
-  - Market Tradability: 25;
-  - the MTF's latest structure: 134;
-  - too far from the 83% level for a stop behind A: 45.
+  - Market Tradability: 84;
+  - the MTF's latest structure: 370;
+  - a position already open: 6.
 
-  With the confirmation off, the same markets gave 138 touch entries,
-  which all passed the touch-entry checks (the first touch, no new HH/LL
-  first). The confirmation therefore takes far fewer trades. The generated
-  markets are random, so they say nothing about whether it trades better.
+  With the engulfing confirmation on, the same markets gave 59 trades. All
+  of them passed, including the touch and the first M15 or M30 engulfing
+  after it, recomputed from the candles. Of the 343 confirmations, 60 were
+  skipped as too far from the 83% level for a stop behind A. The generated
+  markets are random, so they say nothing about which version trades
+  better.
 - **Deriv tests.** Separate tests cover:
   - recognising synthetic indices: 18 of 18 names, codes, descriptions and
     paths classified correctly;
@@ -1070,7 +1106,11 @@ and Python mirrors:
   19 generated markets. These covered several swing levels, windows and
   pressure settings, at both forex and gold price scales, and the
   confirmation on and off, with the M15 or M30 engulfing alone and waits of
-  1 to 8 candles. All 3,588 setups matched: A, B, the level, the outcome,
-  when the setup was armed, touched, confirmed (and on which timeframe) and
-  ended, and why it ended. 292 of them were confirmed and 424 failed while
-  waiting for their engulfing.
+  1 to 8 candles.
+  - All 3,753 setups matched: A, B (where it ended up), the level, the
+    outcome, when the setup was armed, touched, confirmed (and on which
+    timeframe) and ended, and why it ended.
+  - Only 17 of them were missed (price reached 83% before A was confirmed).
+- **The drawing limit.** In a 60-day visual run, the chart was checked at
+  every M30 candle. It always showed exactly the latest 2 setups plus any
+  live one. In 213 of those checks, older setups were hidden.

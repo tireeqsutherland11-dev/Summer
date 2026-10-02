@@ -135,14 +135,14 @@ input S83_SYMBOL_PROFILE Symbol_Profile=S83_PROFILE_AUTO;      // Symbol Profile
 input double Minimum_Lot_Max_Risk_Multiple=0.0;   // Trade The Minimum Lot If It Risks At Most N x The Planned Risk (0 = skip)
 
 input group "83% Strategy - Setup (LTF)"
-input int    LTF_Bars_To_Process=25;              // LTF Independent Processed Bars
+input int    LTF_Bars_To_Process=40;              // LTF Independent Processed Bars
 input double Entry_Level=0.83;                    // Entry Fibonacci Level (0.83 = 83%)
 input int    Impulse_Candles=3;                   // Heavy Pressure: Candles After The HL/LH
 input double Impulse_Min_ATR=2.0;                 // Heavy Pressure: Minimum Move (LTF ATR)
 input bool   Allow_Tradable_Early_Entries=false;  // Also Trade When Tradable (Early)
 
 input group "83% Strategy - Entry Confirmation"
-input bool   Engulfing_Confirmation=true;         // Wait For An Engulfing After The 83% Touch
+input bool   Engulfing_Confirmation=false;        // Wait For An Engulfing After The 83% Touch
 input bool   Use_Lower_Engulfing=true;            // Engulfing On The Lower Timeframe (M15)
 input ENUM_TIMEFRAMES Engulfing_Lower_Timeframe=PERIOD_M15; // Lower Engulfing Timeframe
 input bool   Use_LTF_Engulfing=true;              // Engulfing On The LTF (M30)
@@ -197,6 +197,7 @@ input S83_FIB_LABEL Fib_Label_Text=S83_LABEL_PERCENT;
 input int    Fib_Right_Offset=10;                 // Fibonacci Candles Right Of The Latest Candle
 
 input group "83% Strategy - Visuals (LTF)"
+input int    Setups_To_Show=2;                    // Setups Shown On The LTF Chart (the latest; live ones always)
 input bool   Show_Setup_Points=true;              // Show A / B / C
 input color  Bullish_Setup_Color=clrRed;          // Buy Setup A / B / C Color
 input color  Bearish_Setup_Color=clrRoyalBlue;    // Sell Setup A / B / C Color
@@ -2213,15 +2214,20 @@ void DrawDashboard(const BASE_STRUCTURE_STATE &htf,const string htf_breakdown,
 //  * MTF: the most recent structure is a bullish BOS (the break of an HH that
 //    makes a new HH), not a CHoCH and not Consolidation / Undefined.
 //  * LTF setup (M30, Swing Detection level 3 by default), searched in the last
-//    LTF_Bars_To_Process (25) closed LTF candles:
+//    LTF_Bars_To_Process (40) closed LTF candles:
 //      A: the most recent HL from which there was heavy buying pressure;
-//      B: the HH that move formed.
+//      the break of structure: a candle after A closes above the swing high
+//      before A (its break level, as Base's BOS);
+//      B: the highest high since A.  It follows price until it is a
+//      confirmed swing high (Swing Detection Length candles close without
+//      reaching it), so a pullback while B is forming counts.
 //    The Fibonacci runs from B (0%) to A (100%); the entry level is 83%.
 //  * Entry: price touches the 83% level.
-//  * Invalid: price makes a new HH (trades above B) before touching 83%.  The
-//    HL is then used up; a new setup needs a new HL.
-// Bearish mirrors this: an LH with heavy selling pressure, the LL it formed,
-// a sell at the 83% retracement, invalid on a new LL.
+//  * Invalid: price makes a new HH (trades above a confirmed B) before
+//    touching 83%.  The HL is then used up; a new setup needs a new HL.
+// Bearish mirrors this: an LH with heavy selling pressure, a close below the
+// swing low before it, the lowest low since then as B, a sell at the 83%
+// retracement, invalid on a new LL.
 //
 // Heavy pressure: within Impulse_Candles candles of A (A's candle included),
 // a candle closes at least Impulse_Min_ATR LTF ATR beyond A, the 14-candle
@@ -2229,9 +2235,11 @@ void DrawDashboard(const BASE_STRUCTURE_STATE &htf,const string htf_breakdown,
 // 2.0 ATR selected the strongest 43% of HL-to-HH legs.
 //
 // Setups are found candle by candle on closed LTF candles; the entry and the
-// invalidation are checked on every tick.  A setup is known once B is a
-// confirmed swing (Swing Detection Length candles after it); if price already
-// reached the entry level before that, the setup is missed, not traded late.
+// invalidation are checked on every tick against the level of the latest
+// closed candle (B moves only at candle closes).  A setup is known once A is
+// a confirmed swing, the break has closed and the pressure is measured; if
+// price already reached the entry level after B before that, the setup is
+// missed, not traded late.
 //
 // Risk: Risk_Percent of the balance per trade at the stop, cut by
 // Risk_Cut_Factor after every Losses_Before_Risk_Cut consecutive losses in a
@@ -2361,16 +2369,17 @@ enum S83_STATE
    S83_TOUCHED=1,     // price reached the entry level
    S83_INVALID=2,     // a new HH (LL) came first
    S83_EXPIRED=3,     // A left the LTF processed bars
-   S83_MISSED=4,      // the entry level was reached before B was confirmed
+   S83_MISSED=4,      // the entry level was reached before the setup was known
    S83_REPLACED=5,    // a newer setup in the same direction took over
    S83_WAITING=6,     // touched; waiting for an engulfing (confirmation on)
    S83_CONFIRMED=7,   // an engulfing confirmed it: the entry
    S83_FAILED=8       // no engulfing in time, or the leg broke first
   };
 
-// One setup: A (the HL/LH the heavy move started from), B (the HH/LL it
-// formed) and the entry level between them.  Bars are indices into the LTF
-// replay that found it; times stay valid after it.
+// One setup: A (the HL/LH the heavy move started from), B (the extreme
+// since A, the HH/LL the move formed) and the entry level between them.
+// Bars are indices into the LTF replay that found it; times stay valid after
+// it.
 struct S83_SETUP
   {
    int direction;           // 1 buy (HL -> HH), -1 sell (LH -> LL)
@@ -2380,10 +2389,13 @@ struct S83_SETUP
    double b_price;
    datetime b_time;
    int b_bar;
+   int b_fixed;             // 1 once B is a confirmed swing (or the level was touched)
+   double break_level;      // the swing before A whose break armed the setup
+   datetime break_time;     // the candle that closed beyond it
    double level;            // the entry level (83%)
    double impulse;          // the heavy-pressure move, in LTF ATR
    double atr;              // LTF ATR at A
-   datetime created_time;   // the candle that confirmed B
+   datetime created_time;   // the candle on whose close the setup became known
    int state;               // S83_STATE
    datetime end_time;       // the candle of the touch, invalidation, expiry or miss
    // Engulfing confirmation (see S83ScanSetups).
@@ -2403,7 +2415,7 @@ enum S83_WHY
    S83_WHY_NEW_B_WAITING=3, // a new HH (LL) before an engulfing
    S83_WHY_WINDOW=4,        // no engulfing within the window
    S83_WHY_EXPIRED=5,       // A left the processed candles
-   S83_WHY_MISSED=6,        // the level was reached before B was confirmed
+   S83_WHY_MISSED=6,        // the level was reached before the setup was known
    S83_WHY_REPLACED=7       // a newer setup in the same direction
   };
 
@@ -2417,7 +2429,7 @@ string S83WhyText(const S83_SETUP &setup)
       case S83_WHY_NEW_B_WAITING: return "failed: a new "+b+" before an engulfing";
       case S83_WHY_WINDOW: return "failed: no engulfing within "+(string)Confirmation_Window_Candles+" "+LTFName()+" candles";
       case S83_WHY_EXPIRED: return "expired: A left the "+(string)LTFBarsToProcess()+" processed candles";
-      case S83_WHY_MISSED: return "missed: "+S83LevelText()+" reached before B was confirmed";
+      case S83_WHY_MISSED: return "missed: "+S83LevelText()+" reached before the setup was known";
       case S83_WHY_REPLACED: return "replaced by a newer setup";
      }
    return "";
@@ -2540,7 +2552,8 @@ string S83ConfirmText()
 // One candle of a live setup: the LTF candle itself, or with Engulfing
 // Confirmation each lower-timeframe candle in turn.
 //  * Armed: a touch of the entry level makes it touched (waiting for an
-//    engulfing with confirmation); otherwise going beyond B invalidates it.
+//    engulfing with confirmation); otherwise going beyond a confirmed B
+//    invalidates it (beyond a forming B, B follows at the close: S83FollowB).
 //  * Waiting: a close beyond A (the HL/LH broke) or a high beyond B (a new
 //    HH, a low beyond B for a sell) fails it; otherwise a lower-timeframe
 //    engulfing in its direction, on the touching candle or later, confirms
@@ -2561,7 +2574,7 @@ void S83Step(S83_SETUP &setup,const MqlRates &candle,const MqlRates &previous,co
            }
          else S83End(setup,S83_TOUCHED,bar_time,S83_WHY_NONE);
         }
-      else if(S83Beyond(setup,candle))
+      else if(setup.b_fixed!=0 && S83Beyond(setup,candle))
          S83End(setup,S83_INVALID,lower?candle.time:bar_time,S83_WHY_NEW_B);
      }
    if(setup.state!=S83_WAITING) return;
@@ -2578,6 +2591,32 @@ void S83Step(S83_SETUP &setup,const MqlRates &candle,const MqlRates &previous,co
      }
   }
 
+// The entry level of a setup's leg (Fib Base: 0% at B, 100% at A).
+double S83EntryLevel(const S83_SETUP &setup)
+  {
+   return setup.direction>0?FibLevel(Entry_Level,true,setup.b_price,setup.a_price)
+                           :FibLevel(Entry_Level,false,setup.a_price,setup.b_price);
+  }
+
+// At the close of LTF candle i, the B of an armed setup follows price until
+// it is a confirmed swing: a candle at or beyond B becomes B (the latest of
+// equal extremes, as Base finds a swing), and B is fixed once Swing
+// Detection Length candles have closed without reaching it.  The entry
+// level moves with B.
+void S83FollowB(S83_SETUP &setup,const MqlRates &rates[],const int i)
+  {
+   if(setup.state!=S83_ARMED || setup.b_fixed!=0) return;
+   int d=setup.direction;
+   if(d>0?rates[i].high>=setup.b_price:rates[i].low<=setup.b_price)
+     {
+      setup.b_price=d>0?rates[i].high:rates[i].low;
+      setup.b_time=rates[i].time;
+      setup.b_bar=i;
+      setup.level=S83EntryLevel(setup);
+     }
+   if(i-setup.b_bar>=LTFSwingLength()) setup.b_fixed=1;
+  }
+
 // The setups of one LTF replay, candle by candle over its last
 // LTF_Bars_To_Process closed candles.  On each candle:
 //  1. each live setup steps through the candle (see S83Step): the LTF candle
@@ -2587,15 +2626,17 @@ void S83Step(S83_SETUP &setup,const MqlRates &candle,const MqlRates &previous,co
 //     later), or fails when Confirmation_Window_Candles LTF candles have
 //     closed since the touch without one; an armed or waiting setup whose A
 //     is no longer within the processed candles expires.
-//  2. each swing confirmed on the candle that is an HH (a buy) or an LL (a
-//     sell), not an EQH/EQL, starts a setup with the swing before it on the
-//     other side (A) when A is an HL (LH), has not been used, lies within the
-//     processed candles and shows heavy pressure.  If the entry level was
-//     reached while B was being confirmed, the setup is missed; otherwise it
-//     is armed and replaces any live setup in its direction.
+//     An armed setup's B follows price (S83FollowB) before these checks.
+//  2. for buys, then sells: the latest swing low (high) confirmed so far, A,
+//     starts a setup when it is an HL (LH), has not been used, lies within
+//     the processed candles, a candle from A on has closed beyond the swing
+//     before it (the break of structure) and it shows heavy pressure.  B is
+//     the extreme since A.  If the entry level was reached after B (and
+//     after the break) before the setup was known, it is missed; otherwise
+//     it is armed and replaces any live setup in its direction.
 // With confirmation, the lower-timeframe candles already closed in the
 // forming LTF candle are stepped through too, so a setup can be confirmed
-// mid-candle.  Every ended setup uses up its A.
+// mid-candle.  A starting a setup is used up.
 // Only the setups live now or ended within the processed candles are kept.
 // They were all created at most two windows back, and whether their A was
 // used up depends only on that A's earlier setups, all created after A within
@@ -2654,6 +2695,7 @@ void S83ScanSetups(const MqlRates &rates[],const int total,const BASE_STRUCTURE_
         {
          int index=slot==0?live_buy:live_sell;
          if(index<0) continue;
+         S83FollowB(setups[index],rates,i);
          if(setups[index].state==S83_WAITING)
            {
             if(Use_LTF_Engulfing && i>0 && i>=setups[index].touch_bar &&
@@ -2671,39 +2713,45 @@ void S83ScanSetups(const MqlRates &rates[],const int total,const BASE_STRUCTURE_
             S83End(setups[index],setups[index].state==S83_ARMED?S83_EXPIRED:S83_FAILED,rates[i].time,
                    S83_WHY_EXPIRED);
          if(S83Live(setups[index])) continue;
-         if(slot==0)
-           {
-            S83Use(used_buy,setups[index].a_time);
-            live_buy=-1;
-           }
-         else
-           {
-            S83Use(used_sell,setups[index].a_time);
-            live_sell=-1;
-           }
+         if(slot==0) live_buy=-1;
+         else live_sell=-1;
         }
-      for(;next<count && points[next].confirmed==i;next++)
+      while(next<count && points[next].confirmed<=i) next++;
+      for(int slot=0;slot<2;slot++)
         {
-         if(points[next].kind<=0 || points[next].equal>=0) continue;
-         int direction=points[next].side;
-         int a=-1;
+         int direction=slot==0?1:-1;
+         // A: the latest swing on its side; the swing before it on the other
+         // side holds the level whose break arms the setup.
+         int a=-1,p=-1;
          for(int k=next-1;k>=0 && a<0;k--)
             if(points[k].side==-direction) a=k;
          if(a<0 || points[a].kind>=0 || points[a].pivot<i-window+1) continue;
          if(direction>0?S83Used(used_buy,points[a].time):S83Used(used_sell,points[a].time)) continue;
-         double impulse=S83Impulse(rates,atr,points[a].pivot,points[next].pivot,direction,points[a].price);
+         for(int k=a-1;k>=0 && p<0;k--)
+            if(points[k].side==direction) p=k;
+         if(p<0) continue;
+         int broke=-1;
+         for(int k=points[a].pivot;k<=i && broke<0;k++)
+            if(direction>0?rates[k].close>points[p].level:rates[k].close<points[p].level) broke=k;
+         if(broke<0) continue;
+         double impulse=S83Impulse(rates,atr,points[a].pivot,i,direction,points[a].price);
          if(impulse<Impulse_Min_ATR) continue;
+         int b=points[a].pivot;
+         for(int k=points[a].pivot;k<=i;k++)
+            if(direction>0?rates[k].high>=rates[b].high:rates[k].low<=rates[b].low) b=k;
          int index=ArraySize(setups);
          ArrayResize(setups,index+1,16);
          setups[index].direction=direction;
          setups[index].a_price=points[a].price;
          setups[index].a_time=points[a].time;
          setups[index].a_bar=points[a].pivot;
-         setups[index].b_price=points[next].price;
-         setups[index].b_time=points[next].time;
-         setups[index].b_bar=points[next].pivot;
-         setups[index].level=direction>0?FibLevel(Entry_Level,true,points[next].price,points[a].price)
-                                        :FibLevel(Entry_Level,false,points[a].price,points[next].price);
+         setups[index].b_price=direction>0?rates[b].high:rates[b].low;
+         setups[index].b_time=rates[b].time;
+         setups[index].b_bar=b;
+         setups[index].b_fixed=i-b>=LTFSwingLength()?1:0;
+         setups[index].break_level=points[p].level;
+         setups[index].break_time=rates[broke].time;
+         setups[index].level=S83EntryLevel(setups[index]);
          setups[index].impulse=impulse;
          setups[index].atr=atr[points[a].pivot];
          setups[index].created_time=rates[i].time;
@@ -2715,14 +2763,14 @@ void S83ScanSetups(const MqlRates &rates[],const int total,const BASE_STRUCTURE_
          setups[index].confirm_seconds=0;
          setups[index].confirm_price=0.0;
          setups[index].why=S83_WHY_NONE;
+         if(direction>0) S83Use(used_buy,points[a].time);
+         else S83Use(used_sell,points[a].time);
          bool missed=false;
-         for(int k=points[next].pivot+1;k<=i && !missed;k++)
+         for(int k=MathMax(b,broke)+1;k<=i && !missed;k++)
             if(S83Touched(setups[index],rates[k])) missed=true;
          if(missed)
            {
             S83End(setups[index],S83_MISSED,rates[i].time,S83_WHY_MISSED);
-            if(direction>0) S83Use(used_buy,points[a].time);
-            else S83Use(used_sell,points[a].time);
             continue;
            }
          int previous_live=direction>0?live_buy:live_sell;
@@ -2809,8 +2857,8 @@ void S83Record(const S83_SETUP &setup,const bool traded,const string text,const 
 string S83SetupText(const S83_SETUP &setup)
   {
    return (setup.direction>0?"Buy":"Sell")+": A "+S83ALabel(setup.direction)+" "+PriceText(setup.a_price)+
-          " -> B "+S83BLabel(setup.direction)+" "+PriceText(setup.b_price)+"; "+S83LevelText()+" at "+
-          PriceText(setup.level);
+          " -> B "+S83BLabel(setup.direction)+" "+PriceText(setup.b_price)+
+          (S83Live(setup) && setup.b_fixed==0?" (forming)":"")+"; "+S83LevelText()+" at "+PriceText(setup.level);
   }
 
 void S83Journal(const string text)
@@ -3170,7 +3218,8 @@ void S83CheckEntry()
       if(S83OutcomeIndex(setup.direction,setup.a_time)>=0) continue;
       bool buy=setup.direction>0;
       bool touched=buy?tick.bid<=setup.level:tick.bid>=setup.level;
-      bool beyond=buy?tick.bid>setup.b_price:tick.bid<setup.b_price;
+      // Beyond a forming B, B follows price at the candle's close instead.
+      bool beyond=setup.b_fixed!=0 && (buy?tick.bid>setup.b_price:tick.bid<setup.b_price);
       if(touched)
         {
          S83Enter(setup,tick);
@@ -3472,12 +3521,19 @@ void S83DrawSetup(const S83_SETUP &setup,const int index,const datetime right)
    S83Text(key+"_PLAN",to,tp,plan,DASHBOARD_TEXT_COLOR,ANCHOR_LEFT,(int)Label_Size);
   }
 
+// Only the latest Setups_To_Show setups are drawn (newest first), and every
+// live one, so the chart stays clean.
 void S83DrawAll()
   {
    if(!g_s83_ready || PeriodSeconds((ENUM_TIMEFRAMES)_Period)!=PeriodSeconds(LTFTimeframe())) return;
    datetime right=g_s83_last_time+Fib_Right_Offset*PeriodSeconds(LTFTimeframe());
-   for(int i=0;i<ArraySize(g_s83_setups);i++)
+   int shown=0;
+   for(int i=ArraySize(g_s83_setups)-1;i>=0;i--)
+     {
+      if(!S83Live(g_s83_setups[i]) && shown>=Setups_To_Show) continue;
       S83DrawSetup(g_s83_setups[i],i,right);
+      shown++;
+     }
   }
 
 // Redraws the setups after a live outcome, between candles.
@@ -3491,6 +3547,7 @@ void S83Redraw()
 string S83InputProblem()
   {
    if(LTF_Bars_To_Process<5) return "LTF_Bars_To_Process must be at least 5";
+   if(Setups_To_Show<0) return "Setups_To_Show cannot be negative";
    if(Entry_Level<=0.0 || Entry_Level>=1.0) return "the Entry Level must be between 0 and 1 (0.83 = 83%)";
    if(Impulse_Candles<0 || Impulse_Min_ATR<0.0) return "the heavy-pressure inputs cannot be negative";
    if(Risk_Percent<=0.0 || Risk_Percent>100.0) return "Risk_Percent must be above 0 and at most 100";
