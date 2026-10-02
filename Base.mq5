@@ -29,7 +29,7 @@ input bool Allow_Early_Tradability=false; // Allow Tradable (Early)
 input group "Hurst Exponent (Trend Persistence)"
 input BASE_HURST_TF Hurst_Timeframe=BASE_HURST_HTF; // Hurst Timeframe (HTF, MTF or LTF)
 input int Hurst_Candles=100; // Hurst Window (closed candles, 50-400)
-input double Hurst_Minimum=0.55; // Tradable When H Is Above (0.5 = random walk)
+input double Hurst_Minimum=0.50; // Tradable When H Is Above (0.5 = random walk)
 
 input group "Structure Bar Processing"
 input int Bars_To_Process=100;
@@ -1561,10 +1561,11 @@ void ReadHurst(BASE_HURST &hurst)
   }
 
 // About 0.5 is a random walk; above it a trending (persistent) market, below
-// it a mean-reverting one.
+// it a mean-reverting one.  "trending" is above Hurst_Minimum, so the reading
+// agrees with Market Tradability.
 string HurstWord(const double h)
   {
-   return h>0.55?"trending":h>=0.45?"random walk":"mean-reverting";
+   return h>Hurst_Minimum?"trending":h>=0.45?"random walk":"mean-reverting";
   }
 
 // The Hurst exponent: "" when it is above Hurst_Minimum, else why not.
@@ -1608,7 +1609,7 @@ string JoinProblems(const string &problems[],const int count)
 //        Lower High (see ReadSwings).
 //     3. The HTF Internal Structure in that direction, its latest break a BOS
 //        (not a CHoCH).
-//     4. The Hurst exponent above Hurst_Minimum (0.55), a trending market
+//     4. The Hurst exponent above Hurst_Minimum (0.50), a trending market
 //        (see HurstOf).
 //  * Tradable (Early), when Allow_Early_Tradability is on (off by default):
 //    every selected timeframe agrees with the HTF, but the HTF and/or a

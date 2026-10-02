@@ -39,7 +39,7 @@
 //  * Market Tradability: Tradable when the HTF and every selected timeframe
 //    are Bullish (or all Bearish, by a BOS, not a transition) with
 //    progressive swings (HH + HL, or LL + LH), the HTF internal structure is
-//    in that direction by a BOS, and the Hurst exponent is above 0.55.
+//    in that direction by a BOS, and the Hurst exponent is above 0.50.
 //  * Dashboard: the Market Trend, Swing Structure and Internal Structure of
 //    each selected timeframe, the Hurst exponent, Market Tradability and its
 //    reason, the trade recommendation, and Optimal Conditions when any is
@@ -62,7 +62,7 @@ allowEarly = input.bool(false, "Allow Tradable (Early)", group = grpTrend, toolt
 grpHurst = "Hurst Exponent (Trend Persistence)"
 hurstSource = input.string("HTF", "Hurst Timeframe", options = ["HTF", "MTF", "LTF"], group = grpHurst, tooltip = "The timeframe whose closes the Hurst exponent is measured on. The MTF and LTF take more calculation.")
 hurstCandles = input.int(100, "Hurst Window (closed candles)", minval = 50, maxval = 400, group = grpHurst, tooltip = "How many closed candles, up to the latest one, the Hurst exponent is measured over.")
-hurstMin = input.float(0.55, "Tradable When H Is Above", minval = 0.0, maxval = 0.99, step = 0.01, group = grpHurst, tooltip = "Market Tradability needs the Hurst exponent H above this. About 0.5 is a random walk, above it a trending market, below it a mean-reverting one.")
+hurstMin = input.float(0.50, "Tradable When H Is Above", minval = 0.0, maxval = 0.99, step = 0.01, group = grpHurst, tooltip = "Market Tradability needs the Hurst exponent H above this. About 0.5 is a random walk, above it a trending market, below it a mean-reverting one.")
 
 grpProc = "Structure Bar Processing"
 barsToProcess = input.int(100, "Bars To Process", minval = 100, maxval = 100000, group = grpProc, tooltip = "How many HTF candles back structure is drawn. Other chart timeframes cover the same span of time. Structure is always calculated on all loaded history.")
@@ -1620,9 +1620,10 @@ hurstName() =>
     tfName(hurstTf)
 
 // About 0.5 is a random walk; above it a trending (persistent) market, below
-// it a mean-reverting one.
+// it a mean-reverting one. "trending" is above the Hurst minimum, so the
+// reading agrees with Market Tradability.
 hurstWord(float h) =>
-    h > 0.55 ? "trending" : h >= 0.45 ? "random walk" : "mean-reverting"
+    h > hurstMin ? "trending" : h >= 0.45 ? "random walk" : "mean-reverting"
 
 // The Hurst exponent: "" when it is above the minimum, else why not.
 hurstProblem() =>
@@ -1655,7 +1656,7 @@ internalProblem(InternalView iv, int d, string name) =>
 //        Lower High.
 //     3. The HTF Internal Structure in that direction, its latest break a BOS
 //        (not a CHoCH).
-//     4. The Hurst exponent above the Hurst minimum (0.55), a trending market.
+//     4. The Hurst exponent above the Hurst minimum (0.50), a trending market.
 //  * Tradable (Early), with Allow Tradable (Early) (off by default): every
 //    selected timeframe agrees with the HTF, but the HTF and/or a selected MTF
 //    or LTF is only a transition (a CHoCH not yet confirmed by a BOS), and the
