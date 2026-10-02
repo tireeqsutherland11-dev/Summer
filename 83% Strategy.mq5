@@ -6,8 +6,6 @@
 
 #include <Trade\Trade.mqh>
 
-enum BASE_MA_TYPE { BASE_SMA=0, BASE_EMA=1 };
-enum BASE_MA_FILTER_MODE { BASE_PRICE_ABOVE_BELOW=0, BASE_FULL_BODY_CLOSE=1 };
 enum BASE_SESSION { BASE_NEW_YORK=0, BASE_LONDON=1, BASE_TOKYO=2, BASE_SYDNEY=3, BASE_CUSTOM=4, BASE_24X7=5 };
 enum BASE_ADX_SCOPE { BASE_BOS_ONLY=0, BASE_BOS_AND_CHOCH=1 };
 enum BASE_ATR_MODE { BASE_ATR_MINIMUM=0, BASE_ATR_MAXIMUM=1, BASE_ATR_RANGE=2 };
@@ -28,6 +26,12 @@ enum S83_FIB_LABEL
    S83_LABEL_RATIO=1,       // Ratio (0.83)
    S83_LABEL_PRICE=2,       // Price
    S83_LABEL_PERCENT_PRICE=3 // Percent and price
+  };
+enum S83_HURST_TF
+  {
+   S83_HURST_HTF=0,         // HTF
+   S83_HURST_MTF=1,         // MTF
+   S83_HURST_LTF=2          // LTF
   };
 
 input group "Timeframes"
@@ -85,19 +89,20 @@ input group "EQH/EQL"
 input bool Show_Equal_Highs_Lows=true; // Show EQH/EQL
 input double Equal_Highs_Lows_Threshold=0.2; // EQH/EQL Threshold (ATR, 0 = off)
 
-input group "MA Filter (HTF)"
-input bool Use_HTF_MA_Filter=true;
-input int HTF_MA_Length=50;
-input BASE_MA_TYPE HTF_MA_Type=BASE_EMA; // MA Type
-input bool Show_HTF_MA_Line=false;
-input color HTF_MA_Color=clrBlue;
+input group "HTF EMA Trend Filter"
+input int HTF_EMA_Fast=20; // HTF Fast EMA
+input int HTF_EMA_Middle=50; // HTF Middle EMA
+input int HTF_EMA_Slow=200; // HTF Slow EMA (bullish 20 > 50 > 200, bearish 20 < 50 < 200)
+input int HTF_EMA_Candles=1; // Closed HTF Candles The EMA Order Must Hold On (1 = the latest)
+input bool Show_HTF_EMA_Lines=false; // Show HTF EMA Lines
+input color HTF_EMA_Fast_Color=clrDodgerBlue; // HTF Fast EMA Color
+input color HTF_EMA_Middle_Color=clrDarkOrange; // HTF Middle EMA Color
+input color HTF_EMA_Slow_Color=clrPurple; // HTF Slow EMA Color
 
-input group "MA Filter (MTF)"
-input bool Use_MTF_MA_Filter=true;
-input int MTF_MA_Length=100;
-input BASE_MA_TYPE MTF_MA_Type=BASE_EMA; // MA Type
-input bool Show_MTF_MA_Line=false;
-input color MTF_MA_Color=clrOrange;
+input group "Hurst Exponent (Trend Persistence)"
+input S83_HURST_TF Hurst_Timeframe=S83_HURST_HTF; // Hurst Timeframe
+input int Hurst_Candles=100; // Hurst Window (closed candles, 50-400)
+input double Hurst_Minimum=0.55; // Tradable When H Is Above (0.5 = random walk)
 
 input group "Session Filter"
 input bool Use_Session_Filter=false;
@@ -120,10 +125,6 @@ input bool Enable_Push_Notifications=false;
 
 input group "83% Strategy - Symbol (Deriv Synthetic Indices)"
 input double Minimum_Lot_Max_Risk_Multiple=0.0;   // Trade The Minimum Lot If It Risks At Most N x The Planned Risk (0 = skip)
-
-input group "83% Strategy - Trend (HTF EMAs + MTF Swings)"
-input int    HTF_Fast_EMA=50;                     // HTF Fast EMA (bullish above the slow one)
-input int    HTF_Slow_EMA=200;                    // HTF Slow EMA
 
 input group "83% Strategy - Setup (LTF)"
 input int    LTF_Bars_To_Process=40;              // LTF Independent Processed Bars
@@ -191,8 +192,6 @@ input int    Position_Box_Candles=20;             // Zone Width (LTF Candles)
 
 // Internal tuning values are deliberately kept out of the Inputs dialog. The
 // streamlined UI exposes only settings that are useful during normal use.
-const BASE_MA_FILTER_MODE HTF_MA_Filter_Mode=BASE_PRICE_ABOVE_BELOW;
-const BASE_MA_FILTER_MODE MTF_MA_Filter_Mode=BASE_PRICE_ABOVE_BELOW;
 const double ADX_Minimum=25.0;
 const BASE_ADX_SCOPE Apply_ADX_Filter_To=BASE_BOS_ONLY;
 const BASE_ATR_MODE ATR_Filter_Mode=BASE_ATR_MINIMUM;
@@ -256,8 +255,6 @@ string g_prefix="";
 datetime g_last_ltf_bar=0;
 datetime g_last_structure_bar=0;
 datetime g_last_setup_bar=0;
-int g_htf_ma_handle=INVALID_HANDLE;
-int g_mtf_ma_handle=INVALID_HANDLE;
 int g_adx_handle=INVALID_HANDLE;
 int g_atr_handle=INVALID_HANDLE;
 
@@ -399,11 +396,6 @@ int ChartStructureBars(const ENUM_TIMEFRAMES timeframe)
 int ReplayBars(const int displayed)
   {
    return MathMin(100000,displayed*STRUCTURE_WARMUP_FACTOR);
-  }
-
-ENUM_MA_METHOD BASEMAMethod(const BASE_MA_TYPE value)
-  {
-   return value==BASE_EMA?MODE_EMA:MODE_SMA;
   }
 
 // A swing high must exceed the N candles on its left and stay above the N
@@ -1459,32 +1451,44 @@ string JoinNames(const string &names[],const int count)
    return result;
   }
 
-// Market Tradability (83% Strategy): trend identification from the HTF EMA
-// trend filter and the MTF structural progression.
-//  * Bullish: the HTF fast EMA (HTF_Fast_EMA, 50) is above the HTF slow EMA
-//    (HTF_Slow_EMA, 200) on the latest closed HTF candle, and the MTF shows
-//    upward expansion: its latest swing high is above the previous swing
-//    high (an HH).
-//  * Bearish: the HTF fast EMA is below the slow EMA, and the MTF shows
-//    downward expansion: its latest swing low is below the previous swing
-//    low (an LL).
-//  * Not Tradable otherwise; the reason names the missing condition.
+// Market Tradability (83% Strategy): trend identification from three
+// conditions, which must all line up.
+//  * Bullish:
+//     1. HTF EMA trend filter: the HTF EMAs are in order, fast > middle > slow
+//        (HTF_EMA_Fast 20 > HTF_EMA_Middle 50 > HTF_EMA_Slow 200), on each of
+//        the last HTF_EMA_Candles closed HTF candles (1: the latest one).
+//     2. MTF structural progression, upward expansion: a Higher High (the
+//        latest swing high above the previous one) and a Higher Low (the
+//        latest swing low above the previous one).
+//     3. The Hurst exponent H of the last Hurst_Candles closed candles of the
+//        Hurst timeframe (the HTF by default) is above Hurst_Minimum (0.55).
+//  * Bearish: fast < middle < slow; a Lower Low and a Lower High; H above
+//    Hurst_Minimum.
+//  * Not Tradable otherwise; the reason names what is missing.
 // The MTF swings are its structure swings (MTF Swing Detection Length): the
 // latest swing high and the one before it (the previous leg's high; a
 // higher high within the same leg replaces it), and the same for lows.  The
 // Internal Structure plays no part (it is only drawn on the chart).
+const int S83_HURST_MIN_LAG=2;    // the Hurst exponent's lags (see S83HurstOf)
+const int S83_HURST_MAX_LAG=20;
+
 struct S83_TREND
   {
    bool have_ema;
-   double ema_fast;
+   double ema_fast;         // the HTF EMAs on the latest closed HTF candle
+   double ema_middle;
    double ema_slow;
-   int ema_direction;       // 1 fast above slow, -1 below, 0 equal or unavailable
+   int ema_stack;           // that candle's order: 1 fast > middle > slow, -1 fast < middle < slow, 0 neither
+   int ema_direction;       // the order that held on each of the last HTF_EMA_Candles candles, else 0
    bool have_highs;
    double high;             // the MTF's latest swing high
    double prev_high;        // the swing high before it
    bool have_lows;
    double low;
    double prev_low;
+   bool have_hurst;
+   double hurst;            // the Hurst exponent H
+   int hurst_candles;       // closed candles available for it
   };
 
 // The latest swing on one side (1 highs, -1 lows) and the one before it,
@@ -1511,40 +1515,82 @@ string S83SwingTag(const int side,const double current,const double previous)
 
 string S83EmaText()
   {
-   return HTFName()+" "+(string)HTF_Fast_EMA+"/"+(string)HTF_Slow_EMA+" EMA";
+   return HTFName()+" "+(string)HTF_EMA_Fast+"/"+(string)HTF_EMA_Middle+"/"+(string)HTF_EMA_Slow+" EMA";
+  }
+
+// "20 > 50 > 200" (bullish) or "20 < 50 < 200" (bearish).
+string S83EmaOrder(const int direction)
+  {
+   string op=direction>0?" > ":" < ";
+   return (string)HTF_EMA_Fast+op+(string)HTF_EMA_Middle+op+(string)HTF_EMA_Slow;
+  }
+
+string S83HurstName()
+  {
+   return Hurst_Timeframe==S83_HURST_MTF?MTFName():Hurst_Timeframe==S83_HURST_LTF?LTFName():HTFName();
+  }
+
+// About 0.5 is a random walk; above it a trending (persistent) market, below
+// it a mean-reverting one.
+string S83HurstWord(const double h)
+  {
+   return h>0.55?"trending":h>=0.45?"random walk":"mean-reverting";
+  }
+
+// The MTF swings for a direction: "" when they show its expansion (an HH and
+// an HL for buys, an LL and an LH for sells), else what is missing.
+string S83SwingProblem(const S83_TREND &trend,const int d)
+  {
+   if(!trend.have_highs || !trend.have_lows)
+      return "the "+MTFName()+" has no two swing "+(!trend.have_highs?"highs":"lows")+" yet";
+   bool ok=d>0?trend.high>trend.prev_high && trend.low>trend.prev_low:
+               trend.low<trend.prev_low && trend.high<trend.prev_high;
+   if(ok) return "";
+   return "the "+MTFName()+" swings are "+S83SwingTag(1,trend.high,trend.prev_high)+" + "+
+          S83SwingTag(-1,trend.low,trend.prev_low)+", not "+(d>0?"HH + HL":"LL + LH")+" ("+
+          (d>0?"upward":"downward")+" expansion)";
+  }
+
+// The Hurst exponent: "" when it is above Hurst_Minimum, else why not.
+string S83HurstProblem(const S83_TREND &trend)
+  {
+   if(!trend.have_hurst)
+      return trend.hurst_candles<Hurst_Candles?
+             "the Hurst exponent needs "+(string)Hurst_Candles+" closed "+S83HurstName()+" candles ("+
+             (string)trend.hurst_candles+" so far)":"the Hurst exponent is not available (the "+S83HurstName()+" closes do not move)";
+   if(trend.hurst>Hurst_Minimum) return "";
+   return "the Hurst exponent "+DoubleToString(trend.hurst,2)+" is not above "+DoubleToString(Hurst_Minimum,2)+
+          " ("+S83HurstWord(trend.hurst)+")";
   }
 
 BASE_TRADABILITY EvaluateTradability(const S83_TREND &trend,string &reason)
   {
    if(!trend.have_ema)
      {
-      reason="The "+S83EmaText()+" is not available yet (not enough "+HTFName()+" history).";
+      reason="The "+S83EmaText()+"s are not available yet (not enough "+HTFName()+" history).";
       return BASE_NOT_TRADABLE;
      }
    int d=trend.ema_direction;
    if(d==0)
      {
-      reason="The "+HTFName()+" "+(string)HTF_Fast_EMA+" and "+(string)HTF_Slow_EMA+" EMAs are equal.";
+      if(trend.ema_stack!=0)
+         reason="The "+HTFName()+" EMAs are "+S83EmaOrder(trend.ema_stack)+" on the latest closed candle, but not on each of the last "+
+                (string)HTF_EMA_Candles+".";
+      else
+         reason="The "+HTFName()+" EMAs are not in order ("+(string)HTF_EMA_Fast+" EMA "+PriceText(trend.ema_fast)+", "+
+                (string)HTF_EMA_Middle+" EMA "+PriceText(trend.ema_middle)+", "+(string)HTF_EMA_Slow+" EMA "+
+                PriceText(trend.ema_slow)+"): bullish needs "+S83EmaOrder(1)+", bearish "+S83EmaOrder(-1)+".";
       return BASE_NOT_TRADABLE;
      }
-   string ema=HTFName()+" "+(string)HTF_Fast_EMA+" EMA is "+(d>0?"above":"below")+" the "+(string)HTF_Slow_EMA+" EMA";
-   bool have=d>0?trend.have_highs:trend.have_lows;
-   if(!have)
+   string ema=HTFName()+" EMAs "+S83EmaOrder(d)+(HTF_EMA_Candles>1?" on the last "+(string)HTF_EMA_Candles+" closed candles":"");
+   string swings=S83SwingProblem(trend,d),hurst=S83HurstProblem(trend);
+   if(swings!="" || hurst!="")
      {
-      reason=ema+", but the "+MTFName()+" has no two swing "+(d>0?"highs":"lows")+" yet.";
+      reason=ema+", but "+swings+(swings!="" && hurst!=""?", and ":"")+hurst+".";
       return BASE_NOT_TRADABLE;
      }
-   double current=d>0?trend.high:trend.low,previous=d>0?trend.prev_high:trend.prev_low;
-   string tag=S83SwingTag(d,current,previous);
-   if(d>0?current<=previous:current>=previous)
-     {
-      reason=ema+", but the "+MTFName()+"'s latest swing "+(d>0?"high ":"low ")+PriceText(current)+" is not "+
-             (d>0?"above":"below")+" the previous one "+PriceText(previous)+" ("+tag+", no "+
-             (d>0?"upward":"downward")+" expansion).";
-      return BASE_NOT_TRADABLE;
-     }
-   reason=ema+", and the "+MTFName()+" made "+(d>0?"an HH":"an LL")+" ("+PriceText(current)+" "+
-          (d>0?"above ":"below ")+PriceText(previous)+").";
+   reason=ema+", the "+MTFName()+" made "+(d>0?"an HH and an HL":"an LL and an LH")+", and the Hurst exponent "+
+          DoubleToString(trend.hurst,2)+" is above "+DoubleToString(Hurst_Minimum,2)+".";
    return BASE_TRADABLE;
   }
 
@@ -1599,73 +1645,28 @@ bool CopyIndicator(const int handle,const int buffer,const int count,double &val
    return CopyBuffer(handle,buffer,1,count,values)==count;
   }
 
-// The latest closed MTF candle and its MTF MA.
-bool MTFValues(double &ma,double &open,double &close)
-  {
-   double value[1];
-   if(g_mtf_ma_handle==INVALID_HANDLE || CopyBuffer(g_mtf_ma_handle,0,1,1,value)!=1) return false;
-   ma=value[0];
-   open=iOpen(_Symbol,SetupTimeframe(),1);
-   close=iClose(_Symbol,SetupTimeframe(),1);
-   return open!=0.0 && close!=0.0;
-  }
-
 string PassText(const bool pass)
   {
    return pass?"PASS":"BLOCKED";
   }
 
-// Qualifies the latest closed structure candle with the HTF MA, MTF MA,
-// session, ADX and ATR filters.  The HTF MA filter compares the latest closed
-// HTF candle with the HTF MA, the MTF MA filter the latest closed MTF candle
-// with the MTF MA.  The filters never gate structure, trend or alerts; the
-// result is shown as the tooltip of the dashboard's tradability row.
-string EntryFilterTooltip(const MqlRates &bar,const double &ma[],const double &adx[],
-                          const double &atr[])
+// Qualifies the latest closed structure candle with the session, ADX and ATR
+// filters.  The filters never gate structure, trend, alerts or the 83%
+// Strategy's entries; the result is shown as the tooltip of the dashboard's
+// tradability row.
+string EntryFilterTooltip(const MqlRates &bar,const double &adx[],const double &atr[])
   {
-   bool htf_long=true,htf_short=true;
-   string htf_text="off";
-   if(Use_HTF_MA_Filter)
-     {
-      double value=ma[ArraySize(ma)-1];
-      htf_long=HTF_MA_Filter_Mode==BASE_PRICE_ABOVE_BELOW?bar.close>value
-               :bar.close>value && bar.open>value && bar.close>bar.open;
-      htf_short=HTF_MA_Filter_Mode==BASE_PRICE_ABOVE_BELOW?bar.close<value
-                :bar.close<value && bar.open<value && bar.close<bar.open;
-      htf_text=htf_long?"long":(htf_short?"short":"neutral");
-     }
-   bool mtf_long=!Use_MTF_MA_Filter,mtf_short=!Use_MTF_MA_Filter;
-   string mtf_text="off";
-   double mtf_ma=0.0,mtf_open=0.0,mtf_close=0.0;
-   if(Use_MTF_MA_Filter)
-     {
-      mtf_text="unavailable";
-      if(MTFValues(mtf_ma,mtf_open,mtf_close))
-        {
-         mtf_long=MTF_MA_Filter_Mode==BASE_PRICE_ABOVE_BELOW?mtf_close>mtf_ma
-                  :mtf_close>mtf_ma && mtf_open>mtf_ma && mtf_close>mtf_open;
-         mtf_short=MTF_MA_Filter_Mode==BASE_PRICE_ABOVE_BELOW?mtf_close<mtf_ma
-                   :mtf_close<mtf_ma && mtf_open<mtf_ma && mtf_close<mtf_open;
-         mtf_text=mtf_long?"long":(mtf_short?"short":"neutral");
-        }
-     }
    bool session=InSession(bar.time);
    bool adx_pass=!Use_ADX_Filter || (adx[0]!=EMPTY_VALUE && adx[0]>=ADX_Minimum);
    bool atr_pass=!Use_ATR_Filter || (atr[0]!=EMPTY_VALUE &&
                  (ATR_Filter_Mode==BASE_ATR_MINIMUM?atr[0]>=ATR_Minimum:
                   ATR_Filter_Mode==BASE_ATR_MAXIMUM?atr[0]<=ATR_Maximum:
                   atr[0]>=ATR_Minimum && atr[0]<=ATR_Maximum));
-   bool long_direction=htf_long && mtf_long && session;
-   bool short_direction=htf_short && mtf_short && session;
    bool choch_adx=!Use_ADX_Filter || Apply_ADX_Filter_To==BASE_BOS_ONLY || adx_pass;
    string text="Entry filters, latest closed "+TimeframeName(BASETimeframe())+" candle";
-   text+="\nBOS: long "+PassText(long_direction && adx_pass && atr_pass)+
-         ", short "+PassText(short_direction && adx_pass && atr_pass);
-   text+="\nCHoCH: long "+PassText(long_direction && choch_adx && atr_pass)+
-         ", short "+PassText(short_direction && choch_adx && atr_pass);
-   text+="\nHTF MA "+htf_text+" | MTF MA "+mtf_text+" | Session "+
-         (Use_Session_Filter?(session?"in":"out"):"off");
-   text+="\nADX "+(Use_ADX_Filter?DoubleToString(adx[0],1)+" "+PassText(adx_pass):"off")+
+   text+="\nBOS "+PassText(session && adx_pass && atr_pass)+" | CHoCH "+PassText(session && choch_adx && atr_pass);
+   text+="\nSession "+(Use_Session_Filter?(session?"in":"out"):"off")+
+         " | ADX "+(Use_ADX_Filter?DoubleToString(adx[0],1)+" "+PassText(adx_pass):"off")+
          " | ATR "+(Use_ATR_Filter?DoubleToString(atr[0],_Digits)+" "+PassText(atr_pass):"off");
    return text;
   }
@@ -1858,26 +1859,6 @@ void DrawChart(const MqlRates &rates[],const int total,const int first,const BAS
    DrawStrongWeak(state,rates[total-1].time,timeframe);
   }
 
-int FirstMABar(const int total,const int displayed)
-  {
-   return MathMax(1,total-MathMin(500,displayed));
-  }
-
-// The HTF MA over the drawn HTF candles and the MTF MA over the drawn MTF
-// candles (at most 500 segments each).
-void DrawAverageLines(const MqlRates &rates[],const int total,const int displayed,
-                      const double &ma[],const MqlRates &mtf[],const double &mtf_ma[],
-                      const int mtf_count)
-  {
-   if(Show_HTF_MA_Line && Use_HTF_MA_Filter && ArraySize(ma)==total)
-      for(int i=FirstMABar(total,displayed);i<total;i++)
-         DrawSegment("HTF_MA_"+(string)rates[i].time,rates[i-1].time,ma[i-1],rates[i].time,ma[i],
-                     HTF_MA_Color,STYLE_SOLID,2);
-   for(int i=1;i<mtf_count;i++)
-      DrawSegment("MTF_MA_"+(string)mtf[i].time,mtf[i-1].time,mtf_ma[i-1],mtf[i].time,mtf_ma[i],
-                  MTF_MA_Color,STYLE_SOLID,2);
-  }
-
 void SendBASEAlert(const string signal,const datetime bar_time)
   {
    static datetime last_alert=0;
@@ -2042,20 +2023,32 @@ void DrawDashboard(const S83_TREND &trend,const BASE_TRADABILITY tradability,
   {
    Comment("");
    BASE_DASHBOARD_ROW rows[];
+   // 1. The HTF EMA order.
    int d=trend.have_ema?trend.ema_direction:0;
-   string ema_tip=trend.have_ema?(string)HTF_Fast_EMA+" EMA "+PriceText(trend.ema_fast)+", "+(string)HTF_Slow_EMA+
-                  " EMA "+PriceText(trend.ema_slow)+" (latest closed "+HTFName()+" candle)":"Not enough "+HTFName()+" history yet";
-   AddDashboardRow(rows,"HTF Trend ("+S83EmaText()+"):",
-                   !trend.have_ema?"Not available":d>0?"Bullish ("+(string)HTF_Fast_EMA+" above "+(string)HTF_Slow_EMA+")":
-                   d<0?"Bearish ("+(string)HTF_Fast_EMA+" below "+(string)HTF_Slow_EMA+")":"Flat (EMAs equal)",
+   int stack=trend.have_ema?trend.ema_stack:0;
+   string ema_tip=trend.have_ema?(string)HTF_EMA_Fast+" EMA "+PriceText(trend.ema_fast)+", "+(string)HTF_EMA_Middle+
+                  " EMA "+PriceText(trend.ema_middle)+", "+(string)HTF_EMA_Slow+" EMA "+PriceText(trend.ema_slow)+
+                  " (latest closed "+HTFName()+" candle)":"Not enough "+HTFName()+" history yet";
+   string ema_text=!trend.have_ema?"Not available":d>0?"Bullish ("+S83EmaOrder(1)+")":d<0?"Bearish ("+S83EmaOrder(-1)+")":
+                   stack!=0?S83EmaOrder(stack)+", not on each of the last "+(string)HTF_EMA_Candles:"Not in order";
+   AddDashboardRow(rows,"HTF Trend ("+S83EmaText()+"):",ema_text,
                    d>0?DASHBOARD_POSITIVE_COLOR:d<0?DASHBOARD_NEGATIVE_COLOR:DASHBOARD_NEUTRAL_COLOR,ema_tip);
+   // 2. The MTF swings: green for an HH and an HL, red for an LL and an LH.
    string highs=trend.have_highs?S83SwingTag(1,trend.high,trend.prev_high):"no two swing highs yet";
    string lows=trend.have_lows?S83SwingTag(-1,trend.low,trend.prev_low):"no two swing lows yet";
-   bool up=trend.have_highs && trend.high>trend.prev_high,down=trend.have_lows && trend.low<trend.prev_low;
+   bool both=trend.have_highs && trend.have_lows;
+   bool up=both && trend.high>trend.prev_high && trend.low>trend.prev_low;
+   bool down=both && trend.low<trend.prev_low && trend.high<trend.prev_high;
    string swing_tip="Latest swing high "+(trend.have_highs?PriceText(trend.high)+" vs previous "+PriceText(trend.prev_high):"-")+
                     "; latest swing low "+(trend.have_lows?PriceText(trend.low)+" vs previous "+PriceText(trend.prev_low):"-");
    AddDashboardRow(rows,"MTF Swings ("+MTFName()+"):",highs+" + "+lows,
-                   up && !down?DASHBOARD_POSITIVE_COLOR:down && !up?DASHBOARD_NEGATIVE_COLOR:DASHBOARD_NEUTRAL_COLOR,swing_tip);
+                   up?DASHBOARD_POSITIVE_COLOR:down?DASHBOARD_NEGATIVE_COLOR:DASHBOARD_NEUTRAL_COLOR,swing_tip);
+   // 3. The Hurst exponent.
+   AddDashboardRow(rows,"Hurst Exponent ("+S83HurstName()+"):",
+                   trend.have_hurst?"H "+DoubleToString(trend.hurst,2)+" ("+S83HurstWord(trend.hurst)+")":"Not available",
+                   trend.have_hurst?PassColor(trend.hurst>Hurst_Minimum):DASHBOARD_NEUTRAL_COLOR,
+                   "The last "+(string)Hurst_Candles+" closed "+S83HurstName()+" candles. Tradable needs H above "+
+                   DoubleToString(Hurst_Minimum,2)+"; about 0.5 is a random walk, above it a trending market, below it a mean-reverting one.");
    AddDashboardRow(rows,"Market Tradability:",
                    tradability==BASE_TRADABLE?"Tradable ("+TrendWord(d)+")":"Not Tradable",
                    PassColor(tradability==BASE_TRADABLE),filter_tooltip);
@@ -2072,10 +2065,12 @@ void DrawDashboard(const S83_TREND &trend,const BASE_TRADABILITY tradability,
 // the market filters, and Fib Base's Fibonacci engine for the levels.
 //
 // Bullish (buys only):
-//  * Market Tradability reads Tradable (bullish): the HTF 50 EMA is above the
-//    HTF 200 EMA, and the MTF's latest swing high is above the previous one
-//    (an HH, upward expansion).  Bearish: the 50 EMA below the 200 EMA and an
-//    MTF LL.  See EvaluateTradability.  It is the only market filter.
+//  * Market Tradability reads Tradable (bullish): all three conditions line
+//    up: the HTF EMAs are in order, 20 > 50 > 200, on the latest closed HTF
+//    candle; the MTF shows upward expansion, an HH and an HL; and the Hurst
+//    exponent is above 0.55 (a trending market).  Bearish: 20 < 50 < 200, an
+//    MTF LL and LH, and the same Hurst exponent.  See EvaluateTradability.
+//    It is the only market filter.
 //  * LTF setup (M30, Swing Detection level 3 by default), searched in the last
 //    LTF_Bars_To_Process (40) closed LTF candles:
 //      A: the most recent HL from which there was heavy buying pressure;
@@ -2484,29 +2479,149 @@ bool S83Used(const datetime &used[],const datetime time)
   }
 
 // --------------------------------------------------------------- trend
-// The HTF EMAs (on the latest closed HTF candle) and the MTF's last two swing
-// highs and lows, for Market Tradability (see EvaluateTradability).
+// The HTF EMAs (on the latest closed HTF candles), the MTF's last two swing
+// highs and lows, and the Hurst exponent, for Market Tradability (see
+// EvaluateTradability).
 int g_s83_ema_fast_handle=INVALID_HANDLE;
+int g_s83_ema_middle_handle=INVALID_HANDLE;
 int g_s83_ema_slow_handle=INVALID_HANDLE;
 S83_TREND g_s83_trend;
+
+ENUM_TIMEFRAMES S83HurstTimeframe()
+  {
+   if(Hurst_Timeframe==S83_HURST_MTF) return SetupTimeframe();
+   if(Hurst_Timeframe==S83_HURST_LTF) return LTFTimeframe();
+   return BASETimeframe();
+  }
+
+// The Hurst exponent of n closes (oldest first) by the lagged-difference
+// method (the generalized Hurst exponent with q = 2): x = ln(close); for each
+// lag tau from S83_HURST_MIN_LAG to S83_HURST_MAX_LAG, sigma(tau) is the root
+// mean square of x[t+tau] - x[t] over the window; H is the least-squares
+// slope of ln sigma(tau) against ln tau.  A random walk gives about 0.5; a
+// trending market more (a steady drift, which is not subtracted, or momentum
+// in the moves), a mean-reverting one less.  False when a close is not
+// positive or the prices do not move.  83% Strategy.pine computes it in the
+// same order.
+bool S83HurstOf(const double &close[],const int n,double &h)
+  {
+   h=0.0;
+   if(n<=S83_HURST_MAX_LAG) return false;
+   double x[];
+   ArrayResize(x,n);
+   for(int i=0;i<n;i++)
+     {
+      if(close[i]<=0.0) return false;
+      x[i]=MathLog(close[i]);
+     }
+   int lags=S83_HURST_MAX_LAG-S83_HURST_MIN_LAG+1;
+   double lt[],ls[];
+   ArrayResize(lt,lags);
+   ArrayResize(ls,lags);
+   for(int k=0;k<lags;k++)
+     {
+      int tau=S83_HURST_MIN_LAG+k;
+      int m=n-tau;
+      double square=0.0;
+      for(int t=0;t<m;t++)
+        {
+         double move=x[t+tau]-x[t];
+         square+=move*move;
+        }
+      square/=m;
+      if(square<=0.0) return false;
+      lt[k]=MathLog((double)tau);
+      ls[k]=MathLog(MathSqrt(square));
+     }
+   double mt=0.0,ms=0.0;
+   for(int k=0;k<lags;k++)
+     {
+      mt+=lt[k];
+      ms+=ls[k];
+     }
+   mt/=lags;
+   ms/=lags;
+   double sxy=0.0,sxx=0.0;
+   for(int k=0;k<lags;k++)
+     {
+      sxy+=(lt[k]-mt)*(ls[k]-ms);
+      sxx+=(lt[k]-mt)*(lt[k]-mt);
+     }
+   h=sxy/sxx;
+   return true;
+  }
+
+// The EMA order on one candle: 1 fast > middle > slow, -1 fast < middle <
+// slow, 0 neither.
+int S83EmaStack(const double fast,const double middle,const double slow)
+  {
+   if(fast>middle && middle>slow) return 1;
+   if(fast<middle && middle<slow) return -1;
+   return 0;
+  }
 
 void S83ReadTrend(const BASE_STRUCTURE_POINT &mtf_points[],S83_TREND &trend)
   {
    ZeroMemory(trend);
-   double fast[],slow[];
-   trend.have_ema=g_s83_ema_fast_handle!=INVALID_HANDLE && g_s83_ema_slow_handle!=INVALID_HANDLE &&
-                  iBars(_Symbol,BASETimeframe())>HTF_Slow_EMA &&
-                  CopyBuffer(g_s83_ema_fast_handle,0,1,1,fast)==1 && CopyBuffer(g_s83_ema_slow_handle,0,1,1,slow)==1 &&
-                  fast[0]!=EMPTY_VALUE && slow[0]!=EMPTY_VALUE;
+   // The EMAs on the last HTF_EMA_Candles closed HTF candles (oldest first).
+   int n=HTF_EMA_Candles;
+   double fast[],middle[],slow[];
+   ArraySetAsSeries(fast,false);
+   ArraySetAsSeries(middle,false);
+   ArraySetAsSeries(slow,false);
+   trend.have_ema=g_s83_ema_fast_handle!=INVALID_HANDLE && g_s83_ema_middle_handle!=INVALID_HANDLE &&
+                  g_s83_ema_slow_handle!=INVALID_HANDLE && iBars(_Symbol,BASETimeframe())>HTF_EMA_Slow+n &&
+                  CopyBuffer(g_s83_ema_fast_handle,0,1,n,fast)==n && CopyBuffer(g_s83_ema_middle_handle,0,1,n,middle)==n &&
+                  CopyBuffer(g_s83_ema_slow_handle,0,1,n,slow)==n;
+   for(int i=0;i<n && trend.have_ema;i++)
+      if(fast[i]==EMPTY_VALUE || middle[i]==EMPTY_VALUE || slow[i]==EMPTY_VALUE) trend.have_ema=false;
    if(trend.have_ema)
      {
-      trend.ema_fast=fast[0];
-      trend.ema_slow=slow[0];
-      trend.ema_direction=fast[0]>slow[0]?1:(fast[0]<slow[0]?-1:0);
+      trend.ema_fast=fast[n-1];
+      trend.ema_middle=middle[n-1];
+      trend.ema_slow=slow[n-1];
+      trend.ema_stack=S83EmaStack(fast[n-1],middle[n-1],slow[n-1]);
+      trend.ema_direction=trend.ema_stack;
+      for(int i=0;i<n-1;i++)
+         if(S83EmaStack(fast[i],middle[i],slow[i])!=trend.ema_stack) trend.ema_direction=0;
      }
    trend.have_highs=S83LastTwoSwings(mtf_points,1,trend.high,trend.prev_high);
    trend.have_lows=S83LastTwoSwings(mtf_points,-1,trend.low,trend.prev_low);
+   // The Hurst exponent of the last Hurst_Candles closed candles.
+   MqlRates rates[];
+   ArraySetAsSeries(rates,false);
+   int got=CopyRates(_Symbol,S83HurstTimeframe(),1,Hurst_Candles,rates);
+   trend.hurst_candles=MathMax(got,0);
+   if(got==Hurst_Candles)
+     {
+      double close[];
+      ArrayResize(close,got);
+      for(int i=0;i<got;i++) close[i]=rates[i].close;
+      trend.have_hurst=S83HurstOf(close,got,trend.hurst);
+     }
    g_s83_trend=trend;
+  }
+
+// The HTF EMA lines over the drawn HTF candles (at most 500 segments each).
+void S83DrawEmaLine(const int handle,const string id,const color clr,const MqlRates &rates[],
+                    const int total,const int displayed)
+  {
+   int first=MathMax(1,total-MathMin(500,displayed));
+   int count=total-first+1;
+   double values[];
+   if(total<2 || !CopyIndicator(handle,0,count,values)) return;
+   // values[j] belongs to rates[first-1+j] (both end at the latest closed candle).
+   for(int i=first;i<total;i++)
+      DrawSegment("EMA_"+id+"_"+(string)rates[i].time,rates[i-1].time,values[i-first],rates[i].time,
+                  values[i-first+1],clr,STYLE_SOLID,2);
+  }
+
+void S83DrawEmaLines(const MqlRates &rates[],const int total,const int displayed)
+  {
+   if(!Show_HTF_EMA_Lines) return;
+   S83DrawEmaLine(g_s83_ema_fast_handle,"FAST",HTF_EMA_Fast_Color,rates,total,displayed);
+   S83DrawEmaLine(g_s83_ema_middle_handle,"MIDDLE",HTF_EMA_Middle_Color,rates,total,displayed);
+   S83DrawEmaLine(g_s83_ema_slow_handle,"SLOW",HTF_EMA_Slow_Color,rates,total,displayed);
   }
 
 // ------------------------------------------------------------ outcomes
@@ -3032,8 +3147,8 @@ void S83DashboardRows(BASE_DASHBOARD_ROW &rows[])
 // The market filters alone (no position, day or trade-count checks), for the
 // dashboard.
 // The market filter of an entry: Market Tradability reads Tradable in its
-// direction: the HTF EMA trend and the MTF swings agree (see
-// EvaluateTradability).
+// direction: the HTF EMA order, the MTF swings and the Hurst exponent line up
+// (see EvaluateTradability).
 string S83FilterText(const int direction)
   {
    if(g_s83_tradability!=BASE_TRADABLE)
@@ -3178,7 +3293,11 @@ string S83InputProblem()
   {
    if(LTF_Bars_To_Process<5) return "LTF_Bars_To_Process must be at least 5";
    if(Setups_To_Show<0) return "Setups_To_Show cannot be negative";
-   if(HTF_Fast_EMA<1 || HTF_Slow_EMA<=HTF_Fast_EMA) return "the HTF EMAs need 1 <= HTF_Fast_EMA < HTF_Slow_EMA";
+   if(HTF_EMA_Fast<1 || HTF_EMA_Middle<=HTF_EMA_Fast || HTF_EMA_Slow<=HTF_EMA_Middle)
+      return "the HTF EMAs need 1 <= HTF_EMA_Fast < HTF_EMA_Middle < HTF_EMA_Slow";
+   if(HTF_EMA_Candles<1 || HTF_EMA_Candles>50) return "HTF_EMA_Candles must be 1 to 50";
+   if(Hurst_Candles<50 || Hurst_Candles>400) return "Hurst_Candles must be 50 to 400";
+   if(Hurst_Minimum<0.0 || Hurst_Minimum>=1.0) return "Hurst_Minimum must be 0 to below 1";
    if(Entry_Level<=0.0 || Entry_Level>=1.0) return "the Entry Level must be between 0 and 1 (0.83 = 83%)";
    if(Impulse_Candles<0 || Impulse_Min_ATR<0.0) return "the heavy-pressure inputs cannot be negative";
    if(Risk_Percent<=0.0 || Risk_Percent>100.0) return "Risk_Percent must be above 0 and at most 100";
@@ -3203,8 +3322,9 @@ void S83Init()
    g_s83_journaled="";
    g_s83_waiting="";
    ZeroMemory(g_s83_trend);
-   g_s83_ema_fast_handle=iMA(_Symbol,BASETimeframe(),HTF_Fast_EMA,0,MODE_EMA,PRICE_CLOSE);
-   g_s83_ema_slow_handle=iMA(_Symbol,BASETimeframe(),HTF_Slow_EMA,0,MODE_EMA,PRICE_CLOSE);
+   g_s83_ema_fast_handle=iMA(_Symbol,BASETimeframe(),HTF_EMA_Fast,0,MODE_EMA,PRICE_CLOSE);
+   g_s83_ema_middle_handle=iMA(_Symbol,BASETimeframe(),HTF_EMA_Middle,0,MODE_EMA,PRICE_CLOSE);
+   g_s83_ema_slow_handle=iMA(_Symbol,BASETimeframe(),HTF_EMA_Slow,0,MODE_EMA,PRICE_CLOSE);
    g_trade.SetExpertMagicNumber(Magic_Number);
    g_trade.SetDeviationInPoints(20);
    g_trade.SetTypeFillingBySymbol(_Symbol);
@@ -3214,8 +3334,10 @@ void S83Init()
 void S83Deinit()
   {
    if(g_s83_ema_fast_handle!=INVALID_HANDLE) IndicatorRelease(g_s83_ema_fast_handle);
+   if(g_s83_ema_middle_handle!=INVALID_HANDLE) IndicatorRelease(g_s83_ema_middle_handle);
    if(g_s83_ema_slow_handle!=INVALID_HANDLE) IndicatorRelease(g_s83_ema_slow_handle);
    g_s83_ema_fast_handle=INVALID_HANDLE;
+   g_s83_ema_middle_handle=INVALID_HANDLE;
    g_s83_ema_slow_handle=INVALID_HANDLE;
   }
 
@@ -3236,10 +3358,8 @@ bool Rebuild(const bool permit_alert)
    if(total<2*length+2)
       return S83Wait("not enough "+TimeframeName(timeframe)+" history yet ("+(string)MathMax(total,0)+" candles)");
 
-   // Only the MA line needs history; the filters use the latest closed bar.
-   double ma[],adx[],atr[];
-   if(Use_HTF_MA_Filter && !CopyIndicator(g_htf_ma_handle,0,Show_HTF_MA_Line?total:1,ma))
-      return S83Wait("the HTF MA is still calculating");
+   // The ADX and ATR filters use the latest closed bar.
+   double adx[],atr[];
    if(Use_ADX_Filter && !CopyIndicator(g_adx_handle,0,1,adx)) return S83Wait("the HTF ADX is still calculating");
    if(Use_ATR_Filter && !CopyIndicator(g_atr_handle,0,1,atr)) return S83Wait("the HTF ATR is still calculating");
 
@@ -3277,19 +3397,6 @@ bool Rebuild(const bool permit_alert)
    ReplayStructure(rates,total,length,structure_state,points,events);
 
 
-   // The MTF MA line, if shown, over the drawn MTF candles.
-   MqlRates mtf_rates[];
-   double mtf_ma[];
-   int mtf_count=0;
-   ArraySetAsSeries(mtf_rates,false);
-   if(Show_MTF_MA_Line && Use_MTF_MA_Filter)
-     {
-      mtf_count=MathMin(501,ChartStructureBars(SetupTimeframe()));
-      if(CopyRates(_Symbol,SetupTimeframe(),1,mtf_count,mtf_rates)!=mtf_count ||
-         !CopyIndicator(g_mtf_ma_handle,0,mtf_count,mtf_ma))
-         mtf_count=0;
-     }
-
    if(DrawingEnabled())
      {
       ObjectsDeleteAll(0,g_prefix);
@@ -3307,7 +3414,7 @@ bool Rebuild(const bool permit_alert)
                       chart_state,chart_points,chart_events,ChartInternalLength(chart_timeframe),
                       chart_timeframe);
         }
-      DrawAverageLines(rates,total,displayed,ma,mtf_rates,mtf_ma,mtf_count);
+      S83DrawEmaLines(rates,total,displayed);
      }
 
    // Trend: the HTF EMAs on the latest closed HTF candle and the MTF swings.
@@ -3318,7 +3425,7 @@ bool Rebuild(const bool permit_alert)
    S83Update(structure_state,setup_state,ltf_state,ltf_rates,ltf_total,ltf_points,
              tradability,tradability_reason);
 
-   if(DrawingEnabled()) DrawDashboard(trend,tradability,tradability_reason,EntryFilterTooltip(rates[total-1],ma,adx,atr));
+   if(DrawingEnabled()) DrawDashboard(trend,tradability,tradability_reason,EntryFilterTooltip(rates[total-1],adx,atr));
    if(DrawingEnabled()) S83DrawAll();
    g_s83_waiting="";
    // Alert every event that became known on the newest closed candle (a CHoCH
@@ -3355,8 +3462,8 @@ bool ValidInputs()
               (string)MAX_DETECTION_LEVEL;
    else if(Bars_To_Process<100)
       problem="Bars_To_Process must be at least 100";
-   else if(HTF_MA_Length<1 || MTF_MA_Length<1 || ADX_Length<1 || ATR_Length<1)
-      problem="HTF MA, MTF MA, ADX and ATR lengths must be positive";
+   else if(ADX_Length<1 || ATR_Length<1)
+      problem="ADX and ATR lengths must be positive";
    else if(Equal_Highs_Lows_Threshold<0.0 || Equal_Highs_Lows_Threshold>0.5)
       problem="the EQH/EQL Threshold must be between 0 and 0.5";
    else if(!Use_HTF && !Use_MTF && !Use_LTF)
@@ -3378,8 +3485,6 @@ int OnInit()
    g_last_setup_bar=0;
    ENUM_TIMEFRAMES timeframe=BASETimeframe();
    g_prefix="BASE_"+(string)ChartID()+"_";
-   if(Use_HTF_MA_Filter && (g_htf_ma_handle=iMA(_Symbol,timeframe,HTF_MA_Length,0,BASEMAMethod(HTF_MA_Type),PRICE_CLOSE))==INVALID_HANDLE) return INIT_FAILED;
-   if(Use_MTF_MA_Filter && (g_mtf_ma_handle=iMA(_Symbol,SetupTimeframe(),MTF_MA_Length,0,BASEMAMethod(MTF_MA_Type),PRICE_CLOSE))==INVALID_HANDLE) return INIT_FAILED;
    if(Use_ADX_Filter && (g_adx_handle=iADX(_Symbol,timeframe,ADX_Length))==INVALID_HANDLE) return INIT_FAILED;
    if(Use_ATR_Filter && (g_atr_handle=iATR(_Symbol,timeframe,ATR_Length))==INVALID_HANDLE) return INIT_FAILED;
    S83Init();
@@ -3391,12 +3496,8 @@ int OnInit()
 void OnDeinit(const int reason)
   {
    EventKillTimer();
-   if(g_htf_ma_handle!=INVALID_HANDLE) IndicatorRelease(g_htf_ma_handle);
-   if(g_mtf_ma_handle!=INVALID_HANDLE) IndicatorRelease(g_mtf_ma_handle);
    if(g_adx_handle!=INVALID_HANDLE) IndicatorRelease(g_adx_handle);
    if(g_atr_handle!=INVALID_HANDLE) IndicatorRelease(g_atr_handle);
-   g_htf_ma_handle=INVALID_HANDLE;
-   g_mtf_ma_handle=INVALID_HANDLE;
    g_adx_handle=INVALID_HANDLE;
    g_atr_handle=INVALID_HANDLE;
    S83Deinit();
