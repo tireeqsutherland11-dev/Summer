@@ -761,19 +761,23 @@ engine, labels and dashboard unchanged. Both use Fib Base's Fibonacci engine
 
 Buys (bullish market):
 
-1. **Market Tradability.** The dashboard's Market Tradability reads
-   **Tradable** (bullish). That means the Market Trend and the Internal
-   Structure of every selected timeframe (HTF, MTF and LTF by default) read
-   bullish.
-   - A Bullish Transition counts as bullish.
-   - It does not matter whether the latest break was a BOS or a CHoCH.
-   - Consolidation / Undefined, an undefined internal structure, or any of
-     them pointing the other way, is Not Tradable. The reason names the
-     first one that does not agree.
-   - The internal structures count even when their dashboard rows are
-     hidden.
-   - This is the only market filter: there are no Optimal Conditions and no
-     Tradable (Early) in the strategy. Base's own indicator keeps its rules.
+1. **Market Tradability (trend identification).** The dashboard's Market
+   Tradability reads **Tradable (bullish)**. Two conditions decide it:
+   - **HTF EMA trend filter.** The HTF 50 EMA is above the HTF 200 EMA
+     (`HTF_50_EMA > HTF_200_EMA`), on the latest closed HTF candle. The
+     lengths are `HTF_Fast_EMA` and `HTF_Slow_EMA` (50 and 200).
+   - **MTF structural progression.** The MTF shows upward expansion: its
+     latest swing high is above the previous swing high (an HH,
+     `Current_Swing_High > Previous_Swing_High`).
+     - The swings are the MTF's structure swings (MTF Swing Detection
+       Length).
+     - The previous swing high is the high of the previous leg; a higher high
+       within the same leg replaces it.
+
+   Otherwise the market is Not Tradable, and the reason names the missing
+   condition. This is the only market filter. The BOS / CHoCH Market Trends,
+   the Internal Structure, Optimal Conditions and Tradable (Early) play no
+   part. Base's own indicator keeps its rules.
 2. **LTF setup.** The LTF is M30 with LTF Swing Detection level 3 (3 candles
    each side) by default. The setup is searched within the last
    `LTF_Bars_To_Process` (the LTF Independent Processed Bars, 40) closed LTF
@@ -794,9 +798,13 @@ Buys (bullish market):
    reaching 83%, the setup is dead and its HL is used up. A new setup needs
    a new HL.
 
-Sells mirror this: an LH with heavy selling pressure, a close below the
-swing low before it, the lowest low since then as B, a sell at the 83%
-retracement, and invalidation on a new LL beyond a confirmed B.
+Sells mirror this:
+- the HTF 50 EMA below the 200 EMA, and the MTF's latest swing low below the
+  previous swing low (an LL, downward expansion);
+- an LH with heavy selling pressure, and a close below the swing low before
+  it;
+- the lowest low since then as B, and a sell at the 83% retracement;
+- invalidation on a new LL beyond a confirmed B.
 
 How the rules are made exact:
 
@@ -882,7 +890,25 @@ On the LTF chart, setups are drawn as in the strategy's examples.
   - Failed setups are drawn dotted with their reason: invalidated, expired,
     missed or replaced.
 
-The dashboard gains these rows under Base's own:
+The dashboard shows the trend and the strategy:
+
+- **HTF Trend (H4 50/200 EMA).** Bullish (50 above 200), Bearish (50 below
+  200), or not available yet. The tooltip gives both EMA values.
+- **MTF Swings (H1).** The latest swing high against the previous one (HH,
+  LH or EQH) and the same for lows (LL, HL or EQL). It is green for upward
+  expansion only and red for downward expansion only. The tooltip gives the
+  prices.
+- **Market Tradability.** Tradable (bullish or bearish) or Not Tradable.
+- **Tradability Reason.** Which condition holds or is missing.
+
+Base's BOS / CHoCH Market Trend rows, the Internal Structure rows and the
+Trade Recommendations are no longer on the dashboard.
+
+- **Internal Structure.** It is drawn on the chart only, and `Show Internal
+  Structure` is off by default. Turn it on to see the internal BOS / CHoCH.
+  It plays no part in Market Tradability.
+
+Then come the strategy's rows:
 
 - **83% Strategy.** Waiting, a buy or sell setup armed, or a position open.
 - **Setup.** A, B and the 83% price. B reads `(forming)` while it still
@@ -995,25 +1021,34 @@ and Python mirrors:
   - the setup was not missed;
   - the entry is at the first touch, with no new HH/LL beyond a confirmed B
     first;
-  - Market Tradability read Tradable in the trade direction;
+  - Market Tradability read Tradable in the trade direction (HTF EMAs and
+    the MTF HH / LL, see below);
   - the take profit, stop and 1:2 / 1:3 choice;
   - the lot size, including the risk cuts;
   - the day and trade limits;
   - breakeven.
 
-  All 218 trades passed. Every one of the 656 touches of an armed setup was
+  All 198 trades passed. Every one of the 656 touches of an armed setup was
   either traded or rejected for a genuine reason:
-  - Market Tradability not Tradable: 357;
-  - Tradable in the other direction: 81;
-  - a position already open: 5.
+  - Market Tradability not Tradable: 287;
+  - Tradable in the other direction: 168;
+  - a position already open: 6.
 
   The generated markets are random, so they say nothing about profitability.
 - **The Tradable rule.** Market Tradability was computed for every
-  combination of three timeframes' Market Trends (none, bullish or bearish
-  by CHoCH or BOS, ranging), Internal Structures (bullish, bearish,
-  undefined) and timeframe selections: 40,824 cases. It read Tradable
-  exactly when every selected timeframe's trend and internal structure
-  agreed, with a reason in every case.
+  combination of:
+  - the HTF EMAs (unavailable, fast above, below, equal);
+  - MTF swing availability;
+  - the latest swing against the previous one (above, below, equal) for
+    highs and lows.
+
+  It read Tradable exactly as the rule says, with a reason in every case.
+- **The trend at each entry.** At every trade, the HTF EMAs were recomputed
+  from the latest closed HTF candle and matched the EA's values. They pointed
+  the trade direction, with an MTF HH for buys or an LL for sells.
+- **EA and Pine read the same MTF swings.** The EA's latest and previous
+  swing highs and lows matched the Pine engine's on 21,865 readings across
+  19 generated markets.
 - **Deriv tests.** Separate tests cover:
   - sizing at the minimum, maximum and total volume limits;
   - the Journal reason while history is missing.
