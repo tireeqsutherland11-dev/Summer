@@ -1358,7 +1358,13 @@ var line strongWeakHighLine = na
 var line strongWeakLowLine = na
 var label strongWeakHighLabel = na
 var label strongWeakLowLabel = na
-if barstate.islast
+// A strategy runs only at candle closes (calc_on_every_tick off), so while the
+// market is open it has not run on the forming last candle when it loads or
+// its settings change, and barstate.islast stays false until that candle
+// closes. Drawing on the last closed candle as well
+// (barstate.islastconfirmedhistory) shows the drawings and the dashboard at
+// once; the closes that follow redraw them.
+if barstate.islast or barstate.islastconfirmedhistory
     line.delete(lastHighLine)
     line.delete(lastLowLine)
     line.delete(strongWeakHighLine)
@@ -2480,10 +2486,11 @@ if barstate.isconfirmed and s83OnLtf
                     s.note := why
 
 // The latest armed setups: their levels reach Fib Right Offset candles past
-// the latest candle, with the planned position from it.
+// the latest candle, with the planned position from it. Drawn on the last
+// closed candle too, like the dashboard (see the strong/weak lines).
 var array<box> s83PlanBoxes = array.new<box>()
 var array<label> s83PlanLabels = array.new<label>()
-if barstate.islast and s83OnLtf
+if (barstate.islast or barstate.islastconfirmedhistory) and s83OnLtf
     for bx in s83PlanBoxes
         box.delete(bx)
     s83PlanBoxes.clear()
@@ -2550,7 +2557,8 @@ wrapText(string s) =>
                 line := line + (line == "" ? "" : " ") + w
     out + (out == "" or line == "" ? "" : "\n") + line
 
-if barstate.islast
+// The dashboard: on the last closed candle too (see the strong/weak lines).
+if barstate.islast or barstate.islastconfirmedhistory
     [tradability, tradeReason] = evaluateTradability(htfView, mtfView, ltfView, htfInternal, mtfInternal, ltfInternal)
     bool early = tradability == 1
     // The timeframes correlate whenever the market is Tradable or Tradable
