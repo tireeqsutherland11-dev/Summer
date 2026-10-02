@@ -4,10 +4,13 @@
 //
 // Bullish (buys only): Market Tradability reads Tradable and the Optimal
 // Conditions OPTIMAL; the MTF's most recent structure is a BOS that made an
-// HH; on the LTF (M30, Swing Detection level 3, 25 independent processed
-// bars) the Fibonacci runs from the HH (0%) back to the most recent HL with
-// heavy buying pressure (100%), and the entry is at 83%. The setup is invalid
-// once price makes a new HH without reaching 83%. Bearish mirrors this.
+// HH; on the LTF (M30, Swing Detection level 3, 40 independent processed
+// bars), once a candle has closed above the swing high before the most
+// recent HL with heavy buying pressure (the break of structure), the
+// Fibonacci runs from the highest high since that HL (0%, B, which follows
+// price until it is a confirmed swing) back to the HL (100%), and the entry
+// is at 83%. The setup is invalid once price makes a new HH beyond a
+// confirmed B without reaching 83%. Bearish mirrors this.
 // Risk: 5% per trade by default, halved after every 2 consecutive losses in a
 // day, at most 5 trades a day, Monday to Saturday; the stop goes behind the HL
 // (LH) by an ATR buffer and the target just before the HH (LL), at 1:2 or 1:3,
@@ -174,14 +177,14 @@ minQty = input.float(0.0, "Minimum Quantity (0 = none)", minval = 0.0, group = g
 minQtyRiskMultiple = input.float(0.0, "Trade The Minimum If It Risks At Most N x The Plan (0 = skip)", minval = 0.0, step = 0.5, group = grpS83Sym, tooltip = "When the risk-based size is below the minimum quantity, trade the minimum only if its loss at the stop is at most this many times the planned risk.")
 
 grpS83 = "83% Strategy - Setup (LTF)"
-ltfBarsToProcess = input.int(25, "LTF Independent Processed Bars", minval = 5, maxval = 400, group = grpS83, tooltip = "How many LTF candles the setup is looked for in, and how far back Base's structure is drawn on the LTF chart. A (the HL or LH) must lie within them; a setup whose A leaves them expires.")
+ltfBarsToProcess = input.int(40, "LTF Independent Processed Bars", minval = 5, maxval = 400, group = grpS83, tooltip = "How many LTF candles the setup is looked for in, and how far back Base's structure is drawn on the LTF chart. A (the HL or LH) must lie within them; a setup whose A leaves them expires.")
 entryLevel = input.float(0.83, "Entry Fibonacci Level", minval = 0.01, maxval = 0.99, step = 0.01, group = grpS83, tooltip = "The retracement of the A-to-B leg where the order is placed: 0.83 = 83%, measured from B (0%) back towards A (100%).")
 impulseCandles = input.int(3, "Heavy Pressure: Candles After The HL/LH", minval = 0, maxval = 20, group = grpS83, tooltip = "Heavy pressure must start the move: a candle within this many candles after A (A's own candle included) must close far enough beyond A (below).")
 impulseMinAtr = input.float(2.0, "Heavy Pressure: Minimum Move (LTF ATR)", minval = 0.0, step = 0.1, group = grpS83, tooltip = "How far beyond A that close must be, in 14-candle LTF ATR measured at A. On real data 2.0 selected the strongest 43% of HL-to-HH legs. 0 accepts every leg.")
 allowEarlyEntries = input.bool(false, "Also Trade When Tradable (Early)", group = grpS83, tooltip = "Off: Market Tradability must read Tradable. On: Tradable (Early) is accepted too.")
 
 grpS83Conf = "83% Strategy - Entry Confirmation"
-engulfConfirm = input.bool(true, "Wait For An Engulfing After The 83% Touch", group = grpS83Conf, tooltip = "On: once price touches the entry level, the trade waits for an engulfing candle in the trade direction (bullish for buys, bearish for sells) on the lower timeframe or the LTF, on the touching candle or later, and enters at its close. Off: a limit order at the entry level.")
+engulfConfirm = input.bool(false, "Wait For An Engulfing After The 83% Touch", group = grpS83Conf, tooltip = "On: once price touches the entry level, the trade waits for an engulfing candle in the trade direction (bullish for buys, bearish for sells) on the lower timeframe or the LTF, on the touching candle or later, and enters at its close. Off: a limit order at the entry level.")
 useLowerEngulf = input.bool(true, "Engulfing On The Lower Timeframe", inline = "lower", group = grpS83Conf)
 engulfLowerTf = input.timeframe("15", "", inline = "lower", group = grpS83Conf, tooltip = "The lower timeframe (M15 by default). Its candles inside each LTF candle are read with request.security_lower_tf; the entry is placed at the close of the LTF candle that contains the engulfing.")
 useLtfEngulf = input.bool(true, "Engulfing On The LTF", group = grpS83Conf, tooltip = "An engulfing of the LTF candles (M30 by default) also confirms the entry.")
@@ -236,7 +239,8 @@ fibLabelInput = input.string("Percent", "Label Text", options = ["Percent", "Rat
 fibRightOffset = input.int(10, "Right Offset (candles)", minval = 0, maxval = 200, group = grpS83Fib, tooltip = "How far right of the latest candle (or of the candle that ended the setup) the levels reach.")
 
 grpS83Vis = "83% Strategy - Visuals (LTF)"
-showSetupPoints = input.bool(true, "Show A / B / C", group = grpS83Vis, tooltip = "A: the HL (LH) the heavy move started from. B: the HH (LL) it formed. C: the entry, where price touched the entry level.")
+setupsToShow = input.int(2, "Setups To Show", minval = 0, maxval = 50, group = grpS83Vis, tooltip = "How many of the latest setups are drawn on the LTF chart. A live setup is always drawn.")
+showSetupPoints = input.bool(true, "Show A / B / C", group = grpS83Vis, tooltip = "A: the HL (LH) the heavy move started from. B: the HH (LL) it formed, the extreme since A. C: the entry, where price touched the entry level.")
 bullSetupColor = input.color(color.red, "Buy Setup Color", group = grpS83Vis, tooltip = "Color of A / B / C of buy setups.")
 bearSetupColor = input.color(#4169E1, "Sell Setup Color", group = grpS83Vis, tooltip = "Color of A / B / C of sell setups.")
 showPositionBoxes = input.bool(true, "Show Target And Stop Zones", group = grpS83Vis, tooltip = "The target zone (entry to take profit) and stop zone (entry to stop loss) from C, as in the strategy's examples; armed setups show the planned zones faintly from the latest candle.")
@@ -1877,6 +1881,10 @@ type S83Setup
     float level
     float impulse
     int createdBar
+    // B follows price until it is a confirmed swing (or the level is touched).
+    bool bFixed = false
+    float breakLevel = na
+    bool pruned = false
     int state = 0
     int endBar = na
     int endTime = na
@@ -1906,7 +1914,7 @@ s83LevelText() =>
     str.tostring(entryLevel * 100, "0") + "%"
 
 s83SetupText(S83Setup s) =>
-    (s.dir > 0 ? "Buy: A HL " : "Sell: A LH ") + priceText(s.aPrice) + " -> B " + (s.dir > 0 ? "HH " : "LL ") + priceText(s.bPrice) + "; " + s83LevelText() + " at " + priceText(s.level)
+    (s.dir > 0 ? "Buy: A HL " : "Sell: A LH ") + priceText(s.aPrice) + " -> B " + (s.dir > 0 ? "HH " : "LL ") + priceText(s.bPrice) + (s.state == S83_ARMED and not s.bFixed ? " (forming)" : "") + "; " + s83LevelText() + " at " + priceText(s.level)
 
 alignDown(float p) =>
     math.floor(p / syminfo.mintick + 1e-8) * syminfo.mintick
@@ -2124,7 +2132,7 @@ method s83Delete(S83Setup s) =>
 // The traded position, as in the strategy's examples: the target zone (entry
 // to take profit) and stop zone (entry to stop loss) from the entry.
 method s83DrawTrade(S83Setup s) =>
-    if showPositionBoxes and not na(s.boxes)
+    if showPositionBoxes and not na(s.boxes) and not s.pruned
         int boxEnd = s.entryTime + positionBoxCandles * chartSeconds * 1000
         s.boxes.push(box.new(s.entryTime, math.max(s.entry, s.tp), boxEnd, math.min(s.entry, s.tp), xloc = xloc.bar_time, bgcolor = targetZoneColor, border_width = 0))
         s.boxes.push(box.new(s.entryTime, math.max(s.entry, s.sl), boxEnd, math.min(s.entry, s.sl), xloc = xloc.bar_time, bgcolor = stopZoneColor, border_width = 0))
@@ -2174,7 +2182,8 @@ s83End(S83Setup s, int st, int t, string why) =>
 // One candle of a live setup (see 83% Strategy.mq5's S83Step): the LTF candle
 // itself, or with Engulfing Confirmation each lower-timeframe candle in turn.
 //  * Armed: a touch of the entry level makes it touched (waiting for an
-//    engulfing with confirmation); otherwise going beyond B invalidates it.
+//    engulfing with confirmation); otherwise going beyond a confirmed B
+//    invalidates it (beyond a forming B, B follows at the close: s83FollowB).
 //  * Waiting: a close beyond A (the HL/LH broke) or going beyond B fails it;
 //    otherwise a lower-timeframe engulfing in its direction, on the touching
 //    candle or later, confirms it at that candle's close.
@@ -2190,7 +2199,7 @@ s83Step(S83Setup s, int cT, float cO, float cH, float cL, float cC, bool isLower
                 s.state := S83_TOUCHED
                 s.endBar := bar_index
                 s.endTime := time
-        else if d > 0 ? cH > s.bPrice : cL < s.bPrice
+        else if s.bFixed and (d > 0 ? cH > s.bPrice : cL < s.bPrice)
             s83End(s, S83_INVALID, isLower ? cT : time, "invalidated: a new " + (d > 0 ? "HH" : "LL") + " first")
     if s.state == S83_WAITING
         if d > 0 ? cC < s.aPrice : cC > s.aPrice
@@ -2204,18 +2213,56 @@ s83Step(S83Setup s, int cT, float cO, float cH, float cL, float cC, bool isLower
             s.confirmPrice := cC
     s.state
 
+// At the close of an LTF candle, the B of an armed setup follows price until
+// it is a confirmed swing (see 83% Strategy.mq5's S83FollowB): a candle at or
+// beyond B becomes B, and B is fixed once Swing Detection Length candles have
+// closed without reaching it. The levels are redrawn when B moves.
+s83FollowB(S83Setup s) =>
+    if s.state == S83_ARMED and not s.bFixed
+        if s.dir > 0 ? high >= s.bPrice : low <= s.bPrice
+            s.bPrice := s.dir > 0 ? high : low
+            s.bTime := time
+            s.bBar := bar_index
+            s.level := s83Price(s, entryLevel)
+            s.s83Delete()
+            s.s83DrawNew()
+        if bar_index - s.bBar >= chartLength
+            s.bFixed := true
+
+// Only the latest Setups To Show drawn setups stay on the chart (newest
+// first); a live one always stays.
+var array<S83Setup> s83Drawn = array.new<S83Setup>()
+s83Visible(S83Setup s) =>
+    s83Live(s) or s.state == S83_TOUCHED or s.state == S83_CONFIRMED or showFailedSetups
+s83Prune() =>
+    int n = s83Drawn.size()
+    int shown = 0
+    if n > 0
+        for k = n - 1 to 0
+            S83Setup s = s83Drawn.get(k)
+            if not s83Visible(s)
+                s83Drawn.remove(k)
+            else if s83Live(s) or shown < setupsToShow
+                shown += 1
+            else
+                s.s83Delete()
+                s.pruned := true
+                s83Drawn.remove(k)
+
 // One closed LTF candle (see 83% Strategy.mq5's S83ScanSetups):
 //  1. each live setup steps through the candle (with Engulfing Confirmation,
 //     through each lower-timeframe candle inside it, in order; see s83Step).
 //     Then a setup waiting for its engulfing is confirmed by an LTF
 //     engulfing, or fails once the wait runs out; a live setup whose A left
 //     the processed candles expires (armed) or fails (waiting);
-//  2. each swing confirmed on the candle that is an HH (LL), not an EQH/EQL,
-//     starts a setup with the swing before it on the other side when that is
-//     an HL (LH) not used before, within the processed candles, with heavy
-//     pressure. If the entry level was reached while B was being confirmed
-//     the setup is missed; otherwise it is armed and replaces any armed
-//     setup in its direction.
+//     An armed setup's B follows price (s83FollowB) before these checks.
+//  2. for buys, then sells: the latest swing low (high), A, starts a setup
+//     when it is an HL (LH) not used before, within the processed candles, a
+//     candle from A on has closed beyond the swing before it (the break of
+//     structure) and it shows heavy pressure. B is the extreme since A. If
+//     the entry level was reached after B (and after the break) before the
+//     setup was known, it is missed; otherwise it is armed and replaces any
+//     live setup in its direction.
 if barstate.isconfirmed and s83OnLtf
     // The day and the trades since the last candle.
     int today = year * 10000 + month * 100 + dayofmonth
@@ -2293,6 +2340,7 @@ if barstate.isconfirmed and s83OnLtf
         S83Setup s = side == 0 ? s83Buy : s83Sell
         bool wasLive = side == 0 ? buyWasLive : sellWasLive
         if wasLive
+            s83FollowB(s)
             if s.state == S83_WAITING
                 if useLtfEngulf and bar_index >= s.touchBar and s83Engulf(s.dir, open[1], close[1], open, close)
                     s83End(s, S83_CONFIRMED, time, "")
@@ -2304,10 +2352,6 @@ if barstate.isconfirmed and s83OnLtf
             if s83Live(s) and s.aBar < bar_index - ltfBarsToProcess + 1
                 s83End(s, s.state == S83_ARMED ? S83_EXPIRED : S83_FAILED, time, "expired: A left the processed candles")
             if not s83Live(s)
-                if side == 0
-                    s83UsedBuy.push(s.aTime)
-                else
-                    s83UsedSell.push(s.aTime)
                 // A touched (limit) setup: traded on this candle, or why not.
                 if s.state == S83_TOUCHED
                     s.note := s.traded ? "" : s83LevelText() + " touched; not traded: " + s.note
@@ -2321,51 +2365,66 @@ if barstate.isconfirmed and s83OnLtf
     while s83UsedSell.size() > 200
         s83UsedSell.shift()
 
-    // 2. New HH / LL swings.
-    int newCount = chartEngine.newPoints.size()
-    if newCount > 0
-        for i = 0 to newCount - 1
-            SPoint q = chartEngine.newPoints.get(i)
-            if q.kind > 0 and q.equalId < 0
-                int dir = q.side
-                // A: the swing before q on the other side.
-                SPoint a = na
-                int n = chartEngine.points.size()
-                bool past = false
-                for k = n - 1 to 0
-                    SPoint p = chartEngine.points.get(k)
-                    if past and p.side == -dir
-                        a := p
-                        break
-                    if p.id == q.id
-                        past := true
-                bool used = not na(a) and (dir > 0 ? s83UsedBuy.includes(a.pivotTime) : s83UsedSell.includes(a.pivotTime))
-                if not na(a) and a.kind < 0 and not used and a.pivotBar >= bar_index - ltfBarsToProcess + 1
-                    float impulse = s83Impulse(a.pivotBar, q.pivotBar, dir, a.price)
-                    if impulse >= impulseMinAtr
-                        S83Setup s = S83Setup.new(dir, a.price, a.pivotTime, a.pivotBar, q.price, q.pivotTime, q.pivotBar, na, impulse, bar_index)
-                        s.level := s83Price(s, entryLevel)
-                        bool missed = false
-                        for j = q.pivotBar + 1 to bar_index
-                            if dir > 0 ? low[bar_index - j] <= s.level : high[bar_index - j] >= s.level
-                                missed := true
-                        s.s83DrawNew()
-                        if missed
-                            s83Ends(s, S83_MISSED, "missed: " + s83LevelText() + " reached before B was confirmed")
-                            if dir > 0
-                                s83UsedBuy.push(a.pivotTime)
-                            else
-                                s83UsedSell.push(a.pivotTime)
-                        else
-                            S83Setup old = dir > 0 ? s83Buy : s83Sell
-                            if not na(old) and s83Live(old)
-                                s83Ends(old, S83_REPLACED, "replaced by a newer setup")
-                            if dir > 0
-                                s83Buy := s
-                            else
-                                s83Sell := s
-                            if s83Alerts
-                                alert("83% Strategy " + syminfo.ticker + ": setup armed - " + s83SetupText(s), alert.freq_once_per_bar_close)
+    // 2. New setups: A is the latest swing on its side; the swing before it on
+    //    the other side holds the level whose break arms the setup.
+    for side = 0 to 1
+        int dir = side == 0 ? 1 : -1
+        SPoint a = na
+        SPoint p = na
+        int n = chartEngine.points.size()
+        if n > 0
+            for k = n - 1 to 0
+                SPoint pt = chartEngine.points.get(k)
+                if na(a)
+                    if pt.side == -dir
+                        a := pt
+                else if pt.side == dir
+                    p := pt
+                    break
+        bool used = not na(a) and (dir > 0 ? s83UsedBuy.includes(a.pivotTime) : s83UsedSell.includes(a.pivotTime))
+        if not na(a) and not na(p) and a.kind < 0 and not used and a.pivotBar >= bar_index - ltfBarsToProcess + 1
+            int broke = -1
+            for k = a.pivotBar to bar_index
+                float c = close[bar_index - k]
+                if dir > 0 ? c > p.level : c < p.level
+                    broke := k
+                    break
+            float impulse = broke >= 0 ? s83Impulse(a.pivotBar, bar_index, dir, a.price) : 0.0
+            if broke >= 0 and impulse >= impulseMinAtr
+                // B: the extreme since A (the latest of equal ones).
+                int bBar = a.pivotBar
+                for k = a.pivotBar to bar_index
+                    if dir > 0 ? high[bar_index - k] >= high[bar_index - bBar] : low[bar_index - k] <= low[bar_index - bBar]
+                        bBar := k
+                float bPrice = dir > 0 ? high[bar_index - bBar] : low[bar_index - bBar]
+                S83Setup s = S83Setup.new(dir, a.price, a.pivotTime, a.pivotBar, bPrice, time[bar_index - bBar], bBar, na, impulse, bar_index)
+                s.level := s83Price(s, entryLevel)
+                s.bFixed := bar_index - bBar >= chartLength
+                s.breakLevel := p.level
+                if dir > 0
+                    s83UsedBuy.push(a.pivotTime)
+                else
+                    s83UsedSell.push(a.pivotTime)
+                bool missed = false
+                int from = math.max(bBar, broke) + 1
+                if from <= bar_index
+                    for j = from to bar_index
+                        if dir > 0 ? low[bar_index - j] <= s.level : high[bar_index - j] >= s.level
+                            missed := true
+                s.s83DrawNew()
+                s83Drawn.push(s)
+                if missed
+                    s83Ends(s, S83_MISSED, "missed: " + s83LevelText() + " reached before the setup was known")
+                else
+                    S83Setup old = dir > 0 ? s83Buy : s83Sell
+                    if not na(old) and s83Live(old)
+                        s83Ends(old, S83_REPLACED, "replaced by a newer setup")
+                    if dir > 0
+                        s83Buy := s
+                    else
+                        s83Sell := s
+                    if s83Alerts
+                        alert("83% Strategy " + syminfo.ticker + ": setup armed - " + s83SetupText(s), alert.freq_once_per_bar_close)
 
     // Breakeven: once a candle has covered Breakeven % of the way to the take
     // profit, the stop moves to the entry from the next candle.
@@ -2484,6 +2543,7 @@ if barstate.isconfirmed and s83OnLtf
                 strategy.cancel(id)
                 if live
                     s.note := why
+    s83Prune()
 
 // The latest armed setups: their levels reach Fib Right Offset candles past
 // the latest candle, with the planned position from it. Drawn on the last
