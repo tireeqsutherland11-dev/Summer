@@ -126,26 +126,6 @@ input double Entry_Level=0.83;                    // Entry Fibonacci Level (0.83
 input int    Impulse_Candles=3;                   // Heavy Pressure: Candles After The HL/LH
 input double Impulse_Min_ATR=2.0;                 // Heavy Pressure: Minimum Move (LTF ATR)
 
-input group "83% Strategy - Market Tradability"
-input bool   HTF_Trend_Counts=true;               // HTF Market Trend Counts
-input bool   HTF_Trend_Accept_BOS=true;           // HTF Market Trend: Accept An Established Trend (Latest Break A BOS)
-input bool   HTF_Trend_Accept_Transition=true;    // HTF Market Trend: Accept A Transition (Latest Break A CHoCH)
-input bool   HTF_Internal_Counts=true;            // HTF Internal Structure Counts
-input bool   HTF_Internal_Accept_BOS=true;        // HTF Internal Structure: Accept A BOS
-input bool   HTF_Internal_Accept_CHoCH=true;      // HTF Internal Structure: Accept A CHoCH
-input bool   MTF_Trend_Counts=true;               // MTF Market Trend Counts
-input bool   MTF_Trend_Accept_BOS=true;           // MTF Market Trend: Accept An Established Trend (Latest Break A BOS)
-input bool   MTF_Trend_Accept_Transition=true;    // MTF Market Trend: Accept A Transition (Latest Break A CHoCH)
-input bool   MTF_Internal_Counts=true;            // MTF Internal Structure Counts
-input bool   MTF_Internal_Accept_BOS=true;        // MTF Internal Structure: Accept A BOS
-input bool   MTF_Internal_Accept_CHoCH=true;      // MTF Internal Structure: Accept A CHoCH
-input bool   LTF_Trend_Counts=true;               // LTF Market Trend Counts
-input bool   LTF_Trend_Accept_BOS=true;           // LTF Market Trend: Accept An Established Trend (Latest Break A BOS)
-input bool   LTF_Trend_Accept_Transition=true;    // LTF Market Trend: Accept A Transition (Latest Break A CHoCH)
-input bool   LTF_Internal_Counts=true;            // LTF Internal Structure Counts
-input bool   LTF_Internal_Accept_BOS=true;        // LTF Internal Structure: Accept A BOS
-input bool   LTF_Internal_Accept_CHoCH=true;      // LTF Internal Structure: Accept A CHoCH
-
 input group "83% Strategy - Risk Management"
 input S83_TRADE_MODE Trade_Mode=S83_TRADING_TESTER;
 input double Risk_Percent=5.0;                    // Risk (%) Per Trade
@@ -1474,55 +1454,22 @@ string JoinNames(const string &names[],const int count)
    return result;
   }
 
-// Market Tradability (83% Strategy): Tradable when every counted component
-// points the same way, bullish or bearish, with an accepted kind of break.
-// The components are each selected timeframe's Market Trend and Internal
-// Structure, set in the "83% Strategy - Market Tradability" inputs:
-//  * a Market Trend counts with HTF/MTF/LTF_Trend_Counts.  It is accepted
-//    when established (latest break a BOS) with ..._Trend_Accept_BOS, and
-//    when a Transition (latest break a CHoCH) with
-//    ..._Trend_Accept_Transition.  Consolidation / Undefined never agrees.
-//  * an Internal Structure counts with ..._Internal_Counts.  It is accepted
-//    when its latest break is a BOS with ..._Internal_Accept_BOS, and a
-//    CHoCH with ..._Internal_Accept_CHoCH.  An undefined one never agrees.
-// The direction is the first counted component's (HTF trend, HTF internal,
-// MTF trend, MTF internal, LTF trend, LTF internal).  Not Tradable
-// otherwise; there is no Tradable (Early).  The reason names the first
-// component that does not agree.
-int g_tradability_direction=0;
-
-string TrendCheck(const string name,const BASE_STRUCTURE_STATE &state,const int direction,
-                  const bool accept_bos,const bool accept_transition)
+// Market Tradability (83% Strategy): Tradable when the Market Trend and the
+// Internal Structure of every selected timeframe point the same way, bullish
+// or bearish.  A Transition counts as its direction, and it does not matter
+// whether the latest break was a BOS or a CHoCH.  Not Tradable otherwise;
+// there is no Tradable (Early).  The reason names the first timeframe that
+// does not agree.
+string TradableCheck(const string name,const BASE_STRUCTURE_STATE &state,
+                     const BASE_INTERNAL_STRUCTURE &internal,const int direction)
   {
    int trend=BiasDirection(state);
    if(trend==0) return NoTrendText(name,state);
    if(trend!=direction) return name+" is "+TrendWord(trend)+", not "+TrendWord(direction)+".";
-   bool established=DefiniteBias(state);
-   if(established && !accept_bos)
-      return name+" is an established "+TrendWord(trend)+" trend (latest break a BOS), but only Transitions are accepted.";
-   if(!established && !accept_transition)
-      return name+" is only a "+TrendWord(trend)+" Transition (a CHoCH not yet confirmed by a BOS), and Transitions are not accepted.";
-   return "";
-  }
-
-string InternalCheck(const string name,const BASE_INTERNAL_STRUCTURE &internal,const int direction,
-                     const bool accept_bos,const bool accept_choch)
-  {
-   if(internal.trend==0) return "The "+name+" internal structure is undefined.";
    if(internal.trend!=direction)
-      return "The "+name+" internal structure is "+TrendWord(internal.trend)+", not "+TrendWord(direction)+".";
-   if(internal.last_choch && !accept_choch)
-      return "The "+name+" internal structure is "+TrendWord(internal.trend)+" by a CHoCH, and internal CHoCHs are not accepted.";
-   if(!internal.last_choch && !accept_bos)
-      return "The "+name+" internal structure is "+TrendWord(internal.trend)+" by a BOS, and internal BOSs are not accepted.";
+      return "The "+name+" internal structure is "+(internal.trend==0?"undefined":TrendWord(internal.trend))+
+             ", not "+TrendWord(direction)+".";
    return "";
-  }
-
-// "H4 trend + internal": what counts on one timeframe, for the reason.
-string CountedPart(const string name,const bool trend,const bool internal)
-  {
-   if(!trend && !internal) return "";
-   return name+(trend && internal?" trend + internal":trend?" trend":" internal");
   }
 
 BASE_TRADABILITY EvaluateTradability(const BASE_STRUCTURE_STATE &htf,const BASE_STRUCTURE_STATE &mtf,
@@ -1531,38 +1478,15 @@ BASE_TRADABILITY EvaluateTradability(const BASE_STRUCTURE_STATE &htf,const BASE_
                                      const BASE_INTERNAL_STRUCTURE &mtf_internal,
                                      const BASE_INTERNAL_STRUCTURE &ltf_internal,string &reason)
   {
-   bool htf_trend=Use_HTF && HTF_Trend_Counts,htf_inner=Use_HTF && HTF_Internal_Counts;
-   bool mtf_trend=Use_MTF && MTF_Trend_Counts,mtf_inner=Use_MTF && MTF_Internal_Counts;
-   bool ltf_trend=Use_LTF && LTF_Trend_Counts,ltf_inner=Use_LTF && LTF_Internal_Counts;
-   int direction=htf_trend?BiasDirection(htf):htf_inner?htf_internal.trend:
-                 mtf_trend?BiasDirection(mtf):mtf_inner?mtf_internal.trend:
-                 ltf_trend?BiasDirection(ltf):ltf_inner?ltf_internal.trend:0;
-   g_tradability_direction=direction;
+   int direction=Use_HTF?BiasDirection(htf):(Use_MTF?BiasDirection(mtf):BiasDirection(ltf));
    reason="";
-   if(htf_trend)
-      reason=TrendCheck(HTFName(),htf,direction,HTF_Trend_Accept_BOS,HTF_Trend_Accept_Transition);
-   if(reason=="" && htf_inner)
-      reason=InternalCheck(HTFName(),htf_internal,direction,HTF_Internal_Accept_BOS,HTF_Internal_Accept_CHoCH);
-   if(reason=="" && mtf_trend)
-      reason=TrendCheck(MTFName(),mtf,direction,MTF_Trend_Accept_BOS,MTF_Trend_Accept_Transition);
-   if(reason=="" && mtf_inner)
-      reason=InternalCheck(MTFName(),mtf_internal,direction,MTF_Internal_Accept_BOS,MTF_Internal_Accept_CHoCH);
-   if(reason=="" && ltf_trend)
-      reason=TrendCheck(LTFName(),ltf,direction,LTF_Trend_Accept_BOS,LTF_Trend_Accept_Transition);
-   if(reason=="" && ltf_inner)
-      reason=InternalCheck(LTFName(),ltf_internal,direction,LTF_Internal_Accept_BOS,LTF_Internal_Accept_CHoCH);
-   if(!htf_trend && !htf_inner && !mtf_trend && !mtf_inner && !ltf_trend && !ltf_inner)
-      reason="No Market Tradability component is counted (see the Market Tradability inputs).";
+   if(Use_HTF) reason=TradableCheck(HTFName(),htf,htf_internal,direction);
+   if(reason=="" && Use_MTF) reason=TradableCheck(MTFName(),mtf,mtf_internal,direction);
+   if(reason=="" && Use_LTF) reason=TradableCheck(LTFName(),ltf,ltf_internal,direction);
    if(reason!="" || direction==0) return BASE_NOT_TRADABLE;
-   string parts[3];
-   int count=0;
-   string part=CountedPart(HTFName(),htf_trend,htf_inner);
-   if(part!="") parts[count++]=part;
-   part=CountedPart(MTFName(),mtf_trend,mtf_inner);
-   if(part!="") parts[count++]=part;
-   part=CountedPart(LTFName(),ltf_trend,ltf_inner);
-   if(part!="") parts[count++]=part;
-   reason="Every counted component is "+TrendWord(direction)+": "+JoinNames(parts,count)+".";
+   int selected=(Use_HTF?1:0)+(Use_MTF?1:0)+(Use_LTF?1:0);
+   reason=TrendTimeframesText()+(selected==1?" is ":selected==2?" are both ":" are all ")+TrendWord(direction)+
+          ", in their Market Trend and Internal Structure.";
    return BASE_TRADABLE;
   }
 
@@ -2101,10 +2025,10 @@ void DrawDashboard(const BASE_STRUCTURE_STATE &htf,const string htf_breakdown,
 // the market filters, and Fib Base's Fibonacci engine for the levels.
 //
 // Bullish (buys only):
-//  * Market Tradability reads Tradable (bullish): every counted Market Trend
-//    and Internal Structure is bullish with an accepted kind of break (see
-//    EvaluateTradability and the Market Tradability inputs; by default all
-//    six count, a Transition counts, and a BOS or a CHoCH alike).
+//  * Market Tradability reads Tradable (bullish): the Market Trend and the
+//    Internal Structure of every selected timeframe are bullish (a Transition
+//    counts, and the latest break may be a BOS or a CHoCH).  There is no
+//    Tradable (Early) and there are no Optimal Conditions.
 //  * LTF setup (M30, Swing Detection level 3 by default), searched in the last
 //    LTF_Bars_To_Process (40) closed LTF candles:
 //      A: the most recent HL from which there was heavy buying pressure;
@@ -2949,7 +2873,7 @@ void S83Update(const BASE_STRUCTURE_STATE &htf,const BASE_STRUCTURE_STATE &mtf,
   {
    g_s83_tradability=tradability;
    g_s83_tradability_reason=tradability_reason;
-   g_s83_market_direction=g_tradability_direction;
+   g_s83_market_direction=Use_HTF?BiasDirection(htf):(Use_MTF?BiasDirection(mtf):BiasDirection(ltf));
    g_s83_mtf_direction=BiasDirection(mtf);
    double atr[];
    SwingATR(ltf_rates,ltf_total,atr);
@@ -3037,7 +2961,8 @@ void S83DashboardRows(BASE_DASHBOARD_ROW &rows[])
 // The market filters alone (no position, day or trade-count checks), for the
 // dashboard.
 // The market filter of an entry: Market Tradability reads Tradable in its
-// direction (see EvaluateTradability and the Market Tradability inputs).
+// direction: every selected timeframe's Market Trend and Internal Structure
+// agree (see EvaluateTradability).
 string S83FilterText(const int direction)
   {
    if(g_s83_tradability!=BASE_TRADABLE)
@@ -3193,18 +3118,6 @@ string S83InputProblem()
       return "the standard reward-to-risk ratios must be positive, the second at least the first";
    if(Breakeven_At_Percent<0.0 || Breakeven_At_Percent>=100.0) return "Breakeven_At_Percent must be 0 to 99";
    if(Minimum_Lot_Max_Risk_Multiple<0.0) return "Minimum_Lot_Max_Risk_Multiple cannot be negative";
-   // Market Tradability: something counts, and each counted part accepts a kind.
-   if(!(Use_HTF && (HTF_Trend_Counts || HTF_Internal_Counts)) && !(Use_MTF && (MTF_Trend_Counts || MTF_Internal_Counts)) &&
-      !(Use_LTF && (LTF_Trend_Counts || LTF_Internal_Counts)))
-      return "count at least one Market Trend or Internal Structure of a selected timeframe for Market Tradability";
-   if((HTF_Trend_Counts && !HTF_Trend_Accept_BOS && !HTF_Trend_Accept_Transition) ||
-      (MTF_Trend_Counts && !MTF_Trend_Accept_BOS && !MTF_Trend_Accept_Transition) ||
-      (LTF_Trend_Counts && !LTF_Trend_Accept_BOS && !LTF_Trend_Accept_Transition))
-      return "a counted Market Trend must accept an established trend (BOS), a Transition (CHoCH) or both";
-   if((HTF_Internal_Counts && !HTF_Internal_Accept_BOS && !HTF_Internal_Accept_CHoCH) ||
-      (MTF_Internal_Counts && !MTF_Internal_Accept_BOS && !MTF_Internal_Accept_CHoCH) ||
-      (LTF_Internal_Counts && !LTF_Internal_Accept_BOS && !LTF_Internal_Accept_CHoCH))
-      return "a counted Internal Structure must accept a BOS, a CHoCH or both";
    return "";
   }
 
