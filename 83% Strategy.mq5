@@ -45,7 +45,6 @@ input group "Trend Analysis Timeframes"
 input bool Use_HTF=true; // Use HTF
 input bool Use_MTF=true; // Use MTF
 input bool Use_LTF=false; // Use LTF
-input bool Allow_Early_Tradability=true; // Allow Tradable (Early)
 
 input group "Structure Bar Processing"
 input int Bars_To_Process=100;
@@ -139,7 +138,6 @@ input int    LTF_Bars_To_Process=40;              // LTF Independent Processed B
 input double Entry_Level=0.83;                    // Entry Fibonacci Level (0.83 = 83%)
 input int    Impulse_Candles=3;                   // Heavy Pressure: Candles After The HL/LH
 input double Impulse_Min_ATR=2.0;                 // Heavy Pressure: Minimum Move (LTF ATR)
-input bool   Allow_Tradable_Early_Entries=false;  // Also Trade When Tradable (Early)
 
 input group "83% Strategy - Entry Confirmation"
 input bool   Engulfing_Confirmation=false;        // Wait For An Engulfing After The 83% Touch
@@ -1484,97 +1482,40 @@ string JoinNames(const string &names[],const int count)
    return result;
   }
 
-// Market Tradability:
-//  * Tradable: the HTF trend is established (latest break a BOS); every
-//    selected trend timeframe has a direction and they all agree; a selected
-//    LTF is itself established.  The MTF may be transitional.  A
-//    Consolidation / Undefined trend has no direction.
-//  * Tradable (Early), when Allow_Early_Tradability is on: the same, except
-//    that the HTF and/or a selected LTF is only in transition (a CHoCH not
-//    yet confirmed by a BOS), the HTF agrees with every selected timeframe,
-//    and the internal structure of the HTF and of every selected timeframe
-//    agrees with that direction.  On real and generated markets, internal
-//    agreement made an HTF transition (with the MTF agreeing) reach its
-//    confirming BOS markedly more often (58-70% of episodes against 44-50%
-//    without it), but it still failed about a third of the time, so it is
-//    shown apart from Tradable.
-//  * Not Tradable otherwise.
-// The reason says why in one sentence, naming the timeframes.
+// Market Tradability (83% Strategy): Tradable when the Market Trend and the
+// Internal Structure of every selected timeframe point the same way, bullish
+// or bearish.  A Transition counts as its direction, and it does not matter
+// whether the latest break was a BOS or a CHoCH.  Not Tradable otherwise;
+// there is no Tradable (Early).  The reason names the first timeframe that
+// does not agree.
+string TradableCheck(const string name,const BASE_STRUCTURE_STATE &state,
+                     const BASE_INTERNAL_STRUCTURE &internal,const int direction)
+  {
+   int trend=BiasDirection(state);
+   if(trend==0) return NoTrendText(name,state);
+   if(trend!=direction) return name+" is "+TrendWord(trend)+", not "+TrendWord(direction)+".";
+   if(internal.trend!=direction)
+      return "The "+name+" internal structure is "+(internal.trend==0?"undefined":TrendWord(internal.trend))+
+             ", not "+TrendWord(direction)+".";
+   return "";
+  }
+
 BASE_TRADABILITY EvaluateTradability(const BASE_STRUCTURE_STATE &htf,const BASE_STRUCTURE_STATE &mtf,
                                      const BASE_STRUCTURE_STATE &ltf,
                                      const BASE_INTERNAL_STRUCTURE &htf_internal,
                                      const BASE_INTERNAL_STRUCTURE &mtf_internal,
                                      const BASE_INTERNAL_STRUCTURE &ltf_internal,string &reason)
   {
-   bool htf_definite=DefiniteBias(htf);
-   bool ltf_definite=DefiniteBias(ltf);
-   int htf_direction=BiasDirection(htf);
-   int mtf_direction=BiasDirection(mtf);
-   int ltf_direction=BiasDirection(ltf);
-   bool available=(!Use_HTF || htf_direction!=0) &&
-                  (!Use_MTF || mtf_direction!=0) &&
-                  (!Use_LTF || ltf_direction!=0);
-   bool match=(!Use_HTF || !Use_MTF ||
-               htf_direction==mtf_direction) &&
-              (!Use_HTF || !Use_LTF ||
-               htf_direction==ltf_direction) &&
-              (!Use_MTF || !Use_LTF ||
-               mtf_direction==ltf_direction);
-   bool tradable=htf_definite && available && match && (!Use_LTF || ltf_definite);
+   int direction=Use_HTF?BiasDirection(htf):(Use_MTF?BiasDirection(mtf):BiasDirection(ltf));
+   reason="";
+   if(Use_HTF) reason=TradableCheck(HTFName(),htf,htf_internal,direction);
+   if(reason=="" && Use_MTF) reason=TradableCheck(MTFName(),mtf,mtf_internal,direction);
+   if(reason=="" && Use_LTF) reason=TradableCheck(LTFName(),ltf,ltf_internal,direction);
+   if(reason!="" || direction==0) return BASE_NOT_TRADABLE;
    int selected=(Use_HTF?1:0)+(Use_MTF?1:0)+(Use_LTF?1:0);
-   if(tradable)
-     {
-      int direction=Use_HTF?htf_direction:(Use_MTF?mtf_direction:ltf_direction);
-      reason=TrendTimeframesText()+(selected==1?" is ":selected==2?" are both ":" are all ")+
-             TrendWord(direction)+", and the "+HTFName()+" trend is confirmed by a BOS";
-      if(Use_LTF) reason+=", as is the "+LTFName()+" trend";
-      reason+=".";
-      return BASE_TRADABLE;
-     }
-   // Tradable (Early): every direction agrees with the HTF and only the
-   // HTF and/or the selected LTF is still a transition.
-   bool early_candidate=Allow_Early_Tradability && htf_direction!=0 &&
-                        (!Use_MTF || mtf_direction==htf_direction) &&
-                        (!Use_LTF || ltf_direction==htf_direction);
-   string pending[2];
-   int pending_count=0;
-   if(!htf_definite) pending[pending_count++]=HTFName();
-   if(Use_LTF && !ltf_definite) pending[pending_count++]=LTFName();
-   string disagree[3];
-   int disagree_count=0;
-   if(htf_internal.trend!=htf_direction) disagree[disagree_count++]=HTFName();
-   if(Use_MTF && mtf_internal.trend!=htf_direction) disagree[disagree_count++]=MTFName();
-   if(Use_LTF && ltf_internal.trend!=htf_direction) disagree[disagree_count++]=LTFName();
-   if(early_candidate && pending_count>0 && disagree_count==0)
-     {
-      int named=selected+(Use_HTF?0:1);
-      string names=Use_HTF?TrendTimeframesText():HTFName()+(selected==1?" and ":", ")+TrendTimeframesText();
-      reason=names+(named==1?" is ":named==2?" are both ":" are all ")+TrendWord(htf_direction)+
-             " and "+(named==1?"its":"their")+" internal structure agrees, but the "+
-             JoinNames(pending,pending_count)+(pending_count==1?" trend is only a transition (a CHoCH":
-             " trends are only transitions (CHoCHs")+" not yet confirmed by a BOS).";
-      return BASE_TRADABLE_EARLY;
-     }
-   if(htf_direction==0) reason=NoTrendText(HTFName(),htf);
-   else if(!htf_definite) reason=TransitionText(HTFName(),htf);
-   else if(Use_MTF && mtf_direction==0) reason=NoTrendText(MTFName(),mtf);
-   else if(Use_LTF && ltf_direction==0) reason=NoTrendText(LTFName(),ltf);
-   else if(!match)
-     {
-      string first=Use_HTF?HTFName():MTFName();
-      int first_direction=Use_HTF?htf_direction:mtf_direction;
-      bool mtf_conflict=Use_HTF && Use_MTF && mtf_direction!=htf_direction;
-      string other=mtf_conflict?MTFName():LTFName();
-      int other_direction=mtf_conflict?mtf_direction:ltf_direction;
-      reason=first+" is "+TrendWord(first_direction)+" but "+other+" is "+TrendWord(other_direction)+".";
-     }
-   else reason=TransitionText(LTFName(),ltf);
-   // A transition that would be Tradable (Early) but for the internal
-   // structure says which timeframes do not agree yet.
-   if(early_candidate && pending_count>0 && disagree_count>0)
-      reason=StringSubstr(reason,0,StringLen(reason)-1)+", and the "+JoinNames(disagree,disagree_count)+
-             " internal structure is not "+TrendWord(htf_direction)+" yet.";
-   return BASE_NOT_TRADABLE;
+   reason=TrendTimeframesText()+(selected==1?" is ":selected==2?" are both ":" are all ")+TrendWord(direction)+
+          ", in their Market Trend and Internal Structure.";
+   return BASE_TRADABLE;
   }
 
 // Healthy Extension blocks only an overextended market.  In the HTF trend
@@ -2209,10 +2150,10 @@ void DrawDashboard(const BASE_STRUCTURE_STATE &htf,const string htf_breakdown,
 // the market filters, and Fib Base's Fibonacci engine for the levels.
 //
 // Bullish (buys only):
-//  * Market Tradability reads Tradable (bullish) and the Optimal Conditions
-//    read OPTIMAL.
-//  * MTF: the most recent structure is a bullish BOS (the break of an HH that
-//    makes a new HH), not a CHoCH and not Consolidation / Undefined.
+//  * Market Tradability reads Tradable (bullish): the Market Trend and the
+//    Internal Structure of every selected timeframe are bullish (a Transition
+//    counts, and the latest break may be a BOS or a CHoCH).  There is no
+//    Tradable (Early).  The Optimal Conditions read OPTIMAL.
 //  * LTF setup (M30, Swing Detection level 3 by default), searched in the last
 //    LTF_Bars_To_Process (40) closed LTF candles:
 //      A: the most recent HL from which there was heavy buying pressure;
@@ -2467,8 +2408,7 @@ int g_s83_market_direction=0;      // the direction Market Tradability refers to
 bool g_s83_optimal=false;
 string g_s83_optimal_reason="";
 int g_s83_mtf_direction=0;
-bool g_s83_mtf_definite=false;
-string g_s83_mtf_text="";
+string g_s83_tradability_reason="";
 double g_s83_atr=0.0;              // LTF ATR of the latest closed LTF candle
 datetime g_s83_last_time=0;        // the latest closed LTF candle
 S83_SETUP g_s83_setups[];          // every setup found in the processed bars
@@ -3076,15 +3016,7 @@ string S83Blocker(const int direction)
    if(!S83TradingDay(now.day_of_week)) return S83DayName(now.day_of_week)+" is not a trading day";
    if(g_s83_day.trades>=Max_Trades_Per_Day)
       return "the maximum of "+(string)Max_Trades_Per_Day+" trades today is reached";
-   if(!g_s83_mtf_definite || g_s83_mtf_direction!=direction)
-      return "the latest "+MTFName()+" structure is not a "+TrendWord(direction)+" BOS ("+g_s83_mtf_text+")";
-   bool tradable=g_s83_tradability==BASE_TRADABLE ||
-                 (Allow_Tradable_Early_Entries && g_s83_tradability==BASE_TRADABLE_EARLY);
-   if(!tradable) return "Market Tradability is not Tradable";
-   if(g_s83_market_direction!=direction)
-      return "Market Tradability is "+TrendWord(g_s83_market_direction)+", not "+TrendWord(direction);
-   if(!g_s83_optimal) return "the conditions are not Optimal ("+g_s83_optimal_reason+")";
-   return "";
+   return S83FilterText(direction);
   }
 
 // Stop loss, take profit, reward-to-risk and volume for an entry at `entry`.
@@ -3274,15 +3206,15 @@ void S83OnTick()
 void S83Update(const BASE_STRUCTURE_STATE &htf,const BASE_STRUCTURE_STATE &mtf,
                const BASE_STRUCTURE_STATE &ltf,const MqlRates &ltf_rates[],const int ltf_total,
                const BASE_STRUCTURE_POINT &ltf_points[],const MqlRates &lower_rates[],const int lower_total,
-               const BASE_TRADABILITY tradability,const bool optimal,const string optimal_reason)
+               const BASE_TRADABILITY tradability,const string tradability_reason,const bool optimal,
+               const string optimal_reason)
   {
    g_s83_tradability=tradability;
+   g_s83_tradability_reason=tradability_reason;
    g_s83_market_direction=Use_HTF?BiasDirection(htf):(Use_MTF?BiasDirection(mtf):BiasDirection(ltf));
    g_s83_optimal=optimal;
    g_s83_optimal_reason=optimal_reason;
    g_s83_mtf_direction=BiasDirection(mtf);
-   g_s83_mtf_definite=DefiniteBias(mtf);
-   g_s83_mtf_text=BiasText(mtf);
    double atr[];
    SwingATR(ltf_rates,ltf_total,atr);
    g_s83_atr=atr[ltf_total-1];
@@ -3387,14 +3319,14 @@ void S83DashboardRows(BASE_DASHBOARD_ROW &rows[])
 
 // The market filters alone (no position, day or trade-count checks), for the
 // dashboard.
+// The market filters of an entry: Tradable in its direction (every selected
+// timeframe's Market Trend and Internal Structure agree), then Optimal.
 string S83FilterText(const int direction)
   {
-   if(!g_s83_mtf_definite || g_s83_mtf_direction!=direction)
-      return "the latest "+MTFName()+" structure is not a "+TrendWord(direction)+" BOS ("+g_s83_mtf_text+")";
-   bool tradable=g_s83_tradability==BASE_TRADABLE ||
-                 (Allow_Tradable_Early_Entries && g_s83_tradability==BASE_TRADABLE_EARLY);
-   if(!tradable) return "Market Tradability is not Tradable";
-   if(g_s83_market_direction!=direction) return "Market Tradability is "+TrendWord(g_s83_market_direction);
+   if(g_s83_tradability!=BASE_TRADABLE)
+      return "Market Tradability is not Tradable ("+g_s83_tradability_reason+")";
+   if(g_s83_market_direction!=direction)
+      return "Market Tradability is "+TrendWord(g_s83_market_direction)+", not "+TrendWord(direction);
    if(!g_s83_optimal) return "not Optimal ("+g_s83_optimal_reason+")";
    return "";
   }
@@ -3733,7 +3665,7 @@ bool Rebuild(const bool permit_alert)
    bool optimal=EvaluateOptimal(bias_ready,healthy_extension,good_volume,volume_ratio,
                                 good_momentum,momentum_ratio,optimal_reason,extension);
    S83Update(structure_state,setup_state,ltf_state,ltf_rates,ltf_total,ltf_points,lower_rates,lower_total,
-             tradability,optimal,optimal_reason);
+             tradability,tradability_reason,optimal,optimal_reason);
 
    if(DrawingEnabled()) DrawDashboard(structure_state,BreakdownText(structure_state,points,events),
                  TradeRecommendation(structure_state,points,setup_state,ltf_state,tradability),

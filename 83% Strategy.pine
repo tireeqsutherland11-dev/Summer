@@ -2,9 +2,10 @@
 // 83% Strategy - Base market structure (Base.pine v2.43) with Fib Base's
 // Fibonacci engine, as a TradingView strategy. Same rules as 83% Strategy.mq5.
 //
-// Bullish (buys only): Market Tradability reads Tradable and the Optimal
-// Conditions OPTIMAL; the MTF's most recent structure is a BOS that made an
-// HH; on the LTF (M30, Swing Detection level 3, 40 independent processed
+// Bullish (buys only): Market Tradability reads Tradable (the Market Trend
+// and the Internal Structure of every selected timeframe are bullish, a
+// Transition, BOS or CHoCH alike) and the Optimal Conditions OPTIMAL; on the
+// LTF (M30, Swing Detection level 3, 40 independent processed
 // bars), once a candle has closed above the swing high before the most
 // recent HL with heavy buying pressure (the break of structure), the
 // Fibonacci runs from the highest high since that HL (0%, B, which follows
@@ -71,7 +72,6 @@ grpTrend = "Trend Analysis Timeframes"
 useHtf = input.bool(true, "Use HTF", group = grpTrend, tooltip = "Show the HTF Market Trend and require it to agree with the other selected timeframes for Market Tradability. An established HTF trend is always required.")
 useMtf = input.bool(true, "Use MTF", group = grpTrend, tooltip = "Show the MTF Market Trend and require it to agree with the other selected timeframes for Market Tradability. It may be in transition.")
 useLtf = input.bool(false, "Use LTF", group = grpTrend, tooltip = "Show the LTF Market Trend and require it to agree for Market Tradability. A selected LTF trend must itself be established (latest break a BOS).")
-allowEarly = input.bool(true, "Allow Tradable (Early)", group = grpTrend, tooltip = "Show Tradable (Early), in amber, when the timeframes agree but the HTF (or a selected LTF) is only a transition (a CHoCH not yet confirmed by a BOS), and the internal structure of the HTF and of every selected timeframe agrees. Such transitions reached their BOS more often, but still failed about a third of the time.")
 
 grpProc = "Structure Bar Processing"
 barsToProcess = input.int(100, "Bars To Process", minval = 100, maxval = 100000, group = grpProc, tooltip = "How many HTF candles back structure is drawn. Other chart timeframes cover the same span of time. Structure is always calculated on all loaded history.")
@@ -181,7 +181,6 @@ ltfBarsToProcess = input.int(40, "LTF Independent Processed Bars", minval = 5, m
 entryLevel = input.float(0.83, "Entry Fibonacci Level", minval = 0.01, maxval = 0.99, step = 0.01, group = grpS83, tooltip = "The retracement of the A-to-B leg where the order is placed: 0.83 = 83%, measured from B (0%) back towards A (100%).")
 impulseCandles = input.int(3, "Heavy Pressure: Candles After The HL/LH", minval = 0, maxval = 20, group = grpS83, tooltip = "Heavy pressure must start the move: a candle within this many candles after A (A's own candle included) must close far enough beyond A (below).")
 impulseMinAtr = input.float(2.0, "Heavy Pressure: Minimum Move (LTF ATR)", minval = 0.0, step = 0.1, group = grpS83, tooltip = "How far beyond A that close must be, in 14-candle LTF ATR measured at A. On real data 2.0 selected the strongest 43% of HL-to-HH legs. 0 accepts every leg.")
-allowEarlyEntries = input.bool(false, "Also Trade When Tradable (Early)", group = grpS83, tooltip = "Off: Market Tradability must read Tradable. On: Tradable (Early) is accepted too.")
 
 grpS83Conf = "83% Strategy - Entry Confirmation"
 engulfConfirm = input.bool(false, "Wait For An Engulfing After The 83% Touch", group = grpS83Conf, tooltip = "On: once price touches the entry level, the trade waits for an engulfing candle in the trade direction (bullish for buys, bearish for sells) on the lower timeframe or the LTF, on the touching candle or later, and enters at its close. Off: a limit order at the entry level.")
@@ -1624,79 +1623,29 @@ joinNames(array<string> names) =>
             r := r + (i == 0 ? "" : i == count - 1 ? " and " : ", ") + names.get(i)
     r
 
-// Market Tradability (2 Tradable, 1 Tradable (Early), 0 Not Tradable):
-//  * Tradable: the HTF trend is established (latest break a BOS, not
-//    Consolidation / Undefined); every selected timeframe has a direction and
-//    they agree; a selected LTF is itself established.
-//  * Tradable (Early), with Allow Tradable (Early): the same, except that the
-//    HTF and/or a selected LTF is only a transition (a CHoCH not yet confirmed
-//    by a BOS), the HTF agrees with every selected timeframe, and the internal
-//    structure of the HTF and of every selected timeframe agrees with that
-//    direction. Internal agreement made such transitions reach their BOS
-//    markedly more often, but they still failed about a third of the time,
-//    so it is shown apart from Tradable.
-// The reason says why in one sentence, naming the timeframes.
+// Market Tradability (83% Strategy; 2 Tradable, 0 Not Tradable): Tradable
+// when the Market Trend and the Internal Structure of every selected
+// timeframe point the same way, bullish or bearish. A Transition counts as
+// its direction, and it does not matter whether the latest break was a BOS
+// or a CHoCH. There is no Tradable (Early). The reason names the first
+// timeframe that does not agree.
+tradableCheck(string name, TfView v, InternalView iv, int d) =>
+    int t = biasDirection(v)
+    t == 0 ? noTrendText(name, v) : t != d ? name + " is " + trendWord(t) + ", not " + trendWord(d) + "." : iv.trend != d ? "The " + name + " internal structure is " + (iv.trend == 0 ? "undefined" : trendWord(iv.trend)) + ", not " + trendWord(d) + "." : ""
+
 evaluateTradability(TfView htf, TfView mtf, TfView ltf, InternalView hi, InternalView mi, InternalView li) =>
-    bool htfDef = definiteBias(htf)
-    bool ltfDef = definiteBias(ltf)
-    int hd = biasDirection(htf)
-    int md = biasDirection(mtf)
-    int ld = biasDirection(ltf)
-    bool available = (not useHtf or hd != 0) and (not useMtf or md != 0) and (not useLtf or ld != 0)
-    bool agree = (not useHtf or not useMtf or hd == md) and (not useHtf or not useLtf or hd == ld) and (not useMtf or not useLtf or md == ld)
-    bool ok = htfDef and available and agree and (not useLtf or ltfDef)
-    int selected = (useHtf ? 1 : 0) + (useMtf ? 1 : 0) + (useLtf ? 1 : 0)
-    // Tradable (Early): every direction agrees with the HTF and only the HTF
-    // and/or the selected LTF is still a transition.
-    bool earlyCandidate = allowEarly and hd != 0 and (not useMtf or md == hd) and (not useLtf or ld == hd)
-    array<string> pending = array.new<string>()
-    if not htfDef
-        pending.push(tfName(htfTf))
-    if useLtf and not ltfDef
-        pending.push(tfName(ltfTf))
-    array<string> disagree = array.new<string>()
-    if hi.trend != hd
-        disagree.push(tfName(htfTf))
-    if useMtf and mi.trend != hd
-        disagree.push(tfName(mtfTf))
-    if useLtf and li.trend != hd
-        disagree.push(tfName(ltfTf))
-    int state = 0
+    int d = useHtf ? biasDirection(htf) : useMtf ? biasDirection(mtf) : biasDirection(ltf)
     string reason = ""
-    if ok
-        state := 2
-        int direction = useHtf ? hd : useMtf ? md : ld
-        reason := trendTimeframesText() + (selected == 1 ? " is " : selected == 2 ? " are both " : " are all ") + trendWord(direction) + ", and the " + tfName(htfTf) + " trend is confirmed by a BOS"
-        if useLtf
-            reason := reason + ", as is the " + tfName(ltfTf) + " trend"
-        reason := reason + "."
-    else if earlyCandidate and pending.size() > 0 and disagree.size() == 0
-        state := 1
-        int named = selected + (useHtf ? 0 : 1)
-        string names = useHtf ? trendTimeframesText() : tfName(htfTf) + (selected == 1 ? " and " : ", ") + trendTimeframesText()
-        reason := names + (named == 1 ? " is " : named == 2 ? " are both " : " are all ") + trendWord(hd) + " and " + (named == 1 ? "its" : "their") + " internal structure agrees, but the " + joinNames(pending) + (pending.size() == 1 ? " trend is only a transition (a CHoCH" : " trends are only transitions (CHoCHs") + " not yet confirmed by a BOS)."
-    else
-        if hd == 0
-            reason := noTrendText(tfName(htfTf), htf)
-        else if not htfDef
-            reason := transitionText(tfName(htfTf), htf)
-        else if useMtf and md == 0
-            reason := noTrendText(tfName(mtfTf), mtf)
-        else if useLtf and ld == 0
-            reason := noTrendText(tfName(ltfTf), ltf)
-        else if not agree
-            string first = useHtf ? tfName(htfTf) : tfName(mtfTf)
-            int firstDir = useHtf ? hd : md
-            bool mtfConflict = useHtf and useMtf and md != hd
-            string other = mtfConflict ? tfName(mtfTf) : tfName(ltfTf)
-            int otherDir = mtfConflict ? md : ld
-            reason := first + " is " + trendWord(firstDir) + " but " + other + " is " + trendWord(otherDir) + "."
-        else
-            reason := transitionText(tfName(ltfTf), ltf)
-        // A transition that would be Tradable (Early) but for the internal
-        // structure says which timeframes do not agree yet.
-        if earlyCandidate and pending.size() > 0 and disagree.size() > 0
-            reason := str.substring(reason, 0, str.length(reason) - 1) + ", and the " + joinNames(disagree) + " internal structure is not " + trendWord(hd) + " yet."
+    if useHtf
+        reason := tradableCheck(tfName(htfTf), htf, hi, d)
+    if reason == "" and useMtf
+        reason := tradableCheck(tfName(mtfTf), mtf, mi, d)
+    if reason == "" and useLtf
+        reason := tradableCheck(tfName(ltfTf), ltf, li, d)
+    int state = reason == "" and d != 0 ? 2 : 0
+    int selected = (useHtf ? 1 : 0) + (useMtf ? 1 : 0) + (useLtf ? 1 : 0)
+    if state == 2
+        reason := trendTimeframesText() + (selected == 1 ? " is " : selected == 2 ? " are both " : " are all ") + trendWord(d) + ", in their Market Trend and Internal Structure."
     [state, reason]
 
 // Tradable (Early): early entries in the trend's direction while the
@@ -1821,15 +1770,17 @@ evaluateOptimal(bool biasReady, bool healthy, float extension, bool goodVolume, 
 // established MTF trend, using Base's structure (above) for the swings and the
 // market filters, and Fib Base's Fibonacci engine for the levels. Same rules as
 // 83% Strategy.mq5:
-//  * Bullish (buys only): Market Tradability reads Tradable (bullish) and the
-//    Optimal Conditions read OPTIMAL; the MTF's most recent structure is a
-//    bullish BOS (the break of an HH that makes a new HH); on the LTF chart
-//    (M30, Swing Detection level 3 by default), within the last LTF
-//    Independent Processed Bars (25) candles, A is the most recent HL with
-//    heavy buying pressure and B the HH it formed. The Fibonacci runs from B
-//    (0%) to A (100%) and the entry is a limit order at 83%.
-//  * Invalid: price makes a new HH (trades above B) before touching 83%; the
-//    HL is then used up. Bearish mirrors all of this.
+//  * Bullish (buys only): Market Tradability reads Tradable (bullish): the
+//    Market Trend and the Internal Structure of every selected timeframe are
+//    bullish (a Transition counts, BOS or CHoCH alike). The Optimal
+//    Conditions read OPTIMAL. On the LTF chart (M30, Swing Detection level 3
+//    by default), within the last LTF Independent Processed Bars (40)
+//    candles, A is the most recent HL with heavy buying pressure; once a
+//    candle closes above the swing high before A, B is the highest high
+//    since A (following price until it is a confirmed swing). The Fibonacci
+//    runs from B (0%) to A (100%) and the entry is a limit order at 83%.
+//  * Invalid: price makes a new HH (trades above a confirmed B) before
+//    touching 83%; the HL is then used up. Bearish mirrors all of this.
 //  * Heavy pressure: within Impulse Candles candles of A (A's candle
 //    included), a candle closes at least Impulse Min ATR LTF ATR beyond A, the
 //    14-candle ATR taken at A.
@@ -1969,18 +1920,10 @@ s83DayName(int d) =>
 // Tradable), for every candle; evaluateTradability gives the same state with
 // its reason for the dashboard.
 tradabilityState(TfView htf, TfView mtf, TfView ltf, InternalView hi, InternalView mi, InternalView li) =>
-    bool htfDef = definiteBias(htf)
-    bool ltfDef = definiteBias(ltf)
-    int hd = biasDirection(htf)
-    int md = biasDirection(mtf)
-    int ld = biasDirection(ltf)
-    bool available = (not useHtf or hd != 0) and (not useMtf or md != 0) and (not useLtf or ld != 0)
-    bool agree = (not useHtf or not useMtf or hd == md) and (not useHtf or not useLtf or hd == ld) and (not useMtf or not useLtf or md == ld)
-    bool ok = htfDef and available and agree and (not useLtf or ltfDef)
-    bool earlyCandidate = allowEarly and hd != 0 and (not useMtf or md == hd) and (not useLtf or ld == hd)
-    bool pending = not htfDef or (useLtf and not ltfDef)
-    bool disagree = hi.trend != hd or (useMtf and mi.trend != hd) or (useLtf and li.trend != hd)
-    ok ? 2 : earlyCandidate and pending and not disagree ? 1 : 0
+    // evaluateTradability's state without its reason (2 Tradable, 0 not).
+    int d = useHtf ? biasDirection(htf) : useMtf ? biasDirection(mtf) : biasDirection(ltf)
+    bool ok = d != 0 and (not useHtf or (biasDirection(htf) == d and hi.trend == d)) and (not useMtf or (biasDirection(mtf) == d and mi.trend == d)) and (not useLtf or (biasDirection(ltf) == d and li.trend == d))
+    ok ? 2 : 0
 
 // ------------------------------------------------ Deriv synthetic indices
 // Deriv's synthetic indices (Volatility, Crash / Boom, Jump, Step, Range Break,
@@ -2028,14 +1971,15 @@ string s83OptimalReason = useCorrOpt and s83Tradability == 0 ? "timeframes do no
 
 // Why an armed setup in direction `dir` cannot be entered on the next candle,
 // or "" when it can (market filters only).
+// The market filters of an entry: Tradable in its direction (every selected
+// timeframe's Market Trend and Internal Structure agree), then Optimal.
 s83FilterText(int dir) =>
     string r = ""
-    if not definiteBias(mtfView) or biasDirection(mtfView) != dir
-        r := "the latest " + tfName(mtfTf) + " structure is not a " + trendWord(dir) + " BOS (" + biasText(mtfView) + ")"
-    else if not (s83Tradability == 2 or (allowEarlyEntries and s83Tradability == 1))
-        r := "Market Tradability is not Tradable"
+    if s83Tradability != 2
+        [tradeState, tradeWhy] = evaluateTradability(htfView, mtfView, ltfView, htfInternal, mtfInternal, ltfInternal)
+        r := "Market Tradability is not Tradable (" + tradeWhy + ")"
     else if s83MarketDir != dir
-        r := "Market Tradability is " + trendWord(s83MarketDir)
+        r := "Market Tradability is " + trendWord(s83MarketDir) + ", not " + trendWord(dir)
     else if not s83Optimal
         r := "not Optimal (" + s83OptimalReason + ")"
     r

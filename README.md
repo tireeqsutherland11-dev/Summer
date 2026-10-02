@@ -761,13 +761,17 @@ engine, labels and dashboard unchanged. Both use Fib Base's Fibonacci engine
 
 Buys (bullish market):
 
-1. **Market filters.** The dashboard's Market Tradability reads **Tradable**
-   (bullish) and the Optimal Conditions read **OPTIMAL**.
-   `Allow_Tradable_Early_Entries` also accepts Tradable (Early); it is off by
-   default.
-2. **MTF trend.** The most recent MTF structure is a bullish BOS (the break of
-   an HH that makes a new HH). It must not be a CHoCH or Consolidation /
-   Undefined.
+1. **Market Tradability.** The dashboard's Market Tradability reads
+   **Tradable** (bullish). In the strategy, Tradable means that the Market
+   Trend and the Internal Structure of every selected timeframe (HTF, MTF and
+   LTF by default) read bullish.
+   - A Bullish Transition counts as bullish.
+   - It does not matter whether the latest break was a BOS or a CHoCH.
+   - Consolidation / Undefined, or any timeframe pointing the other way, is
+     Not Tradable. The reason names the first timeframe that does not agree.
+   - There is no Tradable (Early) in the strategy. Base's own indicator keeps
+     its rule.
+2. **Optimal Conditions.** The Optimal Conditions read **OPTIMAL**.
 3. **LTF setup.** The LTF is M30 with LTF Swing Detection level 3 (3 candles
    each side) by default. The setup is searched within the last
    `LTF_Bars_To_Process` (the LTF Independent Processed Bars, 40) closed LTF
@@ -1069,22 +1073,29 @@ and Python mirrors:
   - the setup was not missed;
   - the entry is at the first touch, with no new HH/LL beyond a confirmed B
     first;
-  - the filters at the entry;
+  - the filters at the entry (Tradable in the trade direction, then
+    Optimal);
   - the take profit, stop and 1:2 / 1:3 choice;
   - the lot size, including the risk cuts;
   - the day and trade limits;
   - breakeven.
 
-  All 200 trades passed. Every one of the 656 touches of an armed setup was
+  All 218 trades passed. Every one of the 656 touches of an armed setup was
   either traded or rejected for a genuine reason:
-  - Market Tradability: 84;
-  - the MTF's latest structure: 370;
-  - a position already open: 6.
+  - Market Tradability not Tradable: 357;
+  - Tradable in the other direction: 81;
+  - a position already open: 5.
 
-  With the engulfing confirmation on, the same markets gave 59 trades. All
+  With the engulfing confirmation on, the same markets gave 64 trades. All
   of them passed, including the touch and the first M15 or M30 engulfing
-  after it, recomputed from the candles. Of the 343 confirmations, 60 were
-  skipped as too far from the 83% level for a stop behind A. The generated
+  after it, recomputed from the candles. Of the 343 confirmations, 68 were
+  skipped as too far from the 83% level for a stop behind A.
+- **The Tradable rule.** Market Tradability was computed for every
+  combination of three timeframes' Market Trends (none, bullish or bearish
+  by CHoCH or BOS, ranging), Internal Structures (bullish, bearish,
+  undefined) and timeframe selections: 40,824 cases. It read Tradable
+  exactly when every selected timeframe's trend and internal structure
+  agreed, with a reason in every case. The generated
   markets are random, so they say nothing about which version trades
   better.
 - **Deriv tests.** Separate tests cover:
