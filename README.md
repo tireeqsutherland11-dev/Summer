@@ -941,6 +941,13 @@ The dashboard gains these rows under Base's own:
 - **Installing.** Paste `83% Strategy.pine` into the Pine Editor, save it,
   and add it to an M30 chart (the LTF). Setups, orders and drawings follow
   that chart; on any other chart the dashboard asks for the LTF chart.
+- **The dashboard.** It appears as soon as the strategy is added or its
+  settings change, including while the current candle is still forming.
+  - A strategy calculates only at candle closes. Its last-candle drawings
+    (the dashboard, the strong/weak lines and the planned position) are
+    therefore drawn on the last closed candle too.
+  - Before this, on a market that was open (Deriv's synthetic indices
+    always are), they stayed blank until the current M30 candle closed.
 - **Entries.**
   - With confirmation, the strategy reads the M15 candles inside each M30
     candle with `request.security_lower_tf`. It enters at the market at the
