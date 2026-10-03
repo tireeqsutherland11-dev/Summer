@@ -1,0 +1,1487 @@
+//@version=6
+// Base 2.0 - Market Structure (TradingView port of Base 2.0.mq5 v3.00)
+//
+// Reads market structure from closed candles only:
+//  * Swings (ATR zigzag): a swing high is confirmed by the first close at
+//    least the Swing Size (in 14-candle ATR at the swing's candle) below the
+//    leg's high; swing lows mirror this. Highs and lows always alternate,
+//    their size follows volatility, and a swing never changes once confirmed.
+//    HH/LH and LL/HL compare each swing with the previous one on its side;
+//    EQH/EQL (within the EQH/EQL Threshold) is only a label.
+//  * Trend: Bullish, Bearish or Range, held by one protected level. A break
+//    is a close beyond a level by 0.1 ATR.
+//     - Bullish: a close above the weak high (the highest swing high since
+//       the last BOS) is a bullish BOS, and the protected low becomes the
+//       latest swing low. A close below the protected low is a bearish CHoCH:
+//       the market becomes a Range. Pullbacks that hold the protected low
+//       change nothing. Bearish mirrors this.
+//     - Range: a close above its high is a bullish BOS, below its low a
+//       bearish BOS. When that resumes the trend the CHoCH broke, the CHoCH
+//       was a liquidity sweep and is relabelled LS (deep yellow).
+//  * Strong/Weak High/Low: in a bullish trend the protected low is the Strong
+//    Low and the running high since the BOS the Weak High (bearish mirrors
+//    this); a range shows its Range High and Range Low.
+//  * Internal Structure: the same engine with a fraction of the swing size,
+//    dashed and faded on the chart and one dashboard row per timeframe.
+//  * Market Tradability: Tradable when the HTF and every selected timeframe
+//    are all Bullish (or all Bearish) and the HTF trend quality (the
+//    efficiency of the last 30 closes) is at least 0.30 in that direction.
+//    Progressive swings, the internal structure and the Hurst exponent can
+//    be required too (all off by default).
+//  * Dashboard: the Market Trend, Swing Structure and Internal Structure of
+//    each selected timeframe, the Trend Quality, Market Tradability and its
+//    reason, the trade recommendation, and Optimal Conditions when any is
+//    selected (none by default). It is an analysis tool and never places
+//    orders.
+indicator("Base 2.0 - Market Structure", shorttitle = "Base 2.0", overlay = true, max_labels_count = 500, max_lines_count = 500, max_bars_back = 5000)
+// ---------------------------------------------------------------- inputs
+grpTf = "Timeframes"
+htfTf = input.timeframe("60", "HTF", group = grpTf, tooltip = "Higher timeframe (HTF). Its structure sets the main trend and Market Tradability (with its trend quality), the HTF MA, ADX, ATR and session filters, and the alerts.")
+mtfTf = input.timeframe("30", "MTF", group = grpTf, tooltip = "Middle timeframe (MTF). Its trend is correlated with the HTF for Market Tradability, it drives the MTF MA filter, and its swings and ATR measure Healthy Extension.")
+ltfTf = input.timeframe("15", "LTF", group = grpTf, tooltip = "Lower timeframe (LTF). Its trend can be correlated too, its latest close is the price Healthy Extension measures, and its candles feed Market Volume and Price Momentum.")
+
+grpTrend = "Trend Analysis Timeframes"
+useHtf = input.bool(true, "Use HTF", group = grpTrend, tooltip = "Show the HTF Market Trend. Market Tradability always needs the HTF to be Bullish or Bearish (not a Range).")
+useMtf = input.bool(false, "Use MTF", group = grpTrend, tooltip = "Show the MTF Market Trend and require it for Market Tradability: in the HTF's direction.")
+useLtf = input.bool(false, "Use LTF", group = grpTrend, tooltip = "Show the LTF Market Trend and require it for Market Tradability: in the HTF's direction.")
+
+grpQuality = "Trend Quality (Market Tradability)"
+qualityCandles = input.int(30, "Trend Quality Window (closed HTF candles)", minval = 5, maxval = 200, group = grpQuality, tooltip = "How many closed HTF candles the trend quality (efficiency) is measured over.")
+qualityMin = input.float(0.30, "Tradable When The HTF Efficiency Is At Least", minval = 0.0, maxval = 0.99, step = 0.05, group = grpQuality, tooltip = "Market Tradability needs the HTF trend quality at least this, its net move in the trend's direction. The efficiency is the net move of the window's closes divided by the distance travelled close to close: 0 is pure chop, 1 a straight line.")
+
+grpExtras = "Market Tradability Extras (off by default)"
+requireSwings = input.bool(false, "Also Require HH + HL (LL + LH)", group = grpExtras, tooltip = "Market Tradability also needs progressive swings on the HTF and every selected timeframe: an HH and an HL for bullish, an LL and an LH for bearish.")
+requireInternal = input.bool(false, "Also Require The HTF Internal Structure To Agree", group = grpExtras, tooltip = "Market Tradability also needs the HTF internal structure in the trend's direction.")
+useHurst = input.bool(false, "Also Require The Hurst Exponent Above Its Minimum", group = grpExtras, tooltip = "Market Tradability also needs the Hurst exponent above the Hurst Minimum. It is then shown on the dashboard.")
+
+grpHurst = "Hurst Exponent (Trend Persistence)"
+hurstSource = input.string("HTF", "Hurst Timeframe", options = ["HTF", "MTF", "LTF"], group = grpHurst, tooltip = "The timeframe whose closes the Hurst exponent is measured on. The MTF and LTF take more calculation.")
+hurstCandles = input.int(100, "Hurst Window (closed candles)", minval = 50, maxval = 400, group = grpHurst, tooltip = "How many closed candles, up to the latest one, the Hurst exponent is measured over.")
+hurstMin = input.float(0.50, "Hurst Minimum", minval = 0.0, maxval = 0.99, step = 0.01, group = grpHurst, tooltip = "With the Hurst requirement on, Market Tradability needs the Hurst exponent H above this. About 0.5 is a random walk, above it a trending market, below it a mean-reverting one.")
+
+grpProc = "Structure Bar Processing"
+barsToProcess = input.int(100, "Bars To Process", minval = 100, maxval = 100000, group = grpProc, tooltip = "How many HTF candles back structure is drawn. Other chart timeframes cover the same span of time. Structure is always calculated on all loaded history.")
+
+SIZE_TIP = "How far price must close back from a swing to confirm it, in 14-candle ATR. 1 = finest (0.5 ATR), 10 = broadest (5 ATR): 1:0.5, 2:0.75, 3:1, 4:1.25, 5:1.5, 6:2, 7:2.5, 8:3, 9:4, 10:5."
+grpSwing = "Swing Detection (ATR swing size)"
+htfSwingLevel = input.int(3, "HTF Swing Size (1-10)", minval = 1, maxval = 10, group = grpSwing, tooltip = "Size of the HTF swings. " + SIZE_TIP)
+mtfSwingLevel = input.int(5, "MTF Swing Size (1-10)", minval = 1, maxval = 10, group = grpSwing, tooltip = "Size of the MTF swings. " + SIZE_TIP)
+ltfSwingLevel = input.int(7, "LTF Swing Size (1-10)", minval = 1, maxval = 10, group = grpSwing, tooltip = "Size of the LTF swings. " + SIZE_TIP)
+showSwingPoints = input.bool(true, "Show Swing Points", group = grpSwing, tooltip = "Display the HH/HL/LH/LL (and EQH/EQL) swing labels and the dotted lines at the latest swing high and low.")
+showStrongWeak = input.bool(true, "Show Strong/Weak High/Low", group = grpSwing, tooltip = "Display Strong/Weak High/Low: in a trend the protected level (Strong) and the trend's running extreme since its BOS (Weak); in a range its Range High and Range Low.")
+
+grpInternal = "Internal Structure"
+showInternal = input.bool(true, "Show Internal Structure", group = grpInternal, tooltip = "Display the internal BOS/CHoCH/LS: the same structure with smaller swings, drawn as dashed lines with faded captions.")
+showInternalOnDashboard = input.bool(true, "Show Internal Structure On Dashboard", group = grpInternal, tooltip = "Show each timeframe's internal trend under its Market Trend on the dashboard.")
+internalRatio = input.float(0.5, "Internal Swing Size (fraction of the swing size)", minval = 0.2, maxval = 0.9, step = 0.05, group = grpInternal, tooltip = "The internal structure uses this fraction of its timeframe's swing size.")
+internalBullColor = input.color(#089981, "Internal Bullish Color", group = grpInternal, tooltip = "Color of bullish internal BOS/CHoCH lines and captions.")
+internalBearColor = input.color(#F23645, "Internal Bearish Color", group = grpInternal, tooltip = "Color of bearish internal BOS/CHoCH lines and captions.")
+
+// The swing size, in ATR, of a Swing Size level (as in Base 2.0.mq5's
+// SwingSize). Level 3 (1 ATR) marks about as many swings as Base's
+// 2-candle pivots did.
+swingSize(int level) =>
+    level <= 1 ? 0.5 : level == 2 ? 0.75 : level == 3 ? 1.0 : level == 4 ? 1.25 : level == 5 ? 1.5 : level == 6 ? 2.0 : level == 7 ? 2.5 : level == 8 ? 3.0 : level == 9 ? 4.0 : 5.0
+
+htfSize = swingSize(htfSwingLevel)
+mtfSize = swingSize(mtfSwingLevel)
+ltfSize = swingSize(ltfSwingLevel)
+
+grpBos = "BOS Display"
+showBos = input.bool(true, "Show BOS Labels", group = grpBos, tooltip = "Display BOS (break of structure): a close beyond the weak high (bullish) or weak low (bearish) by 0.1 ATR, or beyond a range. It starts or continues the trend.")
+bullBosColor = input.color(color.blue, "Bullish BOS Color", group = grpBos, tooltip = "Caption color of bullish BOS.")
+bearBosColor = input.color(color.blue, "Bearish BOS Color", group = grpBos, tooltip = "Caption color of bearish BOS.")
+
+grpChoch = "CHoCH Display"
+showChoch = input.bool(true, "Show CHoCH Labels", group = grpChoch, tooltip = "Display CHoCH (change of character): a close beyond the trend's protected level by 0.1 ATR. The trend ends and the market is a range.")
+bullChochColor = input.color(color.red, "Bullish CHoCH Color", group = grpChoch, tooltip = "Caption color of bullish CHoCH.")
+bearChochColor = input.color(color.red, "Bearish CHoCH Color", group = grpChoch, tooltip = "Caption color of bearish CHoCH.")
+
+grpLs = "LS Display"
+showLs = input.bool(true, "Show LS Labels", group = grpLs, tooltip = "Display LS (liquidity sweep): a CHoCH that failed, because the range it started broke back in the old trend's direction with a BOS. It replaces the CHoCH.")
+bullLsColor = input.color(#E5B800, "Bullish LS Color (a failed bullish CHoCH)", group = grpLs, tooltip = "Caption and line color of an LS that replaced a bullish CHoCH.")
+bearLsColor = input.color(#E5B800, "Bearish LS Color (a failed bearish CHoCH)", group = grpLs, tooltip = "Caption and line color of an LS that replaced a bearish CHoCH.")
+
+grpLines = "Labels and Lines"
+labelSizeInput = input.string("Small", "Label Size", options = ["Tiny", "Small", "Normal", "Large"], group = grpLines, tooltip = "Text size of the swing, BOS, CHoCH, LS, internal and Strong/Weak labels.")
+showLines = input.bool(true, "Show Structure Lines", group = grpLines, tooltip = "Draw BOS/CHoCH/LS lines from the broken swing to the first candle that touches its level.")
+lineStyleInput = input.string("Solid", "Line Style", options = ["Solid", "Dashed", "Dotted"], group = grpLines, tooltip = "Style of the BOS/CHoCH/LS lines.")
+lineWidth = input.int(2, "Line Width", minval = 1, maxval = 4, group = grpLines, tooltip = "Width of the BOS/CHoCH/LS lines.")
+
+grpEqual = "EQH/EQL"
+showEqual = input.bool(true, "Show EQH/EQL", group = grpEqual, tooltip = "Label equal highs and lows as EQH/EQL and join each to the swing it equals with a dotted line. It is only a label: the structure is the same either way.")
+equalThreshold = input.float(0.2, "EQH/EQL Threshold (ATR, 0 = off)", minval = 0.0, maxval = 0.5, step = 0.05, group = grpEqual, tooltip = "A swing within this many ATR of the previous swing on its side is labelled an equal high or low. 0 turns it off.")
+
+grpHtfMa = "MA Filter (HTF)"
+useHtfMa = input.bool(true, "Use HTF MA Filter", group = grpHtfMa, tooltip = "Qualify setups with the latest closed HTF candle against the HTF MA (longs above, shorts below). Shown in the Market Tradability tooltip only.")
+htfMaLength = input.int(50, "HTF MA Length", minval = 1, group = grpHtfMa, tooltip = "Length of the HTF moving average.")
+htfMaType = input.string("EMA", "MA Type", options = ["EMA", "SMA"], group = grpHtfMa, tooltip = "Type of the HTF moving average.")
+showHtfMaLine = input.bool(false, "Show HTF MA Line", group = grpHtfMa, tooltip = "Plot the HTF moving average on the chart.")
+htfMaColor = input.color(color.blue, "HTF MA Color", group = grpHtfMa, tooltip = "Color of the HTF moving average line.")
+
+grpMtfMa = "MA Filter (MTF)"
+useMtfMa = input.bool(true, "Use MTF MA Filter", group = grpMtfMa, tooltip = "Qualify setups with the latest closed MTF candle against the MTF MA (longs above, shorts below). Shown in the Market Tradability tooltip only.")
+mtfMaLength = input.int(100, "MTF MA Length", minval = 1, group = grpMtfMa, tooltip = "Length of the MTF moving average.")
+mtfMaType = input.string("EMA", "MA Type", options = ["EMA", "SMA"], group = grpMtfMa, tooltip = "Type of the MTF moving average.")
+showMtfMaLine = input.bool(false, "Show MTF MA Line", group = grpMtfMa, tooltip = "Plot the MTF moving average on the chart.")
+mtfMaColor = input.color(color.orange, "MTF MA Color", group = grpMtfMa, tooltip = "Color of the MTF moving average line.")
+
+grpSession = "Session Filter"
+useSession = input.bool(false, "Use Session Filter", group = grpSession, tooltip = "Qualify setups only when the latest HTF candle opens inside the chosen session. Shown in the Market Tradability tooltip only.")
+sessionPreset = input.string("New York", "Session Preset", options = ["New York", "London", "Tokyo", "Sydney", "Custom", "24x7"], group = grpSession, tooltip = "Trading session. Presets use their market's time zone, so daylight saving time is handled. Custom uses the two inputs below.")
+customSession = input.string("0930-1600", "Custom Session (HHMM-HHMM)", group = grpSession, tooltip = "Custom session as HHMM-HHMM. Equal start and end means all day; 2200-0600 crosses midnight.")
+customTimezone = input.string("UTC", "Custom Session Timezone (e.g. UTC, GMT+2, America/New_York)", group = grpSession, tooltip = "Time zone of the custom session, for example UTC, GMT+2 or America/New_York.")
+
+grpAdx = "ADX Filter"
+useAdx = input.bool(true, "Use ADX Filter", group = grpAdx, tooltip = "Require the HTF ADX to be at least 25 (trend strength) for BOS setups. Shown in the Market Tradability tooltip only.")
+adxLength = input.int(14, "ADX Length", minval = 1, group = grpAdx, tooltip = "Length of the HTF ADX.")
+
+grpAtr = "ATR Filter"
+useAtr = input.bool(true, "Use ATR Filter", group = grpAtr, tooltip = "Require the HTF ATR to be at least 1.0 (in price units) for setups. Shown in the Market Tradability tooltip only.")
+atrLength = input.int(14, "ATR Length", minval = 1, group = grpAtr, tooltip = "Length of the HTF ATR.")
+
+grpOpt = "Optimal Conditions"
+useCorrOpt = input.bool(false, "Use Timeframe Correlation For Optimal", group = grpOpt, tooltip = "Optimal Conditions requires the selected timeframes to correlate (Market Tradability is Tradable).")
+useExtOpt = input.bool(false, "Use Healthy Extension For Optimal", group = grpOpt, tooltip = "Optimal Conditions blocks an overextended market: price more than 10 MTF ATR beyond the latest MTF swing low (bullish HTF trend) or swing high (bearish). Anything less passes.")
+useVolOpt = input.bool(false, "Use Market Volume For Optimal", group = grpOpt, tooltip = "Optimal Conditions requires the latest LTF volume to be 0.5x to 2x its 20-candle average.")
+useMomOpt = input.bool(false, "Use Price Momentum For Optimal", group = grpOpt, tooltip = "Optimal Conditions requires the latest LTF true range to be 0.5x to 2x its 20-candle average.")
+
+grpDash = "Dashboard and Alerts"
+dashPositionInput = input.string("Top Right", "Dashboard Position", options = ["Top Left", "Top Right", "Bottom Left", "Bottom Right"], group = grpDash, tooltip = "Corner of the chart where the dashboard is shown.")
+enableAlerts = input.bool(false, "Alert On Structure-Timeframe BOS / CHoCH / LS", group = grpDash, tooltip = "Send an alert() when a BOS, CHoCH or LS is confirmed on the latest closed HTF candle. Create the alert with Any alert() function call.")
+
+// ------------------------------------------------------ internal tuning
+// Kept out of the inputs, as in Base 2.0.mq5.
+HTF_MA_FULL_BODY = false
+MTF_MA_FULL_BODY = false
+ADX_MINIMUM = 25.0
+ADX_BOS_AND_CHOCH = false
+ATR_MODE = "Minimum"
+ATR_MINIMUM = 1.0
+ATR_MAXIMUM = 10.0
+MAX_EXTENSION_ATR = 10.0
+VOLUME_AVERAGE_LENGTH = 20
+VOLUME_MIN_RATIO = 0.50
+VOLUME_MAX_RATIO = 2.00
+MOMENTUM_AVERAGE_LENGTH = 20
+MOMENTUM_MIN_RATIO = 0.50
+MOMENTUM_MAX_RATIO = 2.00
+
+// Swing detection (ATR zigzag, see B2Engine.step): a swing is confirmed once
+// price closes the Swing Size (in 14-candle ATR) back from it. The 14-candle
+// ATR sizes the swings, the break buffer and the EQH/EQL threshold.
+SWING_ATR_LENGTH = 14
+// A break is a close beyond a level by this much of the latest candle's ATR.
+BREAK_BUFFER_ATR = 0.1
+// How far back a level or a line end is searched (candles).
+MAX_SCAN = 4999
+
+HIGH_LABEL_COLOR = #CD5C5C
+LOW_LABEL_COLOR = #008080
+
+if not useHtf and not useMtf and not useLtf
+    runtime.error("Enable at least one trend analysis timeframe")
+
+// ------------------------------------------------------ structure engine
+// The engine of Base 2.0.mq5's ReplayStructure, one closed candle at a time
+// (see step).
+type B2Point
+    int side
+    int bar
+    int t
+    float price
+    int kind
+    bool equal = false
+    int equalBar = -1
+    int equalTime = na
+    float equalPrice = na
+
+type B2Event
+    int seq
+    int bar
+    int dir
+    bool bos
+    int swingBar
+    int swingTime
+    float level
+    bool ls = false
+    int lsBar = -1
+    // Where its line ends: the first candle after the swing whose wick or
+    // body reached the level (the breaking candle at the latest).
+    int endBar = -1
+    int endTime = na
+
+type B2Engine
+    float size
+    // The leg in progress: 1 rising (tracking its high), -1 falling, 0 before
+    // the first swing (tracking both extremes). Each extreme keeps the ATR
+    // of its candle.
+    int leg = 0
+    float hi = na
+    int hiBar = -1
+    int hiTime = na
+    float hiAtr = na
+    float lo = na
+    int loBar = -1
+    int loTime = na
+    float loAtr = na
+    float ext = na
+    int extBar = -1
+    int extTime = na
+    float extAtr = na
+    // The latest two swings on each side.
+    float lastHigh = na
+    int lastHighBar = -1
+    int lastHighTime = na
+    int lastHighKind = 0
+    float prevHigh = na
+    float lastLow = na
+    int lastLowBar = -1
+    int lastLowTime = na
+    int lastLowKind = 0
+    float prevLow = na
+    // The trend: 1 Bullish, -1 Bearish, 0 Range; in a range, the trend its
+    // CHoCH broke and that CHoCH.
+    int trend = 0
+    int prevTrend = 0
+    B2Event chochEvent
+    float protectedLevel = na
+    int protectedBar = -1
+    int protectedTime = na
+    float target = na
+    int targetBar = -1
+    int targetTime = na
+    float trail = na
+    int trailTime = na
+    int bosBar = -1
+    float rh = na
+    int rhBar = -1
+    int rhTime = na
+    float rl = na
+    int rlBar = -1
+    int rlTime = na
+    // Breaks so far, LS relabels, and the latest break.
+    int seq = 0
+    int lsTotal = 0
+    B2Event lastEvent
+    // What the latest candle confirmed.
+    array<B2Point> newPoints
+    array<B2Event> newEvents
+    array<B2Event> newLs
+    // The ATR of the latest MAX_SCAN + 1 candles, the first one on candle
+    // atrFirst.
+    array<float> atrs
+    int atrFirst = 0
+
+newEngine(float size) =>
+    B2Engine.new(size, newPoints = array.new<B2Point>(), newEvents = array.new<B2Event>(), newLs = array.new<B2Event>(), atrs = array.new<float>())
+
+// The ATR the engine stored for candle `bar` (one of the latest MAX_SCAN + 1).
+method atrAt(B2Engine e, int bar) =>
+    e.atrs.get(math.min(math.max(bar - e.atrFirst, 0), e.atrs.size() - 1))
+
+// The candle of the highest high (side 1) or lowest low (-1) after candle
+// `frm` up to this one (this one itself when frm is this one), the latest of
+// equal ones, and its price (see Base 2.0.mq5's ExtremeAfter).
+extremeAfter(int side, int frm) =>
+    int best = -1
+    float bestV = na
+    int first = math.max(math.min(frm + 1, bar_index), bar_index - MAX_SCAN)
+    for j = first to bar_index
+        float v = side > 0 ? high[bar_index - j] : low[bar_index - j]
+        if best < 0 or (side > 0 ? v >= bestV : v <= bestV)
+            best := j
+            bestV := v
+    [best, bestV]
+
+// The first candle after `swingBar` (before this one) whose wick or body
+// reached `level`, else this candle, and its time (see Base 2.0.mq5's
+// FirstTouchBar).
+firstTouch(int swingBar, int dir, float level) =>
+    int found = bar_index
+    int first = math.max(swingBar + 1, bar_index - MAX_SCAN)
+    if first < bar_index
+        for j = first to bar_index - 1
+            if dir > 0 ? high[bar_index - j] >= level : low[bar_index - j] <= level
+                found := j
+                break
+    [found, time[bar_index - found]]
+
+// A swing confirmed on this candle: labelled against the previous swing on
+// its side (EQH/EQL within the threshold, only a label), and offered to the
+// trend (see Base 2.0.mq5's AddSwing).
+method swing(B2Engine e, int side, float price, int bar, int t, float barAtr) =>
+    float prev = side > 0 ? e.lastHigh : e.lastLow
+    bool havePrev = not na(prev)
+    int kind = not havePrev ? 0 : (side > 0 ? price > prev : price < prev) ? 1 : -1
+    bool equal = havePrev and equalThreshold > 0 and math.abs(price - prev) < equalThreshold * barAtr
+    int equalBar = equal ? (side > 0 ? e.lastHighBar : e.lastLowBar) : -1
+    int equalTime = equal ? (side > 0 ? e.lastHighTime : e.lastLowTime) : na
+    e.newPoints.push(B2Point.new(side, bar, t, price, kind, equal, equalBar, equalTime, equal ? prev : na))
+    if side > 0
+        e.prevHigh := e.lastHigh
+        e.lastHigh := price
+        e.lastHighBar := bar
+        e.lastHighTime := t
+        e.lastHighKind := kind
+    if side < 0
+        e.prevLow := e.lastLow
+        e.lastLow := price
+        e.lastLowBar := bar
+        e.lastLowTime := t
+        e.lastLowKind := kind
+    if e.trend == side and bar >= e.bosBar and (na(e.target) or (side > 0 ? price > e.target : price < e.target))
+        e.target := price
+        e.targetBar := bar
+        e.targetTime := t
+    if e.trend == 0 and side > 0 and (na(e.rh) or price > e.rh)
+        e.rh := price
+        e.rhBar := bar
+        e.rhTime := t
+    if e.trend == 0 and side < 0 and (na(e.rl) or price < e.rl)
+        e.rl := price
+        e.rlBar := bar
+        e.rlTime := t
+    e
+
+// A break on this candle through `level` (its swing on `swingBar`).
+method addEvent(B2Engine e, int dir, bool bos, float level, int swingBar, int swingTime) =>
+    e.seq += 1
+    [endBar, endTime] = firstTouch(swingBar, dir, level)
+    B2Event ev = B2Event.new(e.seq, bar_index, dir, bos, swingBar, swingTime, level, endBar = endBar, endTime = endTime)
+    e.newEvents.push(ev)
+    e.lastEvent := ev
+    e
+
+// A BOS on this candle through the swing on `levelBar` starts (or continues)
+// a trend: the protected level becomes the latest swing on the other side
+// (with none yet, the deepest point since the broken swing).
+method startTrend(B2Engine e, int d, int levelBar) =>
+    bool have = d > 0 ? not na(e.lastLow) : not na(e.lastHigh)
+    if have
+        e.protectedLevel := d > 0 ? e.lastLow : e.lastHigh
+        e.protectedBar := d > 0 ? e.lastLowBar : e.lastHighBar
+        e.protectedTime := d > 0 ? e.lastLowTime : e.lastHighTime
+    if not have
+        [b, v] = extremeAfter(-d, levelBar)
+        e.protectedLevel := v
+        e.protectedBar := b
+        e.protectedTime := time[bar_index - b]
+    e.trend := d
+    e.target := na
+    e.targetBar := -1
+    e.trail := na
+    e.bosBar := bar_index
+    e.rh := na
+    e.rl := na
+    e
+
+// A CHoCH on this candle: the trend `old` lost its protected level and the
+// market is a range. Its far edge is the old trend's extreme since the
+// protected level; the near edge waits for the next swing.
+method enterRange(B2Engine e, int old) =>
+    [far, farV] = extremeAfter(old, e.protectedBar)
+    e.trend := 0
+    e.prevTrend := old
+    e.chochEvent := e.lastEvent
+    if old > 0
+        e.rh := farV
+        e.rhBar := far
+        e.rhTime := time[bar_index - far]
+        e.rl := na
+    if old < 0
+        e.rl := farV
+        e.rlBar := far
+        e.rlTime := time[bar_index - far]
+        e.rh := na
+    e.protectedLevel := na
+    e.target := na
+    e.trail := na
+    e
+
+// A close beyond the range on this candle: a BOS that way. When it resumes
+// the trend the range's CHoCH broke, that CHoCH was a liquidity sweep (LS).
+method leaveRange(B2Engine e, int d) =>
+    float level = d > 0 ? e.rh : e.rl
+    int levelBar = d > 0 ? e.rhBar : e.rlBar
+    int levelTime = d > 0 ? e.rhTime : e.rlTime
+    if e.prevTrend == d and not na(e.chochEvent) and e.chochEvent.seq == e.seq
+        e.chochEvent.ls := true
+        e.chochEvent.lsBar := bar_index
+        e.newLs.push(e.chochEvent)
+        e.lsTotal += 1
+    e.addEvent(d, true, level, levelBar, levelTime)
+    e.prevTrend := 0
+    e.chochEvent := na
+    e.startTrend(d, levelBar)
+
+// One closed candle (see Base 2.0.mq5's ReplayStructure): the swings, then
+// the trend, then the trend's running extreme. `a` is this candle's 14-candle
+// ATR.
+method step(B2Engine e, float a) =>
+    e.newPoints.clear()
+    e.newEvents.clear()
+    e.newLs.clear()
+    if e.atrs.size() == 0
+        e.atrFirst := bar_index
+    e.atrs.push(a)
+    if e.atrs.size() > MAX_SCAN + 1
+        e.atrs.shift()
+        e.atrFirst += 1
+    // 1. Swings.
+    bool starting = e.leg == 0
+    if starting
+        if na(e.hi) or high >= e.hi
+            e.hi := high
+            e.hiBar := bar_index
+            e.hiTime := time
+            e.hiAtr := a
+        if na(e.lo) or low <= e.lo
+            e.lo := low
+            e.loBar := bar_index
+            e.loTime := time
+            e.loAtr := a
+        bool up = close >= e.lo + e.size * e.loAtr
+        bool down = close <= e.hi - e.size * e.hiAtr
+        // Both at once: the earlier extreme is the older swing.
+        bool lowFirst = up and (not down or e.loBar < e.hiBar)
+        bool highFirst = down and not lowFirst
+        if lowFirst
+            e.swing(-1, e.lo, e.loBar, e.loTime, e.loAtr)
+            e.leg := 1
+            [b, v] = extremeAfter(1, e.loBar)
+            e.ext := v
+            e.extBar := b
+            e.extTime := time[bar_index - b]
+            e.extAtr := e.atrAt(b)
+            if down
+                e.swing(1, e.hi, e.hiBar, e.hiTime, e.hiAtr)
+                e.leg := -1
+                [b2, v2] = extremeAfter(-1, e.hiBar)
+                e.ext := v2
+                e.extBar := b2
+                e.extTime := time[bar_index - b2]
+                e.extAtr := e.atrAt(b2)
+        if highFirst
+            e.swing(1, e.hi, e.hiBar, e.hiTime, e.hiAtr)
+            e.leg := -1
+            [b, v] = extremeAfter(-1, e.hiBar)
+            e.ext := v
+            e.extBar := b
+            e.extTime := time[bar_index - b]
+            e.extAtr := e.atrAt(b)
+            if up
+                e.swing(-1, e.lo, e.loBar, e.loTime, e.loAtr)
+                e.leg := 1
+                [b2, v2] = extremeAfter(1, e.loBar)
+                e.ext := v2
+                e.extBar := b2
+                e.extTime := time[bar_index - b2]
+                e.extAtr := e.atrAt(b2)
+    if not starting
+        if e.leg > 0 and high >= e.ext
+            e.ext := high
+            e.extBar := bar_index
+            e.extTime := time
+            e.extAtr := a
+        if e.leg < 0 and low <= e.ext
+            e.ext := low
+            e.extBar := bar_index
+            e.extTime := time
+            e.extAtr := a
+        // A big candle can confirm a swing and the next one at once, but a
+        // leg that starts on this candle waits for a later close: the order
+        // of the candle's own high and low is unknown.
+        for k = 0 to 3
+            int pivot = e.extBar
+            bool topped = e.leg > 0 and close <= e.ext - e.size * e.extAtr
+            bool bottomed = e.leg < 0 and close >= e.ext + e.size * e.extAtr
+            if topped
+                e.swing(1, e.ext, pivot, e.extTime, e.extAtr)
+                e.leg := -1
+                [b, v] = extremeAfter(-1, pivot)
+                e.ext := v
+                e.extBar := b
+                e.extTime := time[bar_index - b]
+                e.extAtr := e.atrAt(b)
+            if bottomed
+                e.swing(-1, e.ext, pivot, e.extTime, e.extAtr)
+                e.leg := 1
+                [b, v] = extremeAfter(1, pivot)
+                e.ext := v
+                e.extBar := b
+                e.extTime := time[bar_index - b]
+                e.extAtr := e.atrAt(b)
+            if (not topped and not bottomed) or pivot == bar_index
+                break
+    // 2. The trend.
+    float buffer = BREAK_BUFFER_ATR * a
+    int t0 = e.trend
+    bool bearChoch = t0 > 0 and close < e.protectedLevel - buffer
+    bool bullBos = t0 > 0 and not bearChoch and not na(e.target) and close > e.target + buffer
+    bool bullChoch = t0 < 0 and close > e.protectedLevel + buffer
+    bool bearBos = t0 < 0 and not bullChoch and not na(e.target) and close < e.target - buffer
+    bool rangeUp = t0 == 0 and not na(e.rh) and close > e.rh + buffer
+    bool rangeDown = t0 == 0 and not rangeUp and not na(e.rl) and close < e.rl - buffer
+    if bearChoch
+        e.addEvent(-1, false, e.protectedLevel, e.protectedBar, e.protectedTime)
+        e.enterRange(1)
+    if bullBos
+        e.addEvent(1, true, e.target, e.targetBar, e.targetTime)
+        e.startTrend(1, e.targetBar)
+    if bullChoch
+        e.addEvent(1, false, e.protectedLevel, e.protectedBar, e.protectedTime)
+        e.enterRange(-1)
+    if bearBos
+        e.addEvent(-1, true, e.target, e.targetBar, e.targetTime)
+        e.startTrend(-1, e.targetBar)
+    if rangeUp
+        e.leaveRange(1)
+    if rangeDown
+        e.leaveRange(-1)
+    // 3. The trend's running extreme since its BOS (the Weak High / Low).
+    if e.trend != 0 and (na(e.trail) or (e.trend > 0 ? high >= e.trail : low <= e.trail))
+        e.trail := e.trend > 0 ? high : low
+        e.trailTime := time
+    e
+
+// Average true range over SWING_ATR_LENGTH candles (fewer at the start), as
+// Base 2.0.mq5's SwingATR.
+swingAtrSeries() =>
+    float tr = ta.tr(true)
+    float avg = ta.sma(tr, SWING_ATR_LENGTH)
+    float acc = ta.cum(tr)
+    na(avg) ? acc / (bar_index + 1) : avg
+
+// A break as a code: 1 bullish BOS, 2 bearish BOS, 3 bullish CHoCH, 4
+// bearish CHoCH, 5 a bullish CHoCH relabelled LS, 6 a bearish one.
+eventCode(B2Event ev) =>
+    ev.ls ? (ev.dir > 0 ? 5 : 6) : ev.bos ? (ev.dir > 0 ? 1 : 2) : (ev.dir > 0 ? 3 : 4)
+
+// The structure of the timeframe this runs on (inside request.security):
+// its trend, levels and latest swings, the latest break, the number of
+// breaks and LS relabels so far, and this candle's breaks as digits of a
+// code (an LS before the BOS that made it).
+structureRequest(float size) =>
+    var B2Engine e = newEngine(size)
+    e.step(swingAtrSeries())
+    int code = 0
+    for ev in e.newLs
+        code := code * 10 + (ev.dir > 0 ? 5 : 6)
+    for ev in e.newEvents
+        code := code * 10 + (ev.bos ? (ev.dir > 0 ? 1 : 2) : (ev.dir > 0 ? 3 : 4))
+    B2Event last = e.lastEvent
+    int latest = na(last) ? 0 : eventCode(last)
+    float latestLevel = na(last) ? na : last.level
+    [e.trend, e.prevTrend, e.protectedLevel, e.target, e.trail, e.rh, e.rl, e.lastHigh, e.lastHighKind, e.prevHigh, e.lastLow, e.lastLowKind, e.prevLow, latest, latestLevel, e.seq + e.lsTotal, code]
+
+// The internal structure of the timeframe this runs on: the same engine with
+// the internal swing size; its trend and latest break.
+internalRequest(float size) =>
+    var B2Engine e = newEngine(size)
+    e.step(swingAtrSeries())
+    B2Event last = e.lastEvent
+    [e.trend, na(last) ? 0 : eventCode(last), na(last) ? na : last.level]
+
+// Trend quality (see Base 2.0.mq5's TrendQuality): the efficiency of the
+// last qualityCandles closes (the net move divided by the distance travelled
+// close to close) and the net move's direction; na until there are enough
+// closes.
+qualitySeries() =>
+    float net = close - close[qualityCandles]
+    float path = math.sum(math.abs(close - close[1]), qualityCandles)
+    float q = na(net) or na(path) ? na : path > 0 ? math.abs(net) / path : 0.0
+    [q, na(net) ? 0 : net > 0 ? 1 : net < 0 ? -1 : 0]
+
+validSession(string s) =>
+    bool ok = str.length(s) == 9 and str.match(s, "^[0-9]{4}-[0-9]{4}$") != ""
+    if ok
+        float sh = str.tonumber(str.substring(s, 0, 2))
+        float sm = str.tonumber(str.substring(s, 2, 4))
+        float eh = str.tonumber(str.substring(s, 5, 7))
+        float em = str.tonumber(str.substring(s, 7, 9))
+        ok := sh <= 23 and eh <= 23 and sm <= 59 and em <= 59
+    ok
+
+// Whether the current candle opens inside the session. Presets use named time
+// zones, so daylight saving time is handled; the custom session uses Custom
+// Session Timezone. Equal start and end means all day; 2200-0600 crosses
+// midnight.
+sessionOk() =>
+    bool ok = true
+    if useSession and sessionPreset != "24x7"
+        string sess = customSession
+        string tz = customTimezone
+        if sessionPreset == "New York"
+            sess := "0930-1600"
+            tz := "America/New_York"
+        else if sessionPreset == "London"
+            sess := "0800-1700"
+            tz := "Europe/London"
+        else if sessionPreset == "Tokyo"
+            sess := "0900-1500"
+            tz := "Asia/Tokyo"
+        else if sessionPreset == "Sydney"
+            sess := "0800-1700"
+            tz := "Australia/Sydney"
+        if validSession(sess)
+            int begin = int(str.tonumber(str.substring(sess, 0, 2))) * 60 + int(str.tonumber(str.substring(sess, 2, 4)))
+            int finish = int(str.tonumber(str.substring(sess, 5, 7))) * 60 + int(str.tonumber(str.substring(sess, 7, 9)))
+            int minuteOfDay = hour(time, tz) * 60 + minute(time, tz)
+            ok := begin == finish ? true : begin < finish ? minuteOfDay >= begin and minuteOfDay < finish : minuteOfDay >= begin or minuteOfDay < finish
+        else
+            ok := false
+    ok
+
+// Each request returns the state after the last closed candle of its
+// timeframe ([1] with lookahead on), so nothing repaints.
+htfRequest() =>
+    [d, pt, prot, tgt, trl, rh, rl, hp, hk, ph, lp, lk, pl, lc, llv, et, nc] = structureRequest(htfSize)
+    float maE = ta.ema(close, htfMaLength)
+    float maS = ta.sma(close, htfMaLength)
+    float maV = htfMaType == "EMA" ? maE : maS
+    [diPlus, diMinus, adxV] = ta.dmi(adxLength, adxLength)
+    float atrV = ta.sma(ta.tr(true), atrLength)
+    int sess = sessionOk() ? 1 : 0
+    [iT, iC, iL] = internalRequest(htfSize * internalRatio)
+    [q, qd] = qualitySeries()
+    [d[1], pt[1], prot[1], tgt[1], trl[1], rh[1], rl[1], hp[1], hk[1], ph[1], lp[1], lk[1], pl[1], lc[1], llv[1], et[1], nc[1], close[1], open[1], maV[1], adxV[1], atrV[1], sess[1], iT[1], iC[1], iL[1], q[1], qd[1]]
+
+mtfRequest() =>
+    [d, pt, prot, tgt, trl, rh, rl, hp, hk, ph, lp, lk, pl, lc, llv, et, nc] = structureRequest(mtfSize)
+    [iT, iC, iL] = internalRequest(mtfSize * internalRatio)
+    float atrS = swingAtrSeries()
+    [d[1], pt[1], prot[1], tgt[1], trl[1], rh[1], rl[1], hp[1], hk[1], ph[1], lp[1], lk[1], pl[1], lc[1], llv[1], iT[1], iC[1], iL[1], atrS[1]]
+
+ltfRequest() =>
+    [d, pt, prot, tgt, trl, rh, rl, hp, hk, ph, lp, lk, pl, lc, llv, et, nc] = structureRequest(ltfSize)
+    float trL = ta.tr(true)
+    float volAvg = nz(ta.sma(volume, VOLUME_AVERAGE_LENGTH)[1])
+    float volRatio = volAvg > 0 ? nz(volume) / volAvg : 0.0
+    float trAvg = nz(ta.sma(trL, MOMENTUM_AVERAGE_LENGTH)[1])
+    float momRatio = trAvg > 0 ? trL / trAvg : 0.0
+    [iT, iC, iL] = internalRequest(ltfSize * internalRatio)
+    [d[1], pt[1], prot[1], tgt[1], trl[1], rh[1], rl[1], hp[1], hk[1], ph[1], lp[1], lk[1], pl[1], lc[1], llv[1], close[1], volAvg[1], volRatio[1], trAvg[1], momRatio[1], iT[1], iC[1], iL[1]]
+
+mtfMaRequest() =>
+    float e1 = ta.ema(close, mtfMaLength)
+    float s1 = ta.sma(close, mtfMaLength)
+    float m = mtfMaType == "EMA" ? e1 : s1
+    [m[1], open[1], close[1]]
+
+[hDir, hPrev, hProt, hTarget, hTrail, hRh, hRl, hLastHigh, hHighKind, hPrevHigh, hLastLow, hLowKind, hPrevLow, hLatest, hLatestLv, hEvents, hNew, hClose, hOpen, hMa, hAdx, hAtr, hSession, hInTrend, hInLatest, hInLevel, hQuality, hQualityDir] = request.security(syminfo.tickerid, htfTf, htfRequest(), lookahead = barmerge.lookahead_on)
+[mDir, mPrev, mProt, mTarget, mTrail, mRh, mRl, mLastHigh, mHighKind, mPrevHigh, mLastLow, mLowKind, mPrevLow, mLatest, mLatestLv, mInTrend, mInLatest, mInLevel, mAtr] = request.security(syminfo.tickerid, mtfTf, mtfRequest(), lookahead = barmerge.lookahead_on)
+[lDir, lPrev, lProt, lTarget, lTrail, lRh, lRl, lLastHigh, lHighKind, lPrevHigh, lLastLow, lLowKind, lPrevLow, lLatest, lLatestLv, lClose, lVolAvg, lVolRatio, lTrAvg, lMomRatio, lInTrend, lInLatest, lInLevel] = request.security(syminfo.tickerid, ltfTf, ltfRequest(), lookahead = barmerge.lookahead_on)
+[mtfMaValue, mtfMaOpen, mtfMaClose] = request.security(syminfo.tickerid, mtfTf, mtfMaRequest(), lookahead = barmerge.lookahead_on)
+
+// The Hurst exponent (see Base 2.0.mq5's HurstOf): measured on the HTF by default.
+hurstTf = hurstSource == "MTF" ? mtfTf : hurstSource == "LTF" ? ltfTf : htfTf
+HURST_MIN_LAG = 2
+HURST_MAX_LAG = 20
+
+// The Hurst exponent of the hurstCandles closes up to the latest closed
+// candle, by the lagged-difference method (the generalized Hurst exponent with
+// q = 2): x = ln(close) oldest first; for each lag tau from 2 to 20, sigma is
+// the root mean square of x[t+tau] - x[t]; H is the least-squares slope of
+// ln sigma against ln tau. About 0.5 is a random walk; a trending market (a
+// steady drift or momentum) gives more, a mean-reverting one less. The same
+// sums in the same order as Base 2.0.mq5's HurstOf. Also the number of closed
+// candles (up to hurstCandles).
+hurstRequest() =>
+    float lc = close > 0 ? math.log(close) : na
+    float h = na
+    int n = hurstCandles
+    if bar_index >= n - 1
+        bool valid = true
+        for j = 0 to n - 1
+            if na(lc[j])
+                valid := false
+        int lags = HURST_MAX_LAG - HURST_MIN_LAG + 1
+        array<float> lt = array.new<float>(lags, 0.0)
+        array<float> ls = array.new<float>(lags, 0.0)
+        if valid
+            for k = 0 to lags - 1
+                int tau = HURST_MIN_LAG + k
+                int m = n - tau
+                float square = 0.0
+                // x[t] is lc[n - 1 - t] (x runs oldest first).
+                for t = 0 to m - 1
+                    float move = lc[n - 1 - t - tau] - lc[n - 1 - t]
+                    square += move * move
+                square := square / m
+                // Separate ifs: their last statements differ in type.
+                if square <= 0
+                    valid := false
+                if square > 0
+                    array.set(lt, k, math.log(tau))
+                    array.set(ls, k, math.log(math.sqrt(square)))
+        if valid
+            float mt = 0.0
+            float ms = 0.0
+            for k = 0 to lags - 1
+                mt += array.get(lt, k)
+                ms += array.get(ls, k)
+            mt := mt / lags
+            ms := ms / lags
+            float sxy = 0.0
+            float sxx = 0.0
+            for k = 0 to lags - 1
+                sxy += (array.get(lt, k) - mt) * (array.get(ls, k) - ms)
+                sxx += (array.get(lt, k) - mt) * (array.get(lt, k) - mt)
+            h := sxy / sxx
+    [h[1], math.min(bar_index, n)]
+
+[baseHurst, baseHurstCount] = request.security(syminfo.tickerid, hurstTf, hurstRequest(), lookahead = barmerge.lookahead_on)
+
+// ---------------------------------------------------- chart structure
+// Labels and signals follow the chart timeframe, while the dashboard stays on
+// the structure timeframe. Only confirmed candles are processed. The chart
+// uses the Swing Size of the matching HTF, MTF or LTF input; any other chart
+// timeframe uses the HTF size.
+chartSeconds = timeframe.in_seconds()
+chartTfIndex = chartSeconds == timeframe.in_seconds(htfTf) ? 0 : chartSeconds == timeframe.in_seconds(mtfTf) ? 1 : chartSeconds == timeframe.in_seconds(ltfTf) ? 2 : 0
+chartSize = chartTfIndex == 1 ? mtfSize : chartTfIndex == 2 ? ltfSize : htfSize
+float chartAtr = swingAtrSeries()
+var B2Engine chartEngine = newEngine(chartSize)
+var B2Engine chartInternal = newEngine(chartSize * internalRatio)
+
+labelSize = labelSizeInput == "Tiny" ? size.tiny : labelSizeInput == "Normal" ? size.normal : labelSizeInput == "Large" ? size.large : size.small
+lineStyle = lineStyleInput == "Solid" ? line.style_solid : lineStyleInput == "Dotted" ? line.style_dotted : line.style_dashed
+
+// The drawn history covers Bars To Process structure candles.
+htfSeconds = timeframe.in_seconds(htfTf)
+displayBars = math.max(50, int(math.ceil(float(barsToProcess) * htfSeconds / math.max(chartSeconds, 1))))
+drawFrom = last_bar_index - displayBars
+
+swingName(B2Point p) =>
+    showEqual and p.equal ? (p.side > 0 ? "EQH" : "EQL") : p.side > 0 ? (p.kind > 0 ? "HH" : "LH") : (p.kind > 0 ? "LL" : "HL")
+
+// A BOS, CHoCH or LS caption, centred on its line (the candle midway between
+// the broken swing and the first candle that touched its level, where the
+// line ends): above a line broken upwards, below one broken downwards.
+breakLabel(B2Event ev, string txt, color textColor) =>
+    label.new(int(math.round(0.5 * (ev.swingBar + ev.endBar))), ev.level, txt, xloc = xloc.bar_index, yloc = yloc.price, color = color.new(color.white, 100), style = ev.dir > 0 ? label.style_label_down : label.style_label_up, textcolor = textColor, size = labelSize)
+
+// The internal structure's BOS/CHoCH/LS: a dashed width-1 line from the
+// broken internal swing to the first candle that touched its level and a
+// faded caption centred on it.
+internalBreak(B2Event ev, string txt) =>
+    color clr = ev.dir > 0 ? internalBullColor : internalBearColor
+    line ln = line.new(ev.swingTime, ev.level, ev.endTime, ev.level, xloc = xloc.bar_time, color = clr, style = line.style_dashed, width = 1)
+    label lbl = label.new(int(math.round(0.5 * (ev.swingBar + ev.endBar))), ev.level, txt, xloc = xloc.bar_index, yloc = yloc.price, color = color.new(color.white, 100), style = ev.dir > 0 ? label.style_label_down : label.style_label_up, textcolor = color.new(clr, 30), size = labelSize)
+    [ln, lbl]
+
+// The drawing of the latest CHoCH (main and internal), replaced if it
+// becomes an LS. Main swings are kept (side and time) so that an internal
+// break of the same swing is left to the main structure; internal breaks
+// drawn before their swing turned out to be a main swing are kept to delete
+// when it does.
+var int lastChochSeq = -1
+var label lastChochLabel = na
+var line lastChochLine = na
+var int internalChochSeq = -1
+var label internalChochLabel = na
+var line internalChochLine = na
+var array<int> mainSides = array.new<int>()
+var array<int> mainTimes = array.new<int>()
+var array<line> internalLines = array.new<line>()
+var array<label> internalLabels = array.new<label>()
+var array<int> internalSides = array.new<int>()
+var array<int> internalSwingTimes = array.new<int>()
+MAX_INTERNAL_KEPT = 120
+MAX_MAIN_KEPT = 400
+
+isMainSwing(int side, int t) =>
+    bool found = false
+    int n = mainTimes.size()
+    if n > 0
+        for k = n - 1 to 0
+            if mainTimes.get(k) == t and mainSides.get(k) == side
+                found := true
+                break
+    found
+
+if barstate.isconfirmed
+    chartEngine.step(chartAtr)
+    chartInternal.step(chartAtr)
+    // Swings (they never change once confirmed).
+    for p in chartEngine.newPoints
+        mainSides.push(p.side)
+        mainTimes.push(p.t)
+        if showSwingPoints and p.kind != 0 and p.bar >= drawFrom
+            color swingColor = p.side > 0 ? HIGH_LABEL_COLOR : LOW_LABEL_COLOR
+            label.new(p.t, p.price, swingName(p), xloc = xloc.bar_time, yloc = yloc.price, color = color.new(color.white, 100), style = p.side > 0 ? label.style_label_down : label.style_label_up, textcolor = swingColor, size = labelSize)
+            // An equal high or low is joined to the swing it equals.
+            if showEqual and p.equal and p.equalBar >= drawFrom
+                line.new(p.equalTime, p.equalPrice, p.t, p.price, xloc = xloc.bar_time, color = swingColor, style = line.style_dotted, width = 1)
+        // An internal break of this swing is left to the main structure.
+        int kept = internalSides.size()
+        if kept > 0
+            for k = kept - 1 to 0
+                if internalSides.get(k) == p.side and internalSwingTimes.get(k) == p.t
+                    line.delete(internalLines.get(k))
+                    label.delete(internalLabels.get(k))
+                    internalLines.remove(k)
+                    internalLabels.remove(k)
+                    internalSides.remove(k)
+                    internalSwingTimes.remove(k)
+    while mainTimes.size() > MAX_MAIN_KEPT
+        mainTimes.shift()
+        mainSides.shift()
+    // An LS replaces the drawing of the CHoCH it relabels and keeps its place,
+    // in its own colour. It comes before the BOS that made it.
+    for ev in chartEngine.newLs
+        if ev.seq == lastChochSeq
+            label.delete(lastChochLabel)
+            line.delete(lastChochLine)
+            lastChochSeq := -1
+        if showLs and ev.swingBar >= drawFrom
+            color lsColor = ev.dir > 0 ? bullLsColor : bearLsColor
+            breakLabel(ev, "LS", lsColor)
+            if showLines
+                line.new(ev.swingTime, ev.level, ev.endTime, ev.level, xloc = xloc.bar_time, color = lsColor, style = lineStyle, width = lineWidth)
+    for ev in chartEngine.newEvents
+        bool shown = ev.bos ? showBos : showChoch
+        label lbl = na
+        line ln = na
+        // A break is drawn only with its swing.
+        if shown and ev.swingBar >= drawFrom
+            color textColor = ev.dir > 0 ? (ev.bos ? bullBosColor : bullChochColor) : (ev.bos ? bearBosColor : bearChochColor)
+            lbl := breakLabel(ev, ev.bos ? "BOS" : "CHoCH", textColor)
+            if showLines
+                ln := line.new(ev.swingTime, ev.level, ev.endTime, ev.level, xloc = xloc.bar_time, color = ev.bos ? color.blue : color.red, style = lineStyle, width = lineWidth)
+        // Only the latest CHoCH can still become an LS.
+        if not ev.bos
+            lastChochSeq := ev.seq
+            lastChochLabel := lbl
+            lastChochLine := ln
+    // Internal structure: its breaks on drawn candles, except a break of a
+    // main swing.
+    for ev in chartInternal.newLs
+        if ev.seq == internalChochSeq
+            label.delete(internalChochLabel)
+            line.delete(internalChochLine)
+            internalChochSeq := -1
+            if showInternal and bar_index >= drawFrom
+                [ln, lbl] = internalBreak(ev, "LS")
+                internalLines.push(ln)
+                internalLabels.push(lbl)
+                internalSides.push(ev.dir)
+                internalSwingTimes.push(ev.swingTime)
+    for ev in chartInternal.newEvents
+        line ln = na
+        label lbl = na
+        if showInternal and bar_index >= drawFrom and not isMainSwing(ev.dir, ev.swingTime)
+            [ln2, lbl2] = internalBreak(ev, ev.bos ? "BOS" : "CHoCH")
+            ln := ln2
+            lbl := lbl2
+            internalLines.push(ln2)
+            internalLabels.push(lbl2)
+            internalSides.push(ev.dir)
+            internalSwingTimes.push(ev.swingTime)
+        if not ev.bos
+            internalChochSeq := na(lbl) ? -1 : ev.seq
+            internalChochLabel := lbl
+            internalChochLine := ln
+    while internalSides.size() > MAX_INTERNAL_KEPT
+        internalLines.shift()
+        internalLabels.shift()
+        internalSides.shift()
+        internalSwingTimes.shift()
+
+var line lastHighLine = na
+var line lastLowLine = na
+var line strongWeakHighLine = na
+var line strongWeakLowLine = na
+var label strongWeakHighLabel = na
+var label strongWeakLowLabel = na
+if barstate.islast
+    line.delete(lastHighLine)
+    line.delete(lastLowLine)
+    line.delete(strongWeakHighLine)
+    line.delete(strongWeakLowLine)
+    label.delete(strongWeakHighLabel)
+    label.delete(strongWeakLowLabel)
+    // Strong/Weak High/Low: dashed lines to 20 candles right of the latest
+    // candle with their names just right of the line ends. In a bullish trend
+    // the protected low is the Strong Low and the running high since the BOS
+    // the Weak High (bearish mirrors this); a range shows its high and low.
+    int rightTime = time + 20 * chartSeconds * 1000
+    int tr0 = chartEngine.trend
+    float hiLevel = tr0 > 0 ? chartEngine.trail : tr0 < 0 ? chartEngine.protectedLevel : chartEngine.rh
+    int hiTime = tr0 > 0 ? chartEngine.trailTime : tr0 < 0 ? chartEngine.protectedTime : chartEngine.rhTime
+    string hiName = tr0 > 0 ? "Weak High" : tr0 < 0 ? "Strong High" : "Range High"
+    float loLevel = tr0 < 0 ? chartEngine.trail : tr0 > 0 ? chartEngine.protectedLevel : chartEngine.rl
+    int loTime = tr0 < 0 ? chartEngine.trailTime : tr0 > 0 ? chartEngine.protectedTime : chartEngine.rlTime
+    string loName = tr0 < 0 ? "Weak Low" : tr0 > 0 ? "Strong Low" : "Range Low"
+    if showStrongWeak and not na(hiLevel)
+        strongWeakHighLine := line.new(hiTime, hiLevel, rightTime, hiLevel, xloc = xloc.bar_time, color = HIGH_LABEL_COLOR, style = line.style_dashed, width = 1)
+        strongWeakHighLabel := label.new(rightTime, hiLevel, hiName, xloc = xloc.bar_time, yloc = yloc.price, color = color.new(color.white, 100), style = label.style_label_left, textcolor = HIGH_LABEL_COLOR, size = labelSize)
+    if showStrongWeak and not na(loLevel)
+        strongWeakLowLine := line.new(loTime, loLevel, rightTime, loLevel, xloc = xloc.bar_time, color = LOW_LABEL_COLOR, style = line.style_dashed, width = 1)
+        strongWeakLowLabel := label.new(rightTime, loLevel, loName, xloc = xloc.bar_time, yloc = yloc.price, color = color.new(color.white, 100), style = label.style_label_left, textcolor = LOW_LABEL_COLOR, size = labelSize)
+    if showSwingPoints and not na(chartEngine.lastHigh)
+        lastHighLine := line.new(chartEngine.lastHighTime, chartEngine.lastHigh, time, chartEngine.lastHigh, xloc = xloc.bar_time, color = HIGH_LABEL_COLOR, style = line.style_dotted, width = 1)
+    if showSwingPoints and not na(chartEngine.lastLow)
+        lastLowLine := line.new(chartEngine.lastLowTime, chartEngine.lastLow, time, chartEngine.lastLow, xloc = xloc.bar_time, color = LOW_LABEL_COLOR, style = line.style_dotted, width = 1)
+
+plot(useHtfMa and showHtfMaLine ? hMa : na, "HTF MA", color = htfMaColor, linewidth = 2)
+plot(useMtfMa and showMtfMaLine ? mtfMaValue : na, "MTF MA", color = mtfMaColor, linewidth = 2)
+
+// ------------------------------------------------------- trend breakdown
+// A timeframe's trend as its request returned it.
+type TfView
+    int dir
+    int prevTrend
+    float protectedLevel
+    float target
+    float trail
+    float rh
+    float rl
+    float lastHigh
+    int highKind
+    float prevHigh
+    float lastLow
+    int lowKind
+    float prevLow
+    int latestCode
+    float latestLevel
+    // Two swings on each side, for the progressive structure Market
+    // Tradability can require.
+    bool haveHighs = false
+    bool haveLows = false
+
+newView(int d, int pt, float prot, float tgt, float trl, float rh, float rl, float hp, int hk, float ph, float lp, int lk, float pl, int lc, float llv) =>
+    TfView.new(nz(d), nz(pt), prot, tgt, trl, rh, rl, hp, nz(hk), ph, lp, nz(lk), pl, nz(lc), llv, not na(hp) and not na(ph), not na(lp) and not na(pl))
+
+htfView = newView(hDir, hPrev, hProt, hTarget, hTrail, hRh, hRl, hLastHigh, hHighKind, hPrevHigh, hLastLow, hLowKind, hPrevLow, hLatest, hLatestLv)
+mtfView = newView(mDir, mPrev, mProt, mTarget, mTrail, mRh, mRl, mLastHigh, mHighKind, mPrevHigh, mLastLow, mLowKind, mPrevLow, mLatest, mLatestLv)
+ltfView = newView(lDir, lPrev, lProt, lTarget, lTrail, lRh, lRl, lLastHigh, lHighKind, lPrevHigh, lLastLow, lLowKind, lPrevLow, lLatest, lLatestLv)
+
+// The Internal Structure of a trend timeframe: its trend and latest break.
+type InternalView
+    int trend
+    int latestCode
+    float level
+
+htfInternal = InternalView.new(nz(hInTrend), nz(hInLatest), hInLevel)
+mtfInternal = InternalView.new(nz(mInTrend), nz(mInLatest), mInLevel)
+ltfInternal = InternalView.new(nz(lInTrend), nz(lInLatest), lInLevel)
+
+biasDirection(TfView v) =>
+    v.dir
+
+trendName(int d) =>
+    d > 0 ? "Bullish" : d < 0 ? "Bearish" : "Range"
+
+biasText(TfView v) =>
+    trendName(v.dir)
+
+priceText(float p) =>
+    str.tostring(p, format.mintick)
+
+// A break code's name (see eventCode).
+breakName(int code) =>
+    code == 1 ? "bull BOS" : code == 2 ? "bear BOS" : code == 3 ? "bull CHoCH" : code == 4 ? "bear CHoCH" : code == 5 ? "bull LS" : "bear LS"
+
+breakKind(int code) =>
+    code == 1 or code == 2 ? "BOS" : code == 3 or code == 4 ? "CHoCH" : "LS"
+
+trendWord(int d) =>
+    d > 0 ? "bullish" : "bearish"
+
+// What to do on one timeframe's trend: one action and the levels that decide
+// it.
+recommendationText(TfView v) =>
+    string s = ""
+    if v.dir != 0
+        bool up = v.dir > 0
+        s := up ? "Look for buys on pullbacks while price holds above the protected low " + priceText(v.protectedLevel) : "Look for sells on pullbacks while price holds below the protected high " + priceText(v.protectedLevel)
+        if not na(v.target)
+            s := s + "; a close " + (up ? "above the weak high " : "below the weak low ") + priceText(v.target) + " continues the trend"
+        s := s + "."
+    else if na(v.rh) and na(v.rl)
+        s := "Stand aside until the first swings form and price closes beyond one."
+    else
+        s := "Stand aside"
+        if not na(v.rh) and not na(v.rl)
+            s := s + " or trade only the range edges (" + priceText(v.rl) + " to " + priceText(v.rh) + ")"
+        if not na(v.rh)
+            s := s + "; a close above " + priceText(v.rh) + (v.prevTrend > 0 ? " resumes the uptrend" : " starts an uptrend")
+        if not na(v.rl)
+            s := s + "; a close below " + priceText(v.rl) + (v.prevTrend < 0 ? " resumes the downtrend" : " starts a downtrend")
+        if na(v.rl)
+            s := s + "; a downtrend needs a swing low first, then a close below it"
+        if na(v.rh)
+            s := s + "; an uptrend needs a swing high first, then a close above it"
+        s := s + "."
+    s
+
+// The internal structure's dashboard output: its trend and latest break.
+internalTrendText(InternalView iv) =>
+    trendName(iv.trend) + (iv.latestCode > 0 ? " (" + breakKind(iv.latestCode) + ")" : "")
+
+// How the internal structure relates to the timeframe's Market Trend.
+internalAgreementText(InternalView iv, TfView v, string name) =>
+    string s = ""
+    if v.dir == 0
+        s := "The " + name + " Market Trend is a range; the internal structure is " + (iv.trend == 0 ? "a range too." : trendWord(iv.trend) + ".")
+    else if iv.trend == v.dir
+        s := "Agrees with the " + name + " Market Trend."
+    else if iv.trend == 0
+        s := "A range inside the " + trendWord(v.dir) + " " + name + " trend (a pause while the protected level holds)."
+    else
+        s := "Opposes the " + name + " Market Trend: a " + trendWord(iv.trend) + " move inside the " + trendWord(v.dir) + " trend (a pullback while the protected level holds)."
+    s
+
+internalTooltip(InternalView iv, TfView v, string name, float size) =>
+    string t = "Internal structure (" + str.tostring(size * internalRatio, "0.00") + " ATR swings, " + str.tostring(internalRatio, "0.00") + " of the " + name + " swing size)\nInternal trend: " + trendName(iv.trend)
+    if iv.latestCode > 0
+        t := t + " since a " + breakName(iv.latestCode) + " through " + priceText(iv.level)
+    t + "\n" + internalAgreementText(iv, v, name)
+
+// Strong/Weak High/Low of a timeframe: in a trend the protected level is
+// Strong and the trend's running extreme since its BOS Weak; a range has its
+// high and low.
+strongWeakText(TfView v) =>
+    string s = ""
+    if v.dir > 0
+        s := "Strong Low " + priceText(v.protectedLevel) + (na(v.trail) ? "" : " | Weak High " + priceText(v.trail))
+    else if v.dir < 0
+        s := "Strong High " + priceText(v.protectedLevel) + (na(v.trail) ? "" : " | Weak Low " + priceText(v.trail))
+    else
+        s := (na(v.rh) ? "no range high yet" : "Range High " + priceText(v.rh)) + " | " + (na(v.rl) ? "no range low yet" : "Range Low " + priceText(v.rl))
+    s
+
+// Why a timeframe reads its trend: the break that set it.
+trendWhyText(TfView v) =>
+    string s = "no trend yet: a close beyond the first swings sets it"
+    if v.dir != 0 and v.latestCode > 0
+        s := "a " + trendWord(v.dir) + " BOS through " + priceText(v.latestLevel) + "; the protected " + (v.dir > 0 ? "low " : "high ") + priceText(v.protectedLevel) + " holds"
+    else if v.prevTrend != 0 and v.latestCode > 0
+        s := "the " + trendWord(v.prevTrend) + " trend's protected " + (v.prevTrend > 0 ? "low " : "high ") + priceText(v.latestLevel) + " broke (a " + trendWord(-v.prevTrend) + " CHoCH)"
+    s
+
+// The latest swing on each side: "HH 1.2345 | HL 1.2300".
+latestSwingsText(TfView v) =>
+    string hi = na(v.lastHigh) ? "no swing high yet" : (v.highKind == 0 ? "first high " : v.highKind > 0 ? "HH " : "LH ") + priceText(v.lastHigh)
+    string lo = na(v.lastLow) ? "no swing low yet" : (v.lowKind == 0 ? "first low " : v.lowKind > 0 ? "LL " : "HL ") + priceText(v.lastLow)
+    hi + " | " + lo
+
+breakdownText(TfView v) =>
+    "Current Trend: " + biasText(v) + "\nWhy: " + trendWhyText(v) + "\nLatest Swings: " + latestSwingsText(v) + "\nStrong/Weak: " + strongWeakText(v) + "\nTrade Recommendations: " + recommendationText(v)
+
+tfName(string tf) =>
+    int secs = timeframe.in_seconds(tf)
+    string s = ""
+    if secs < 60
+        s := str.tostring(secs) + "S"
+    else if secs < 3600
+        s := "M" + str.tostring(int(secs / 60))
+    else if secs < 86400
+        s := "H" + str.tostring(int(secs / 3600))
+    else if secs < 604800
+        s := "D" + str.tostring(int(secs / 86400))
+    else if secs < 2419200
+        s := "W" + str.tostring(int(secs / 604800))
+    else
+        s := "MN" + str.tostring(int(math.round(secs / 2592000)))
+    s
+
+// "H4", "H4 and H1" or "H4, H1 and M15": the selected trend timeframes.
+trendTimeframesText() =>
+    array<string> names = array.new<string>()
+    if useHtf
+        names.push(tfName(htfTf))
+    if useMtf
+        names.push(tfName(mtfTf))
+    if useLtf
+        names.push(tfName(ltfTf))
+    string r = ""
+    int count = names.size()
+    if count > 0
+        for i = 0 to count - 1
+            r := r + (i == 0 ? "" : i == count - 1 ? " and " : ", ") + names.get(i)
+    r
+
+// Why a timeframe has no trend: a range, and how it came about.
+rangeText(string name, TfView v) =>
+    v.prevTrend == 0 ? name + " has no trend yet (no close beyond its first swings)." : name + " is in a range: its " + trendWord(v.prevTrend) + " trend's protected " + (v.prevTrend > 0 ? "low" : "high") + " broke (a " + trendWord(-v.prevTrend) + " CHoCH)."
+
+// Timeframe names joined for a sentence: "H4", "H4 and M15".
+joinNames(array<string> names) =>
+    string r = ""
+    int count = names.size()
+    if count > 0
+        for i = 0 to count - 1
+            r := r + (i == 0 ? "" : i == count - 1 ? " and " : ", ") + names.get(i)
+    r
+
+// "HH", "LH" or "EQH" for highs; "LL", "HL" or "EQL" for lows.
+swingTag(int side, float cur, float prev) =>
+    side > 0 ? (cur > prev ? "HH" : cur < prev ? "LH" : "EQH") : (cur < prev ? "LL" : cur > prev ? "HL" : "EQL")
+
+// 1 for a bullish progression (an HH and an HL), -1 for a bearish one (an LL
+// and an LH), 0 otherwise (see Base 2.0.mq5's SwingProgression).
+swingProgression(TfView v) =>
+    not v.haveHighs or not v.haveLows ? 0 : v.lastHigh > v.prevHigh and v.lastLow > v.prevLow ? 1 : v.lastLow < v.prevLow and v.lastHigh < v.prevHigh ? -1 : 0
+
+// "HH + HL", or what is missing.
+swingStructureText(TfView v) =>
+    (v.haveHighs ? swingTag(1, v.lastHigh, v.prevHigh) : "no two swing highs yet") + " + " + (v.haveLows ? swingTag(-1, v.lastLow, v.prevLow) : "no two swing lows yet")
+
+// The structure of a timeframe for a direction: "" when it is progressive (an
+// HH and an HL for bullish, an LL and an LH for bearish), else what is missing.
+swingProblem(TfView v, int d, string name) =>
+    string s = ""
+    if not v.haveHighs or not v.haveLows
+        s := "the " + name + " has no two swing " + (not v.haveHighs ? "highs" : "lows") + " yet"
+    else if swingProgression(v) != d
+        s := "the " + name + " swings are " + swingStructureText(v) + " (" + trendWord(d) + " needs " + (d > 0 ? "HH + HL" : "LL + LH") + ")"
+    s
+
+hurstName() =>
+    tfName(hurstTf)
+
+// About 0.5 is a random walk; above it a trending (persistent) market, below
+// it a mean-reverting one. "trending" is above the Hurst minimum, so the
+// reading agrees with Market Tradability.
+hurstWord(float h) =>
+    h > hurstMin ? "trending" : h >= 0.45 ? "random walk" : "mean-reverting"
+
+// The Hurst exponent: "" when it is above the minimum, else why not.
+hurstProblem() =>
+    string s = ""
+    if na(baseHurst)
+        s := nz(baseHurstCount) < hurstCandles ? "the Hurst exponent needs " + str.tostring(hurstCandles) + " closed " + hurstName() + " candles (" + str.tostring(nz(baseHurstCount)) + " so far)" : "the Hurst exponent is not available (the " + hurstName() + " closes do not move)"
+    else if not (baseHurst > hurstMin)
+        s := "the Hurst exponent " + str.tostring(baseHurst, "0.00") + " is not above " + str.tostring(hurstMin, "0.00") + " (" + hurstWord(baseHurst) + ")"
+    s
+
+// The HTF internal structure for a direction: "" when it is in that
+// direction, else what it is.
+internalProblem(InternalView iv, int d, string name) =>
+    iv.trend == d ? "" : "the " + name + " internal structure is " + (iv.trend == 0 ? "a range" : trendWord(iv.trend)) + ", not " + trendWord(d)
+
+// Trend Quality on the dashboard: "0.42 up".
+qualityText() =>
+    na(hQuality) ? "Not available" : str.tostring(hQuality, "0.00") + (hQualityDir > 0 ? " up" : hQualityDir < 0 ? " down" : " flat")
+
+// The HTF trend quality for a direction: "" when it is at least the minimum
+// and its net move is in that direction, else why not.
+qualityProblem(int d) =>
+    string s = ""
+    if na(hQuality)
+        s := "the " + tfName(htfTf) + " trend quality needs " + str.tostring(qualityCandles + 1) + " closed candles"
+    else if nz(hQualityDir) != d
+        s := "the last " + str.tostring(qualityCandles) + " " + tfName(htfTf) + " candles moved against the trend"
+    else if hQuality < qualityMin
+        s := "the " + tfName(htfTf) + " trend quality " + str.tostring(hQuality, "0.00") + " is below " + str.tostring(qualityMin, "0.00") + " (too choppy)"
+    s
+
+// Market Tradability (2 Tradable, 0 Not Tradable); see Base 2.0.mq5's
+// EvaluateTradability:
+//  * Tradable: the HTF trend and the trend of every selected trend timeframe
+//    are all Bullish (or all Bearish), and the HTF trend quality is at least
+//    the minimum (0.30), its net move in the trend's direction. Optionally,
+//    also (all off by default): progressive swings, HH + HL (LL + LH), on
+//    each of them; the HTF internal structure in the trend's direction; the
+//    Hurst exponent above its minimum.
+//  * Not Tradable otherwise.
+// The reason names the timeframes and every condition that fails.
+evaluateTradability(TfView htf, TfView mtf, TfView ltf, InternalView hi) =>
+    int d = htf.dir
+    int selected = (useHtf ? 1 : 0) + (useMtf ? 1 : 0) + (useLtf ? 1 : 0)
+    // The HTF and the selected timeframes, for the reasons.
+    int named = selected + (useHtf ? 0 : 1)
+    string names = useHtf ? trendTimeframesText() : tfName(htfTf) + (selected == 1 ? " and " : ", ") + trendTimeframesText()
+    int state = 0
+    string reason = ""
+    if d == 0
+        reason := rangeText(tfName(htfTf), htf)
+    else if useMtf and mtf.dir != d
+        reason := mtf.dir == 0 ? rangeText(tfName(mtfTf), mtf) : tfName(htfTf) + " is " + trendWord(d) + " but " + tfName(mtfTf) + " is " + trendWord(mtf.dir) + "."
+    else if useLtf and ltf.dir != d
+        reason := ltf.dir == 0 ? rangeText(tfName(ltfTf), ltf) : tfName(htfTf) + " is " + trendWord(d) + " but " + tfName(ltfTf) + " is " + trendWord(ltf.dir) + "."
+    else
+        array<string> problems = array.new<string>()
+        string p0 = qualityProblem(d)
+        string p1 = requireSwings ? swingProblem(htf, d, tfName(htfTf)) : ""
+        string p2 = requireSwings and useMtf ? swingProblem(mtf, d, tfName(mtfTf)) : ""
+        string p3 = requireSwings and useLtf ? swingProblem(ltf, d, tfName(ltfTf)) : ""
+        string p4 = requireInternal ? internalProblem(hi, d, tfName(htfTf)) : ""
+        string p5 = useHurst ? hurstProblem() : ""
+        for p in array.from(p0, p1, p2, p3, p4, p5)
+            if p != ""
+                problems.push(p)
+        string lead = names + (named == 1 ? " is " : named == 2 ? " are both " : " are all ") + trendWord(d)
+        if problems.size() == 0
+            state := 2
+            reason := lead + " and the " + tfName(htfTf) + " trend quality " + str.tostring(hQuality, "0.00") + " is at least " + str.tostring(qualityMin, "0.00")
+            if requireSwings
+                reason := reason + ", with " + (d > 0 ? "HH + HL" : "LL + LH")
+            if requireInternal
+                reason := reason + ", the " + tfName(htfTf) + " internal structure agrees"
+            if useHurst
+                reason := reason + ", the Hurst exponent " + str.tostring(baseHurst, "0.00") + " is above " + str.tostring(hurstMin, "0.00")
+            reason := reason + "."
+        else
+            reason := lead + ", but " + problems.join("; ") + "."
+    [state, reason]
+
+// The dashboard's recommendation: the HTF's, unless the HTF trend is held
+// back by a selected lower timeframe or by Market Tradability, which it then
+// names.
+tradeRecommendation(TfView htf, TfView mtf, TfView ltf, int tradability) =>
+    int d = htf.dir
+    string s = recommendationText(htf)
+    if tradability != 2 and d != 0
+        string action = d > 0 ? "buying" : "selling"
+        string lead = tfName(htfTf) + " is " + trendWord(d) + ", but wait for "
+        if useMtf and mtf.dir != d
+            s := lead + tfName(mtfTf) + " to turn " + trendWord(d) + " before " + action + "."
+        else if useLtf and ltf.dir != d
+            s := lead + tfName(ltfTf) + " to turn " + trendWord(d) + " before " + action + "."
+        else
+            s := lead + "Market Tradability (see Tradability Reason) before " + action + "."
+    s
+
+// Healthy Extension blocks only an overextended market. In the HTF trend
+// direction, the extension is how far the latest LTF close is beyond the
+// latest MTF swing on the other side (the swing low in a bullish trend, the
+// swing high in a bearish one), in MTF ATR (14 candles); more than
+// MAX_EXTENSION_ATR (10) is overextended. With no trend direction or no MTF
+// swing yet, or price back beyond that swing, the market is not overextended.
+// On real data the 6% of Tradable candles beyond 10 MTF ATR were followed by
+// a 1 ATR pullback before a 1 ATR move on 56% of the time (48% for the rest).
+// Returns na when there is nothing to measure.
+trendExtension(TfView htf, float ltfClose, float mtfAtr, float lastLow, bool haveLow, float lastHigh, bool haveHigh) =>
+    float ext = na
+    int d = biasDirection(htf)
+    if d != 0 and not na(mtfAtr) and mtfAtr > 0 and not na(ltfClose)
+        if d > 0 and haveLow
+            ext := (ltfClose - lastLow) / mtfAtr
+        else if d < 0 and haveHigh
+            ext := (lastHigh - ltfClose) / mtfAtr
+    ext
+
+// "4.2 H1 ATR" for the dashboard.
+extensionText(float extension) =>
+    str.tostring(extension, "0.0") + " " + tfName(mtfTf) + " ATR"
+
+passText(bool pass) =>
+    pass ? "PASS" : "BLOCKED"
+
+// Entry filters for the latest closed structure candle: the tooltip of the
+// Market Tradability row. The HTF MA filter compares the latest closed HTF
+// candle with the HTF MA, the MTF MA filter the latest closed MTF candle with
+// the MTF MA. They never change structure, trend or alerts.
+entryFilterTooltip() =>
+    bool htfLong = true
+    bool htfShort = true
+    string htfText = "off"
+    if useHtfMa
+        htfLong := HTF_MA_FULL_BODY ? (hClose > hMa and hOpen > hMa and hClose > hOpen) : hClose > hMa
+        htfShort := HTF_MA_FULL_BODY ? (hClose < hMa and hOpen < hMa and hClose < hOpen) : hClose < hMa
+        htfText := htfLong ? "long" : htfShort ? "short" : "neutral"
+    bool mtfLong = not useMtfMa
+    bool mtfShort = not useMtfMa
+    string mtfText = "off"
+    if useMtfMa
+        mtfText := "unavailable"
+        if not na(mtfMaValue) and not na(mtfMaOpen) and not na(mtfMaClose)
+            mtfLong := MTF_MA_FULL_BODY ? (mtfMaClose > mtfMaValue and mtfMaOpen > mtfMaValue and mtfMaClose > mtfMaOpen) : mtfMaClose > mtfMaValue
+            mtfShort := MTF_MA_FULL_BODY ? (mtfMaClose < mtfMaValue and mtfMaOpen < mtfMaValue and mtfMaClose < mtfMaOpen) : mtfMaClose < mtfMaValue
+            mtfText := mtfLong ? "long" : mtfShort ? "short" : "neutral"
+    bool sess = nz(hSession) == 1
+    bool adxPass = not useAdx or (not na(hAdx) and hAdx >= ADX_MINIMUM)
+    bool atrPass = true
+    if useAtr
+        atrPass := not na(hAtr) and (ATR_MODE == "Minimum" ? hAtr >= ATR_MINIMUM : ATR_MODE == "Maximum" ? hAtr <= ATR_MAXIMUM : hAtr >= ATR_MINIMUM and hAtr <= ATR_MAXIMUM)
+    bool longDir = htfLong and mtfLong and sess
+    bool shortDir = htfShort and mtfShort and sess
+    bool chochAdx = not useAdx or not ADX_BOS_AND_CHOCH or adxPass
+    string out = "Entry filters, latest closed " + tfName(htfTf) + " candle"
+    out := out + "\nBOS: long " + passText(longDir and adxPass and atrPass) + ", short " + passText(shortDir and adxPass and atrPass)
+    out := out + "\nCHoCH: long " + passText(longDir and chochAdx and atrPass) + ", short " + passText(shortDir and chochAdx and atrPass)
+    out := out + "\nHTF MA " + htfText + " | MTF MA " + mtfText + " | Session " + (useSession ? (sess ? "in" : "out") : "off")
+    out := out + "\nADX " + (useAdx ? str.tostring(hAdx, "0.0") + " " + passText(adxPass) : "off") + " | ATR " + (useAtr ? str.tostring(hAtr, format.mintick) + " " + passText(atrPass) : "off")
+    out
+
+// Optimal Conditions: every enabled requirement must pass.
+evaluateOptimal(bool biasReady, bool healthy, float extension, bool goodVolume, float volumeRatio, bool goodMomentum, float momentumRatio) =>
+    bool optimal = (not useCorrOpt or biasReady) and (not useExtOpt or healthy) and (not useVolOpt or goodVolume) and (not useMomOpt or goodMomentum)
+    string reason = ""
+    if optimal
+        reason := "All selected requirements are met"
+    else
+        if useCorrOpt and not biasReady
+            reason := "the selected timeframes do not correlate (see Tradability Reason)"
+        if useExtOpt and not healthy
+            reason := reason + (reason == "" ? "" : "; ") + "price is overextended" + (na(extension) ? "" : " (" + extensionText(extension) + " beyond the latest " + tfName(mtfTf) + " swing)")
+        if useVolOpt and not goodVolume
+            reason := reason + (reason == "" ? "" : "; ") + (volumeRatio < VOLUME_MIN_RATIO ? "volume is too low" : "volume is too high")
+        if useMomOpt and not goodMomentum
+            reason := reason + (reason == "" ? "" : "; ") + (momentumRatio < MOMENTUM_MIN_RATIO ? "momentum is too low (price is sluggish)" : "momentum is too high (price would need to be chased)")
+    [optimal, reason]
+
+// ---------------------------------------------------------------- dashboard
+dashPosition = dashPositionInput == "Top Left" ? position.top_left : dashPositionInput == "Bottom Left" ? position.bottom_left : dashPositionInput == "Bottom Right" ? position.bottom_right : position.top_right
+// Component names are black and bold, and only the outputs are coloured:
+// trends green (Bullish), red (Bearish) or grey (Range); tradability and
+// conditions green when they pass and red when they do not. No background
+// and no borders.
+DASH_TEXT_COLOR = color.black
+DASH_POSITIVE_COLOR = color.green
+DASH_NEGATIVE_COLOR = color.red
+DASH_NEUTRAL_COLOR = color.gray
+var table dash = table.new(dashPosition, 2, 24, bgcolor = color.new(color.white, 100), frame_width = 0, border_width = 0)
+
+dirColor(int d) =>
+    d > 0 ? DASH_POSITIVE_COLOR : d < 0 ? DASH_NEGATIVE_COLOR : DASH_NEUTRAL_COLOR
+
+trendColor(TfView v) =>
+    dirColor(v.dir)
+
+passColor(bool pass) =>
+    pass ? DASH_POSITIVE_COLOR : DASH_NEGATIVE_COLOR
+
+// The Swing Structure row: green for an HH and an HL, red for an LL and an LH.
+swingColor(TfView v) =>
+    dirColor(swingProgression(v))
+
+swingTooltip(TfView v) =>
+    "Latest swing high " + (v.haveHighs ? priceText(v.lastHigh) + " vs previous " + priceText(v.prevHigh) : "-") + "; latest swing low " + (v.haveLows ? priceText(v.lastLow) + " vs previous " + priceText(v.prevLow) : "-") + (requireSwings ? "\nMarket Tradability needs HH + HL (bullish) or LL + LH (bearish)." : "")
+
+// One row: the component name in bold, then its coloured output.
+dashRow(int row, string component, string output, color outputColor, string tip) =>
+    table.cell(dash, 0, row, component, text_color = DASH_TEXT_COLOR, text_halign = text.align_left, text_valign = text.align_top, text_size = size.small, tooltip = tip, text_formatting = text.format_bold)
+    table.cell(dash, 1, row, output, text_color = outputColor, text_halign = text.align_left, text_valign = text.align_top, text_size = size.small, tooltip = tip)
+
+// Long outputs (the Tradability Reason and Trade Recommendations) wrap onto
+// new lines of at most DASH_WRAP_CHARS characters, broken between words.
+DASH_WRAP_CHARS = 48
+wrapText(string s) =>
+    array<string> words = str.split(s, " ")
+    string out = ""
+    string line = ""
+    int n = words.size()
+    if n > 0
+        for i = 0 to n - 1
+            string w = words.get(i)
+            if w != ""
+                if line != "" and str.length(line) + 1 + str.length(w) > DASH_WRAP_CHARS
+                    out := out + (out == "" ? "" : "\n") + line
+                    line := ""
+                line := line + (line == "" ? "" : " ") + w
+    out + (out == "" or line == "" ? "" : "\n") + line
+
+if barstate.islast
+    [tradability, tradeReason] = evaluateTradability(htfView, mtfView, ltfView, htfInternal)
+    // The timeframes correlate whenever the market is Tradable: every
+    // selected timeframe then agrees on the direction.
+    bool correlated = tradability == 2
+    float extension = trendExtension(htfView, lClose, mAtr, mLastLow, not na(mLastLow), mLastHigh, not na(mLastHigh))
+    bool healthy = na(extension) or extension <= MAX_EXTENSION_ATR
+    float volRatio = nz(lVolRatio)
+    bool goodVolume = nz(lVolAvg) > 0 and volRatio >= VOLUME_MIN_RATIO and volRatio <= VOLUME_MAX_RATIO
+    float momRatio = nz(lMomRatio)
+    bool goodMomentum = nz(lTrAvg) > 0 and momRatio >= MOMENTUM_MIN_RATIO and momRatio <= MOMENTUM_MAX_RATIO
+    [optimal, optimalReason] = evaluateOptimal(correlated, healthy, extension, goodVolume, volRatio, goodMomentum, momRatio)
+    table.clear(dash, 0, 0, 1, 23)
+    int row = 0
+    // Each Market Trend with its Swing Structure and Internal Structure below it.
+    if useHtf
+        dashRow(row, "HTF Market Trend (" + tfName(htfTf) + "):", biasText(htfView), trendColor(htfView), breakdownText(htfView))
+        row += 1
+        dashRow(row, "Swing Structure:", swingStructureText(htfView), swingColor(htfView), swingTooltip(htfView))
+        row += 1
+        if showInternalOnDashboard
+            dashRow(row, "Internal Structure:", internalTrendText(htfInternal), dirColor(htfInternal.trend), internalTooltip(htfInternal, htfView, tfName(htfTf), htfSize))
+            row += 1
+    if useMtf
+        dashRow(row, "MTF Market Trend (" + tfName(mtfTf) + "):", biasText(mtfView), trendColor(mtfView), breakdownText(mtfView))
+        row += 1
+        dashRow(row, "Swing Structure:", swingStructureText(mtfView), swingColor(mtfView), swingTooltip(mtfView))
+        row += 1
+        if showInternalOnDashboard
+            dashRow(row, "Internal Structure:", internalTrendText(mtfInternal), dirColor(mtfInternal.trend), internalTooltip(mtfInternal, mtfView, tfName(mtfTf), mtfSize))
+            row += 1
+    if useLtf
+        dashRow(row, "LTF Market Trend (" + tfName(ltfTf) + "):", biasText(ltfView), trendColor(ltfView), breakdownText(ltfView))
+        row += 1
+        dashRow(row, "Swing Structure:", swingStructureText(ltfView), swingColor(ltfView), swingTooltip(ltfView))
+        row += 1
+        if showInternalOnDashboard
+            dashRow(row, "Internal Structure:", internalTrendText(ltfInternal), dirColor(ltfInternal.trend), internalTooltip(ltfInternal, ltfView, tfName(ltfTf), ltfSize))
+            row += 1
+    dashRow(row, "Trend Quality (" + tfName(htfTf) + "):", qualityText(), na(hQuality) or htfView.dir == 0 ? DASH_NEUTRAL_COLOR : passColor(hQuality >= qualityMin and nz(hQualityDir) == htfView.dir), "Efficiency of the last " + str.tostring(qualityCandles) + " closed " + tfName(htfTf) + " candles: the net move divided by the distance travelled close to close, from 0 (chop) to 1 (a straight line), and its direction. Market Tradability needs at least " + str.tostring(qualityMin, "0.00") + " in the trend's direction.")
+    row += 1
+    if useHurst
+        dashRow(row, "Hurst Exponent (" + hurstName() + "):", na(baseHurst) ? "Not available" : "H " + str.tostring(baseHurst, "0.00") + " (" + hurstWord(baseHurst) + ")", na(baseHurst) ? DASH_NEUTRAL_COLOR : passColor(baseHurst > hurstMin), "The last " + str.tostring(hurstCandles) + " closed " + hurstName() + " candles. Market Tradability needs H above " + str.tostring(hurstMin, "0.00") + "; about 0.5 is a random walk, above it a trending market, below it a mean-reverting one.")
+        row += 1
+    dashRow(row, "Market Tradability:", tradability == 2 ? "Tradable" : "Not Tradable", passColor(tradability == 2), entryFilterTooltip())
+    row += 1
+    dashRow(row, "Tradability Reason:", wrapText(tradeReason), DASH_TEXT_COLOR, "")
+    row += 1
+    dashRow(row, "Trade Recommendations:", wrapText(tradeRecommendation(htfView, mtfView, ltfView, tradability)), DASH_TEXT_COLOR, "")
+    row += 1
+    // Optimal Conditions only when at least one requirement is selected (none
+    // by default).
+    if useCorrOpt or useExtOpt or useVolOpt or useMomOpt
+        dashRow(row, " ", " ", DASH_TEXT_COLOR, "")
+        row += 1
+        dashRow(row, "Optimal Conditions:", optimal ? "OPTIMAL" : "NOT OPTIMAL", passColor(optimal), optimalReason)
+        row += 1
+    if useCorrOpt
+        dashRow(row, "Timeframe Correlation:", passText(correlated), passColor(correlated), optimalReason)
+        row += 1
+    if useExtOpt
+        dashRow(row, "Healthy Extension:", passText(healthy) + (na(extension) ? "" : " (" + extensionText(extension) + ")"), passColor(healthy), optimalReason)
+        row += 1
+    if useVolOpt
+        dashRow(row, "Market Volume:", passText(goodVolume) + " (" + str.tostring(volRatio, "0.00") + "x average)", passColor(goodVolume), optimalReason)
+        row += 1
+    if useMomOpt
+        dashRow(row, "Price Momentum:", passText(goodMomentum) + " (" + str.tostring(momRatio, "0.00") + "x average range)", passColor(goodMomentum), optimalReason)
+        row += 1
+
+// ------------------------------------------------------------------- alerts
+// The digits of a code, oldest first.
+codeDigits(int code) =>
+    array<int> digits = array.new<int>()
+    string raw = code > 0 ? str.tostring(code) : ""
+    int len = str.length(raw)
+    if len > 0
+        for i = 0 to len - 1
+            digits.push(int(str.tonumber(str.substring(raw, i, i + 1))))
+    digits
+
+// Structure-timeframe breaks that became known on its latest closed candle.
+eventsText(int code) =>
+    string s = ""
+    array<int> digits = codeDigits(code)
+    if digits.size() > 0
+        for i = 0 to digits.size() - 1
+            int d = digits.get(i)
+            string one = d == 5 ? "LS (the bullish CHoCH failed)" : d == 6 ? "LS (the bearish CHoCH failed)" : (d == 1 or d == 2 ? "BOS " : "CHoCH ") + (d == 1 or d == 3 ? "bullish" : "bearish")
+            s := s + (s == "" ? "" : " + ") + one
+    s
+
+int newCode = nz(hNew)
+bool newStructure = nz(hEvents) != nz(hEvents[1]) and newCode > 0
+string newCodeText = str.tostring(newCode)
+bool newBullBos = newStructure and str.contains(newCodeText, "1")
+bool newBearBos = newStructure and str.contains(newCodeText, "2")
+bool newBullChoch = newStructure and str.contains(newCodeText, "3")
+bool newBearChoch = newStructure and str.contains(newCodeText, "4")
+bool newBullLs = newStructure and str.contains(newCodeText, "5")
+bool newBearLs = newStructure and str.contains(newCodeText, "6")
+if enableAlerts and newStructure
+    alert(syminfo.ticker + " " + tfName(htfTf) + " " + eventsText(newCode), alert.freq_once_per_bar)
+alertcondition(newBullBos, "Structure TF bullish BOS", "{{ticker}}: bullish BOS on the structure timeframe")
+alertcondition(newBearBos, "Structure TF bearish BOS", "{{ticker}}: bearish BOS on the structure timeframe")
+alertcondition(newBullChoch, "Structure TF bullish CHoCH", "{{ticker}}: bullish CHoCH on the structure timeframe (the bearish trend's protected high broke)")
+alertcondition(newBearChoch, "Structure TF bearish CHoCH", "{{ticker}}: bearish CHoCH on the structure timeframe (the bullish trend's protected low broke)")
+alertcondition(newBullLs, "Structure TF LS (bullish CHoCH failed)", "{{ticker}}: a bullish CHoCH failed (LS) on the structure timeframe")
+alertcondition(newBearLs, "Structure TF LS (bearish CHoCH failed)", "{{ticker}}: a bearish CHoCH failed (LS) on the structure timeframe")
