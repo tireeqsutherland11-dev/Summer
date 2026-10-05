@@ -180,8 +180,9 @@ market structure from closed candles, draws HH/HL/LH/LL, BOS and CHoCH, and
 reports multi-timeframe tradability and market conditions. It also marks
 equal highs and lows (EQH/EQL), Strong/Weak High/Low, and a finer Internal
 Structure with its own BOS/CHoCH, and measures trend persistence with the
-Hurst exponent. It never places, modifies, or closes trades. Base 2.0 (see
-below) is a separate version with a new trend and swing engine.
+Hurst exponent. It never places, modifies, or closes trades. Base 2.0 and
+Base 3.0 (see below) are separate versions with new trend and swing engines;
+Base 3.0 reads the trend purely from market structure.
 
 ## Install and start
 
@@ -1035,6 +1036,285 @@ terminal) and Python copies:
   - 72 randomised runs with no array errors.
 - **Texts.** The Pine's Market Tradability rule and texts were compared with
   the EA's by reading them side by side.
+- **The Pine file parses** with pynescript (a syntax check only).
+
+## Base 3.0 (`Base 3.0.mq5` and `Base 3.0.pine`)
+
+Base 3.0 reads the trend purely from market structure, following a trader's
+own method: Trending, Transition and Consolidation, defined by HH/HL/LH/LL and
+by breaks of structure. The swing size is set automatically for each symbol
+and timeframe. Both files are rewritten to be as simple as possible:
+
+- 13 inputs in each file, against 63 to 65 in Base and Base 2.0;
+- no MA, session, ADX or ATR filters;
+- no Optimal Conditions, Hurst exponent or trend quality;
+- fixed colours and line styles.
+
+`Base.mq5`, `Base.pine` and both Base 2.0 files are unchanged. Base 3.0's chart
+objects use their own prefix (`BASE3_`), so it can run next to the others.
+
+### The states (bullish wording; bearish mirrors it)
+
+A break is a candle **close** beyond a swing level; a wick alone never breaks
+anything.
+
+- **Bullish Trending.** The market has broken structure upwards twice, with a
+  higher low between the breaks.
+  - A **BOS** is a close above the weak high: the highest swing high since the
+    last BOS.
+  - The **strong low** is the latest swing low (an HL).
+- **CHoCH in a trend.** A close below the strong low is a bearish **CHoCH**,
+  but the trend has not changed yet: it stays Bullish Trending (shown as
+  `Bullish Trending (CHoCH)`) until the Transition conditions are met.
+- **Bearish Transition.** After the CHoCH, before it fails, either:
+  - **A.** the pullback makes a lower high or equal high that does not go
+    higher than the last HH of the bullish trend; or
+  - **B.** two successive internal BOS follow downwards.
+- **LS (liquidity sweep).** If the market fails to transition, the CHoCH is
+  relabelled LS and the bullish trend continues, expecting a new HH. It fails
+  when either comes first:
+  - two successive internal breaks upwards (an internal CHoCH, then an
+    internal BOS); or
+  - a close above the last HH.
+
+  The sweep's low becomes the new strong low.
+- **From Transition to Trending.** A BOS (a close below the lowest swing low
+  since the CHoCH) makes it Bearish Trending: the CHoCH and this BOS are the
+  two downside breaks with a lower high between them.
+- **A Transition that fails.** A close above its own lower high (or, after B,
+  above the level the CHoCH broke):
+  - if that close is also above the old trend's last HH, the old trend
+    resumes with a BOS;
+  - otherwise the market is in **Consolidation**, and that break waits for
+    its own Transition conditions.
+- **Consolidation.** Neither the Trending nor the Transition conditions were
+  met within the last 5 swings:
+  - a trend or Transition with no BOS for 5 swings becomes Consolidation;
+  - its **range** is the highest high and lowest low of the last 5 swings;
+  - a close beyond the range is a break that waits, like a CHoCH. Its
+    Transition needs a pullback that holds the latest swing on the other
+    side, or two internal BOS.
+
+EQH/EQL (within 0.2 ATR of the previous swing on its side) are labels, and
+count as holding for condition A.
+
+### Amendments to the rules, and why
+
+1. **The CHoCH counts as the first of the two breaks.** A trend is a CHoCH (or
+   a break out of consolidation), a higher low, then a BOS. Requiring two
+   more BOS after the Transition would confirm every trend two swings later.
+2. **An LS needs the internal structure to turn: an internal CHoCH and then
+   an internal BOS.** A single internal break is not enough. The pullback
+   that makes the lower high always breaks the internal structure upwards
+   once, so a single break would turn almost every CHoCH into an LS before
+   its lower high could form. A "close back through the broken level" rule
+   was also tried. It wrongly rejected clean trends, whose pullbacks often
+   dip back below the level they broke.
+3. **Transition condition B is measured on the internal structure.** Two BOS
+   on the main swings would already be Trending. On the internal swings,
+   they catch a steady reversal with small pullbacks without waiting for a
+   main swing.
+4. **"The last LL" when leaving consolidation is the latest swing low.**
+   Using the lowest low of the last 5 swings was tested; it made no
+   difference.
+
+### Automatic swing sensitivity
+
+A swing is confirmed by the first close one swing size back from the leg's
+extreme. The swing size is K times the 14-candle ATR. K comes from the
+symbol's own movement over the last 1,000 closed candles of each timeframe:
+
+    VR = sum of squared 20-candle moves / (20 x sum of squared 1-candle moves)
+    K  = 0.8 / sqrt(VR - 1), kept between 0.5 and 2.0 (2.0 when VR <= 1)
+
+- VR (the variance ratio) is about 1 when the closes wander at random, and
+  higher when moves persist.
+- The more of a symbol's movement is trend rather than noise, the smaller a
+  swing needs to be. A clean, trending market gets detailed swings; a noisy
+  one gets smoother swings.
+- Internal swings use half the swing size.
+- The size in use is shown in each Market Trend tooltip.
+
+On the benchmark markets it chose about:
+- 0.55 ATR on H4;
+- 1.1 ATR on H1;
+- 1.6 ATR on M15.
+
+The best fixed sizes there, by accuracy, are 0.5, 1.0 and 1.5. Its accuracy
+is within 0.4 to 3 points of the best fixed size on each timeframe. No one
+size suits all three, so on average it beats every single fixed size: 53.2%
+against at most 51.9%. On markets with a different character (clean,
+swingy, spiky, mixed), it also came within 0.4 to 3 points of the best fixed
+size on each.
+
+`Swing Sensitivity` can scale it: **Auto** (default), **More Detailed** (0.7
+times) or **Smoother** (1.4 times).
+
+### Inputs
+
+| Group | Inputs |
+|---|---|
+| Timeframes | HTF (H1), MTF (M30), LTF (M15), Use MTF, Use LTF |
+| Structure | Swing Sensitivity (Auto), Bars To Process (100) |
+| Display | Show HH/HL/LH/LL, Show BOS/CHoCH/LS, Show Internal Structure, Show Strong/Weak High/Low |
+| Alerts | EA: popup and push notifications. Pine: one alert switch, and the dashboard position |
+
+### Dashboard
+
+For the HTF, and for the MTF and LTF when selected:
+
+- **Market Trend:** Bullish/Bearish Trending, Bullish/Bearish Transition or
+  Consolidation, with `(CHoCH)` while a CHoCH waits. Its tooltip gives:
+  - why it reads that state;
+  - the latest swings;
+  - Strong/Weak High/Low;
+  - the swing size;
+  - what a waiting CHoCH needs.
+- **Swing Structure:** the latest swing high and swing low (for example
+  `HH + HL`).
+- **Internal Structure:** the latest internal break.
+
+Then:
+
+- **Market Tradability:** Tradable when the HTF is Trending and every
+  selected MTF/LTF is Trending or in Transition the same way.
+- **Tradability Reason.**
+
+On the chart:
+
+- swing labels;
+- BOS (blue), CHoCH (red) and LS (deep yellow) lines with centred captions;
+- dashed internal BOS/CHoCH;
+- Strong/Weak High/Low (Range High/Low in Consolidation).
+
+Alerts cover the HTF's BOS, CHoCH, LS and changes of state.
+
+### Benchmark against Base and Base 2.0
+
+The benchmark used the same generated markets as Base 2.0's (20 per
+timeframe, with a known trend at every candle). The measures are the same.
+Base 3.0's Market Trend counts a Transition as a direction, so it is compared
+with old Base including its transitions.
+
+**Market Trend**
+
+| | Accuracy | Trend right | Wrong way | Flat called trend | Flips | Lag | Missed | Precision | Edge |
+|---|---|---|---|---|---|---|---|---|---|
+| H1 Base | 52.0% | 81.3% | 16.6% | 95.0% | 2.7 | 13 | 1 of 154 | 51.7% | 0.071 |
+| H1 Base 2.0 | 58.8% | 73.1% | 8.9% | 64.2% | 0.9 | 27 | 11 of 154 | 59.9% | 0.096 |
+| H1 Base 3.0 | 54.3% | 70.9% | 12.4% | 72.4% | 3.2 | 11 | 4 of 154 | 55.2% | 0.082 |
+| M15 Base | 45.1% | 73.5% | 23.7% | 94.7% | 2.6 | 7 | 0 of 57 | 44.7% | 0.032 |
+| M15 Base 2.0 | 54.7% | 68.4% | 10.3% | 64.6% | 1.1 | 31 | 2 of 57 | 54.9% | 0.049 |
+| M15 Base 3.0 | 49.7% | 69.1% | 14.6% | 77.5% | 1.3 | 24 | 0 of 57 | 49.8% | 0.044 |
+| H4 Base | 41.1% | 65.3% | 33.1% | 96.9% | 2.5 | 8 | 54 of 426 | 40.8% | 0.053 |
+| H4 Base 2.0 | 44.4% | 56.6% | 18.8% | 74.8% | 0.7 | 12 | 99 of 426 | 46.1% | 0.097 |
+| H4 Base 3.0 | 55.5% | 72.0% | 11.6% | 70.5% | 5.4 | 6 | 3 of 426 | 56.1% | 0.154 |
+
+**Trending only** (Base 3.0's Market Tradability with only the HTF, against
+Base 2.0's)
+
+| | Accuracy | Trend right | Wrong way | Flat called trend | Lag | Missed | Precision | Edge |
+|---|---|---|---|---|---|---|---|---|
+| H1 Base 2.0 Tradable | 62.7% | 48.7% | 1.1% | 15.0% | 31 | 13 of 154 | 82.4% | 0.159 |
+| H1 Base 3.0 Trending | 55.3% | 62.2% | 9.4% | 55.8% | 20 | 6 of 154 | 58.4% | 0.090 |
+| M15 Base 2.0 Tradable | 52.6% | 29.9% | 1.5% | 15.5% | 37 | 2 of 57 | 70.4% | 0.075 |
+| M15 Base 3.0 Trending | 52.0% | 62.6% | 11.1% | 63.0% | 33 | 0 of 57 | 52.8% | 0.049 |
+| H4 Base 2.0 Tradable | 56.0% | 44.2% | 4.3% | 25.5% | 20 | 107 of 426 | 68.3% | 0.203 |
+| H4 Base 3.0 Trending | 57.6% | 64.8% | 9.2% | 53.7% | 9 | 10 of 426 | 59.9% | 0.166 |
+
+What this shows:
+
+- **It is not late.** Base 3.0 calls a new trend sooner than Base 2.0 on
+  every timeframe:
+  - H1: 11 candles against 27;
+  - M15: 24 against 31;
+  - H4: 6 against 12.
+
+  It also misses far fewer trends (3 of 426 on H4, against 99).
+- **Against old Base:**
+  - it is more accurate on every timeframe;
+  - it has a quarter to two thirds fewer wrong-way calls;
+  - it calls much less of a flat market a trend;
+  - it is about as quick, except on M15 (24 candles against 7).
+- **The cost is flat markets.** Structure alone cannot tell a driftless
+  market from a trend: in a random walk, breaks followed by higher lows
+  happen by chance.
+  - Base 3.0 calls more flat candles a trend than Base 2.0 does, and flips
+    more often.
+  - Its overall accuracy is below Base 2.0's on H1 and M15, and above it on
+    H4.
+  - Market Tradability is far less precise than Base 2.0's (58% against 82%
+    on H1), whose trend-quality filter is not structure.
+- These are generated markets. A comparison on real prices needs candles
+  exported from MT5 (**View > Symbols > Bars**, then **Export Bars**).
+
+### Install
+
+- **MetaTrader 5.** Copy `Base 3.0.mq5` into `MQL5/Experts`, compile it in
+  MetaEditor, and attach **Base 3.0** to a chart.
+- **TradingView.** Paste `Base 3.0.pine` into the Pine Editor, save it, and
+  click **Add to chart**.
+
+The Pine indicator differs from the EA in these ways:
+- **History.** It reads all loaded history. The EA replays three times
+  `Bars To Process` (plus the 1,020 closes the swing size needs), so the
+  state at the left edge of a short history can differ until both have seen
+  the same swings.
+- **Scan limit.** It looks back at most 4,999 candles for a level or a
+  line's end.
+- **Dashboard position.** Its corner is an input.
+- **Alerts.** One switch sends alert() messages, which read like the EA's.
+  Eight alert conditions are also available.
+
+### How it was checked
+
+Nothing in Base 3.0 has been compiled in MetaEditor or run in TradingView.
+The checks used the test harness (MQL5 compiled as C++ against a mock
+terminal) and Python copies:
+
+- **The rules.** A Python reference engine was written from the rules above.
+  Six hand-built price paths, one for each rule, give the expected state
+  sequence in the reference and in the EA:
+  - a trend: a break, a higher low, a BOS;
+  - a CHoCH that fails (LS), with the trend going on to a new HH;
+  - a CHoCH, a lower high (Transition), then a BOS (Trending);
+  - a CHoCH, then two internal BOS (Transition by B);
+  - a Transition that breaks its lower high (Consolidation, then a new
+    Transition);
+  - five swings without a BOS (Consolidation), with its range drawn.
+- **The EA against the reference.** On 12 generated markets the EA matched
+  the reference with no differences in:
+  - 23,028 swing sizes;
+  - 4,934 swings;
+  - 1,677 breaks (145 of them LS);
+  - 3,244 internal breaks;
+  - 7,596 state snapshots;
+  - 736 replays of a 300-candle window.
+- **The Pine engine.** A line-by-line Python copy of it (one candle at a
+  time, with its scan limit, stored ATRs and swing-size series) matched the
+  EA on the same markets with no differences.
+- **The tests catch mistakes.** Planting a mistake made the comparisons
+  fail:
+  - three internal BOS instead of two;
+  - six swings instead of five;
+  - a 1% change in the swing-size constant;
+  - another EQH/EQL threshold;
+  - no internal failure rule;
+  - no wait for a later close;
+  - a wrong level after B;
+  - a range of every swing.
+- **Independent checks.** Separately written code confirmed:
+  - every swing (1,963) is confirmed by a close one swing size back and is
+    its leg's extreme;
+  - every break (722) closes beyond a swing level;
+  - every start of a trend (135) comes with a BOS.
+- **Unit tests.** They passed for:
+  - every Market Tradability reason;
+  - the chart objects and the dashboard rows;
+  - the alerts (breaks and state changes);
+  - recovery after a timeframe change;
+  - no extra work on repeated ticks;
+  - 72 randomised runs with no array errors.
 - **The Pine file parses** with pynescript (a syntax check only).
 
 ## Fib Base for TradingView (`Fib Base.pine`)
