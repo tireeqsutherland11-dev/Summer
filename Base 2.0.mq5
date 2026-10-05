@@ -1,310 +1,222 @@
 #property copyright "Market Trend Analyser conversion"
-#property version   "3.00"
+#property version   "3.10"
 #property strict
-#property description "BASE 2.0: market structure from ATR-sized swings and a three-state trend (Bullish, Bearish, Range) held by one protected level."
+#property description "BASE 2.0: the trend purely from market structure - Trending, Transition or Consolidation - with BOS, CHoCH and LS, and swing sensitivity that carries across symbols."
 #property description "Signal/visualisation EA only; it contains no trading rules."
 
-enum BASE_MA_TYPE { BASE_SMA=0, BASE_EMA=1 };
-enum BASE_MA_FILTER_MODE { BASE_PRICE_ABOVE_BELOW=0, BASE_FULL_BODY_CLOSE=1 };
-enum BASE_SESSION { BASE_NEW_YORK=0, BASE_LONDON=1, BASE_TOKYO=2, BASE_SYDNEY=3, BASE_CUSTOM=4, BASE_24X7=5 };
-enum BASE_ADX_SCOPE { BASE_BOS_ONLY=0, BASE_BOS_AND_CHOCH=1 };
-enum BASE_ATR_MODE { BASE_ATR_MINIMUM=0, BASE_ATR_MAXIMUM=1, BASE_ATR_RANGE=2 };
+// How the swing size is set (see SwingSize): Auto from each symbol's own
+// movement, or Fixed in ATR.  The Swing Sensitivity levels scale either.
+enum BASE_SWING_MODE { BASE_AUTO_SIZE=0, BASE_FIXED_ATR=1 };
 enum BASE_LABEL_SIZE { BASE_TINY=7, BASE_SMALL=9, BASE_NORMAL=11, BASE_LARGE=14 };
-// Market Tradability (see EvaluateTradability).
-enum BASE_TRADABILITY { BASE_NOT_TRADABLE=0, BASE_TRADABLE=2 };
-// The timeframe the Hurst exponent is measured on (see HurstOf).
-enum BASE_HURST_TF { BASE_HURST_HTF=0, BASE_HURST_MTF=1, BASE_HURST_LTF=2 };
 
 input group "Timeframes"
-input ENUM_TIMEFRAMES Structure_Timeframe=PERIOD_H1; // HTF
+input ENUM_TIMEFRAMES Structure_Timeframe=PERIOD_H1; // HTF (the main trend)
 input ENUM_TIMEFRAMES Setup_Entry_Timeframe=PERIOD_M30; // MTF
 input ENUM_TIMEFRAMES LTF_Timeframe=PERIOD_M15; // LTF
+input bool Use_MTF=false; // Use MTF (dashboard and Market Tradability)
+input bool Use_LTF=false; // Use LTF (dashboard and Market Tradability)
 
-input group "Trend Analysis Timeframes"
-input bool Use_HTF=true; // Use HTF
-input bool Use_MTF=false; // Use MTF
-input bool Use_LTF=false; // Use LTF
+input group "Swing Sensitivity"
+input BASE_SWING_MODE Swing_Size_Mode=BASE_AUTO_SIZE; // Swing Size (Auto: set per symbol, Fixed: in ATR)
+input int HTF_Swing_Level=10; // HTF Swing Sensitivity (1-20; 10 = base size, each step about 10%)
+input int MTF_Swing_Level=10; // MTF Swing Sensitivity (1-20)
+input int LTF_Swing_Level=10; // LTF Swing Sensitivity (1-20)
+input double Internal_Swing_Ratio=0.5; // Internal Swing Size (fraction of the swing size, 0.2-0.9)
 
-input group "Trend Quality (Market Tradability)"
+input group "Market Tradability"
 input int Trend_Quality_Candles=30; // Trend Quality Window (closed HTF candles, 5-200)
 input double Trend_Quality_Minimum=0.30; // Tradable When The HTF Efficiency Is At Least (0-1)
-
-input group "Market Tradability Extras (off by default)"
 input bool Require_Progressive_Swings=false; // Also Require HH + HL (LL + LH)
 input bool Require_Internal_Agreement=false; // Also Require The HTF Internal Structure To Agree
-input bool Use_Hurst_Filter=false; // Also Require The Hurst Exponent Above Its Minimum
 
-input group "Hurst Exponent (Trend Persistence)"
-input BASE_HURST_TF Hurst_Timeframe=BASE_HURST_HTF; // Hurst Timeframe (HTF, MTF or LTF)
-input int Hurst_Candles=100; // Hurst Window (closed candles, 50-400)
-input double Hurst_Minimum=0.50; // Hurst Minimum (0.5 = random walk)
-
-input group "Structure Bar Processing"
-input int Bars_To_Process=100;
-
-input group "Swing Detection (ATR swing size)"
-input int HTF_Swing_Level=3; // HTF Swing Size (1-10: 0.5 to 5 ATR, 3 = 1 ATR)
-input int MTF_Swing_Level=5; // MTF Swing Size (1-10: 0.5 to 5 ATR, 5 = 1.5 ATR)
-input int LTF_Swing_Level=7; // LTF Swing Size (1-10: 0.5 to 5 ATR, 7 = 2.5 ATR)
-input bool Show_Swing_Points=true;
-input bool Show_Strong_Weak_High_Low=true; // Show Strong/Weak High/Low (Range High/Low in a range)
-
-input group "Internal Structure"
+input group "Display"
+input int Bars_To_Process=100; // Bars To Process (HTF candles drawn, at least 100)
+input bool Show_Swing_Points=true; // Show HH / HL / LH / LL
+input bool Show_Structure_Breaks=true; // Show BOS / CHoCH / LS
 input bool Show_Internal_Structure=true; // Show Internal Structure
 input bool Show_Internal_On_Dashboard=true; // Show Internal Structure On Dashboard
-input double Internal_Swing_Ratio=0.5; // Internal Swing Size (fraction of the swing size, 0.2-0.9)
-input color Internal_Bullish_Color=C'8,153,129'; // Internal Bullish Color
-input color Internal_Bearish_Color=C'242,54,69'; // Internal Bearish Color
-
-input group "BOS Display"
-input bool Show_BOS_Labels=true;
-input color Bullish_BOS_Color=clrBlue;
-input color Bearish_BOS_Color=clrBlue;
-
-input group "CHoCH Display"
-input bool Show_CHoCH_Labels=true;
-input color Bullish_CHoCH_Color=clrRed;
-input color Bearish_CHoCH_Color=clrRed;
-
-input group "LS Display"
-input bool Show_LS_Labels=true;
-input color Bullish_LS_Color=C'229,184,0'; // Bullish LS Color (a failed bullish CHoCH)
-input color Bearish_LS_Color=C'229,184,0'; // Bearish LS Color (a failed bearish CHoCH)
-
-input group "Labels and Lines"
-input BASE_LABEL_SIZE Label_Size=BASE_SMALL;
-input bool Show_Structure_Lines=true;
-input ENUM_LINE_STYLE Line_Style=STYLE_SOLID;
-input int Line_Width=2;
-
-input group "EQH/EQL"
-input bool Show_Equal_Highs_Lows=true; // Show EQH/EQL
-input double Equal_Highs_Lows_Threshold=0.2; // EQH/EQL Threshold (ATR, 0 = off)
-
-input group "MA Filter (HTF)"
-input bool Use_HTF_MA_Filter=true;
-input int HTF_MA_Length=50;
-input BASE_MA_TYPE HTF_MA_Type=BASE_EMA; // MA Type
-input bool Show_HTF_MA_Line=false;
-input color HTF_MA_Color=clrBlue;
-
-input group "MA Filter (MTF)"
-input bool Use_MTF_MA_Filter=true;
-input int MTF_MA_Length=100;
-input BASE_MA_TYPE MTF_MA_Type=BASE_EMA; // MA Type
-input bool Show_MTF_MA_Line=false;
-input color MTF_MA_Color=clrOrange;
-
-input group "Session Filter"
-input bool Use_Session_Filter=false;
-input BASE_SESSION Session_Preset=BASE_NEW_YORK;
-input string Custom_Session="0930-1600";
-input int Custom_UTC_Offset_Minutes=0;
-input int Server_UTC_Offset_Minutes=0;
-
-input group "ADX Filter"
-input bool Use_ADX_Filter=true;
-input int ADX_Length=14;
-
-input group "ATR Filter"
-input bool Use_ATR_Filter=true;
-input int ATR_Length=14;
-
-input group "Optimal Conditions"
-input bool Use_Timeframe_Correlation_For_Optimal=false;
-input bool Use_Healthy_Extension_For_Optimal=false;
-input bool Use_Market_Volume_For_Optimal=false;
-input bool Use_Price_Momentum_For_Optimal=false;
+input bool Show_Strong_Weak_High_Low=true; // Show Strong / Weak High / Low
+input BASE_LABEL_SIZE Label_Size=BASE_SMALL; // Label Size
 
 input group "Alerts"
-input bool Enable_Popup_Alerts=false;
-input bool Enable_Push_Notifications=false;
+input bool Enable_Popup_Alerts=false; // Popup alerts (HTF breaks and state changes)
+input bool Enable_Push_Notifications=false; // Push notifications
 
-// Internal tuning values are deliberately kept out of the Inputs dialog. The
-// streamlined UI exposes only settings that are useful during normal use.
-const BASE_MA_FILTER_MODE HTF_MA_Filter_Mode=BASE_PRICE_ABOVE_BELOW;
-const BASE_MA_FILTER_MODE MTF_MA_Filter_Mode=BASE_PRICE_ABOVE_BELOW;
-const double ADX_Minimum=25.0;
-const BASE_ADX_SCOPE Apply_ADX_Filter_To=BASE_BOS_ONLY;
-const BASE_ATR_MODE ATR_Filter_Mode=BASE_ATR_MINIMUM;
-const double ATR_Minimum=1.0;
-const double ATR_Maximum=10.0;
-const bool Use_Optimal_Conditions_Meter=true;
-const double Maximum_Extension_ATR=10.0;   // MTF ATR beyond the latest MTF swing (see TrendExtension)
-const int Volume_Average_Length=20;
-const double Volume_Minimum_Ratio=0.50;
-const double Volume_Maximum_Ratio=2.00;
-const int Momentum_Average_Length=20;
-const double Momentum_Minimum_Ratio=0.50;
-const double Momentum_Maximum_Ratio=2.00;
-
-// Swing detection (ATR zigzag, see ReplayStructure): a swing is confirmed
-// once price closes a set distance back from it, measured in ATR, so swings
-// grow and shrink with volatility instead of counting candles.  The Swing
-// Detection levels (1-10) are that distance:
-//   level      1     2     3     4     5     6     7     8     9    10
-//   ATR      0.5  0.75   1.0  1.25   1.5   2.0   2.5   3.0   4.0   5.0
-// Level 3 (1 ATR) marks about as many swings as Base's 2-candle pivots
-// (level 2) did.  The internal structure is the same engine with a fraction
-// (Internal_Swing_Ratio) of its timeframe's swing size.  The 14-candle ATR
-// sizes the swings, the break buffer and the EQH/EQL threshold.
-const int MIN_DETECTION_LEVEL=1;
-const int MAX_DETECTION_LEVEL=10;
+// ------------------------------------------------------------------ rules
+// Swings: a swing is confirmed by the first close one swing size back from
+// the leg's extreme.  The swing size is K x the 14-candle ATR: K is the base
+// size (Auto: from the symbol's variance ratio, see SwingSize; Fixed: 1 ATR)
+// times LEVEL_STEP^(level - 10) for the timeframe's Swing Sensitivity level.
+// Internal swings use Internal_Swing_Ratio of the swing size.
 const int SWING_ATR_LENGTH=14;
+const int VR_LAG=20;              // the variance ratio's lag (candles)
+const int VR_WINDOW=1000;         // the closes it is measured over
+const double AUTO_SCALE=0.8;      // K = AUTO_SCALE / sqrt(VR - 1)
+const double K_MIN=0.5;
+const double K_MAX=2.0;
+const int MIN_LEVEL=1;
+const int MAX_LEVEL=20;
+const double LEVEL_STEP=1.1;
+// EQH/EQL: a swing within this many ATR of the previous one on its side.
+const double EQUAL_ATR=0.2;
+// Consolidation: this many swings without a BOS (and its range is the last
+// this many swings).
+const int MAX_SWINGS=5;
+// Successive internal BOS that make a waiting break a Transition (and, the
+// other way, an LS).
+const int INTERNAL_BREAKS=2;
 
-// The swing size, in ATR, of a Swing Detection level.
-double SwingSize(const int level)
-  {
-   switch(MathMax(MIN_DETECTION_LEVEL,MathMin(MAX_DETECTION_LEVEL,level)))
-     {
-      case 1: return 0.5;
-      case 2: return 0.75;
-      case 3: return 1.0;
-      case 4: return 1.25;
-      case 5: return 1.5;
-      case 6: return 2.0;
-      case 7: return 2.5;
-      case 8: return 3.0;
-      case 9: return 4.0;
-     }
-   return 5.0;
-  }
-
-double HTFSwingSize() { return SwingSize(HTF_Swing_Level); }
-double MTFSwingSize() { return SwingSize(MTF_Swing_Level); }
-double LTFSwingSize() { return SwingSize(LTF_Swing_Level); }
-double InternalSize(const double swing_size) { return swing_size*Internal_Swing_Ratio; }
-
-// A break is a close beyond a level by this much of the latest candle's ATR,
-// so a close that only grazes a level breaks nothing.
-const double BREAK_BUFFER_ATR=0.1;
-
-string g_prefix="";
-datetime g_last_ltf_bar=0;
-datetime g_last_structure_bar=0;
-datetime g_last_setup_bar=0;
-int g_htf_ma_handle=INVALID_HANDLE;
-int g_mtf_ma_handle=INVALID_HANDLE;
-int g_adx_handle=INVALID_HANDLE;
-int g_atr_handle=INVALID_HANDLE;
-
-// Every replay covers this many times the displayed history.  The extra,
-// undrawn candles let the trend and the swings settle before the first
-// displayed candle, so the left edge of the chart and the trend are not
-// based on a cold start.
+// Every replay covers this many times the drawn history, so the swings and
+// the state settle before the first drawn candle.
 const int STRUCTURE_WARMUP_FACTOR=3;
 
-// The trend of one timeframe (see ReplayStructure).
-struct BASE_STRUCTURE_STATE
+// Drawing.
+const color HIGH_COLOR=clrIndianRed;
+const color LOW_COLOR=clrTeal;
+const color BOS_COLOR=clrBlue;
+const color CHOCH_COLOR=clrRed;
+const color LS_COLOR=C'229,184,0';
+const color INTERNAL_BULL_COLOR=C'8,153,129';
+const color INTERNAL_BEAR_COLOR=C'242,54,69';
+
+const int BASE_CONSOLIDATION=0;
+const int BASE_TRANSITION=1;
+const int BASE_TRENDING=2;
+const int BASE_BOS=0;
+const int BASE_CHOCH=1;
+
+string g_prefix="";
+datetime g_last_bar[4];
+
+// --------------------------------------------------------------- structs
+struct BASE_LEVEL
   {
-   int trend;               // 1 Bullish, -1 Bearish, 0 Range
-   int prev_trend;          // Range: the trend its CHoCH broke (0 before the first trend)
-   int choch_event;         // Range: events index of that CHoCH, -1 if none
-   // The latest swing on each side, and its HH/LH (LL/HL) kind.
-   bool have_high;
-   double last_high;
-   datetime last_high_time;
-   int last_high_kind;
-   int last_high_point;
-   bool have_low;
-   double last_low;
-   datetime last_low_time;
-   int last_low_kind;
-   int last_low_point;
-   // Bullish (Bearish): the protected low (high), the weak high (low) a BOS
-   // must close beyond, and the trend's running high (low) since its BOS.
-   bool have_protected;
-   double protected_level;
-   datetime protected_time;
-   int protected_bar;
-   bool have_target;
-   double target;
-   datetime target_time;
-   int target_bar;
-   bool have_trail;
-   double trail;
-   datetime trail_time;
-   int bos_bar;             // the candle of the latest BOS, -1 before the first
-   // Range: its high and low.
-   bool have_range_high;
-   double range_high;
-   datetime range_high_time;
-   int range_high_bar;
-   bool have_range_low;
-   double range_low;
-   datetime range_low_time;
-   int range_low_bar;
+   bool have;
+   double price;
+   int bar;
   };
 
 // One confirmed swing.  Swings never change once confirmed.
-struct BASE_STRUCTURE_POINT
+struct BASE_POINT
   {
-   int pivot;               // bar index of the swing candle
-   int confirmed;           // bar index of the close that confirmed it
+   int pivot;               // the swing's candle
+   int confirmed;           // the candle whose close confirmed it
    datetime time;
    double price;
    int side;                // 1 high, -1 low
    int kind;                // 1 HH/LL, -1 LH/HL, 0 the first swing on its side
-   int equal;               // points index of the swing it equals (EQH/EQL), -1 if none
+   int equal;               // the swing it equals (EQH/EQL), -1 if none
   };
 
-// One close-confirmed break.
-struct BASE_STRUCTURE_EVENT
+// One close beyond a level (main or internal).
+struct BASE_EVENT
   {
-   int bar;                 // the candle that closed through the level
+   int bar;                 // the candle that closed beyond the level
    int direction;           // 1 bullish, -1 bearish
-   bool bos;                // a BOS, or a CHoCH (a protected level broken)
-   datetime swing_time;     // the swing that held the level
-   int swing_bar;
+   int kind;                // BASE_BOS or BASE_CHOCH
+   bool ls;                 // the break failed (a liquidity sweep)
+   int ls_bar;              // the candle on which it failed, -1 if none
    double level;
-   bool ls;                 // a CHoCH after which the old trend resumed (liquidity sweep)
-   int ls_bar;              // the candle that resumed it, -1 if none
+   int swing_bar;           // the swing that held the level
+   datetime swing_time;
   };
-ENUM_TIMEFRAMES SetupTimeframe()
-  {
-   return Setup_Entry_Timeframe==PERIOD_CURRENT?(ENUM_TIMEFRAMES)_Period:Setup_Entry_Timeframe;
-  }
 
-ENUM_TIMEFRAMES LTFTimeframe()
+// A break that waits for the Transition conditions.
+struct BASE_ATTEMPT
   {
-   return LTF_Timeframe==PERIOD_CURRENT?(ENUM_TIMEFRAMES)_Period:LTF_Timeframe;
-  }
+   bool active;
+   int u;                   // its direction
+   int bar;                 // the candle that broke
+   BASE_LEVEL broken;       // the level it broke
+   BASE_LEVEL origin;       // the extreme before it, which a pullback must hold
+   int event;               // its event
+   int with;                // successive internal BOS in its direction since
+   int against;             // ... and against it
+   BASE_LEVEL best;         // the furthest swing in its direction since
+   BASE_LEVEL pullback;     // condition A's pullback swing
+   int from;                // BASE_TRENDING (a trend's CHoCH) or BASE_CONSOLIDATION
+  };
 
-ENUM_TIMEFRAMES BASETimeframe()
+// The latest internal swing on one side.
+struct BASE_INTERNAL_SWING
   {
-   return Structure_Timeframe==PERIOD_CURRENT?(ENUM_TIMEFRAMES)_Period:Structure_Timeframe;
-  }
+   bool have;
+   double price;
+   int pivot;
+   int confirmed;
+   bool broken;
+  };
 
+// The zigzag that confirms swings.
+struct BASE_ZIGZAG
+  {
+   int leg;                 // 1 rising (tracking its high), -1 falling, 0 before the first swing
+   bool have;
+   double hi;
+   int hi_bar;
+   double lo;
+   int lo_bar;
+   double ext;
+   int ext_bar;
+  };
+
+// The structure of one timeframe (see ReplayStructure).
+struct BASE_STATE
+  {
+   int state;               // BASE_TRENDING, BASE_TRANSITION or BASE_CONSOLIDATION
+   int direction;           // 1 bullish, -1 bearish; in Consolidation the last direction (0 before any)
+   BASE_LEVEL weak;         // a close beyond it in the direction is a BOS
+   BASE_LEVEL prot;         // a close beyond it against the direction breaks the structure
+   BASE_LEVEL inval;        // Transition: the extreme before its break
+   int resume;              // Transition: BASE_TRENDING when it came from a trend's CHoCH
+   int since;               // swings since the latest BOS or state change
+   int break_bar;           // the latest break in the direction
+   int changed_bar;         // the candle of the latest state change
+   bool by_internal;        // Transition: made by two internal BOS (B), not a pullback (A)
+   BASE_LEVEL trans_break;  // Transition: the level its break went through
+   BASE_ATTEMPT att;
+   int last_high;           // points index of the latest swing high, -1 if none
+   int last_low;
+   BASE_INTERNAL_SWING ihigh;
+   BASE_INTERNAL_SWING ilow;
+   int internal_direction;  // the latest internal break's direction, 0 if none
+   int internal_kind;       // its kind
+   double k;                // the swing size (ATR) at the latest candle
+  };
+
+// ------------------------------------------------------------- timeframes
 string TimeframeName(const ENUM_TIMEFRAMES timeframe)
   {
-   // EnumToString returns "PERIOD_H1"; alerts and tooltips only need "H1".
+   // EnumToString returns "PERIOD_H1"; texts only need "H1".
    return StringSubstr(EnumToString(timeframe),7);
   }
 
-// The chart draws its own timeframe with the swing size of the matching
-// HTF, MTF or LTF input; any other chart period uses the HTF size.
-double ChartSwingSize(const ENUM_TIMEFRAMES timeframe)
+ENUM_TIMEFRAMES ResolveTimeframe(const ENUM_TIMEFRAMES timeframe)
   {
-   if(timeframe==BASETimeframe()) return HTFSwingSize();
-   if(timeframe==SetupTimeframe()) return MTFSwingSize();
-   if(timeframe==LTFTimeframe()) return LTFSwingSize();
-   return HTFSwingSize();
+   return timeframe==PERIOD_CURRENT?(ENUM_TIMEFRAMES)_Period:timeframe;
   }
+
+ENUM_TIMEFRAMES HTF() { return ResolveTimeframe(Structure_Timeframe); }
+ENUM_TIMEFRAMES MTF() { return ResolveTimeframe(Setup_Entry_Timeframe); }
+ENUM_TIMEFRAMES LTF() { return ResolveTimeframe(LTF_Timeframe); }
+string HTFName() { return TimeframeName(HTF()); }
+string MTFName() { return TimeframeName(MTF()); }
+string LTFName() { return TimeframeName(LTF()); }
 
 int StructureBars()
   {
    return MathMax(100,MathMin(Bars_To_Process,100000));
   }
 
-// Displayed history on another timeframe covers the same elapsed time as
-// Bars_To_Process on the structure timeframe (100 H1 bars become 400 M15).
-int ChartStructureBars(const ENUM_TIMEFRAMES timeframe)
+// Drawn history on another timeframe covers the same time as Bars_To_Process
+// HTF candles (100 H1 candles become 400 M15 candles).
+int DisplayedBars(const ENUM_TIMEFRAMES timeframe)
   {
-   int structure_seconds=PeriodSeconds(BASETimeframe());
-   int chart_seconds=PeriodSeconds(timeframe);
+   int htf_seconds=PeriodSeconds(HTF());
+   int seconds=PeriodSeconds(timeframe);
    int wanted=StructureBars();
-   if(structure_seconds>0 && chart_seconds>0)
-      wanted=(int)MathCeil((double)StructureBars()*structure_seconds/chart_seconds);
+   if(htf_seconds>0 && seconds>0)
+      wanted=(int)MathCeil((double)StructureBars()*htf_seconds/seconds);
    return MathMax(50,MathMin(wanted,100000));
   }
 
@@ -313,22 +225,19 @@ int ReplayBars(const int displayed)
    return MathMin(100000,displayed*STRUCTURE_WARMUP_FACTOR);
   }
 
-ENUM_MA_METHOD BASEMAMethod(const BASE_MA_TYPE value)
+// ------------------------------------------------------------ the engine
+void SetLevel(BASE_LEVEL &level,const double price,const int bar)
   {
-   return value==BASE_EMA?MODE_EMA:MODE_SMA;
+   level.have=true;
+   level.price=price;
+   level.bar=bar;
   }
 
-// A structure line never clips through a candle: it ends on the first
-// candle after the swing whose wick or body reaches the level (high at or
-// above a level broken upwards, low at or below one broken downwards).  That
-// is the candle that closed through the level unless an earlier wick swept
-// it.
-int FirstTouchBar(const MqlRates &rates[],const int swing_bar,const int break_bar,
-                  const int direction,const double level)
+void ClearLevel(BASE_LEVEL &level)
   {
-   for(int b=swing_bar+1;b<break_bar;b++)
-      if(direction>0?rates[b].high>=level:rates[b].low<=level) return b;
-   return break_bar;
+   level.have=false;
+   level.price=0.0;
+   level.bar=-1;
   }
 
 // Average true range over SWING_ATR_LENGTH candles (fewer at the start) at
@@ -341,364 +250,739 @@ void SwingATR(const MqlRates &rates[],const int total,double &atr[])
    double sum=0.0;
    for(int i=0;i<total;i++)
      {
-      double range=rates[i].high-rates[i].low;
+      double r=rates[i].high-rates[i].low;
       if(i>0)
-         range=MathMax(range,MathMax(MathAbs(rates[i].high-rates[i-1].close),
-                                     MathAbs(rates[i].low-rates[i-1].close)));
-      ranges[i]=range;
-      sum+=range;
+         r=MathMax(r,MathMax(MathAbs(rates[i].high-rates[i-1].close),MathAbs(rates[i].low-rates[i-1].close)));
+      ranges[i]=r;
+      sum+=r;
       if(i>=SWING_ATR_LENGTH) sum-=ranges[i-SWING_ATR_LENGTH];
       atr[i]=sum/MathMin(i+1,SWING_ATR_LENGTH);
      }
   }
 
-// The candle of the highest high (side 1) or lowest low (-1) after candle
-// `from` up to candle `to` (candle `to` itself when from==to); the latest of
-// equal ones.
+// A Swing Sensitivity level's factor: 1 at level 10, about 10% finer per
+// level below it and 10% broader per level above (0.42 at 1, 2.59 at 20).
+double LevelFactor(const int level)
+  {
+   return MathPow(LEVEL_STEP,MathMax(MIN_LEVEL,MathMin(MAX_LEVEL,level))-10);
+  }
+
+// The level of a timeframe: the HTF, MTF or LTF input whose timeframe it is
+// (the HTF's for any other).
+int TimeframeLevel(const ENUM_TIMEFRAMES timeframe)
+  {
+   if(timeframe==HTF()) return HTF_Swing_Level;
+   if(timeframe==MTF()) return MTF_Swing_Level;
+   if(timeframe==LTF()) return LTF_Swing_Level;
+   return HTF_Swing_Level;
+  }
+
+// The swing size (in ATR) at every candle: the base size times `factor`.
+// Fixed: the base is 1 ATR.  Auto: the base is set by the symbol's own
+// movement.  The variance ratio VR of the last VR_WINDOW closes compares the
+// squared 20-candle moves with 20 times the squared 1-candle moves: about 1
+// when the closes wander at random, more when moves persist.  The more of
+// the movement is trend rather than noise, the smaller a swing needs to be,
+// so the base is AUTO_SCALE / sqrt(VR - 1), kept between K_MIN and K_MAX
+// (K_MAX when VR is 1 or less).  A level therefore means the same thing on
+// every symbol.  The window sums are differences of running sums, as in the
+// Pine version.
+void SwingSize(const MqlRates &rates[],const int total,const double factor,double &k[])
+  {
+   ArrayResize(k,total);
+   if(Swing_Size_Mode==BASE_FIXED_ATR)
+     {
+      for(int t=0;t<total;t++) k[t]=factor;
+      return;
+     }
+   double sum1[],sumN[];
+   ArrayResize(sum1,total+1);
+   ArrayResize(sumN,total+1);
+   sum1[0]=0.0;
+   sumN[0]=0.0;
+   for(int t=0;t<total;t++)
+     {
+      double d1=t>=1?(rates[t].close-rates[t-1].close):0.0;
+      double dn=t>=VR_LAG?(rates[t].close-rates[t-VR_LAG].close):0.0;
+      sum1[t+1]=sum1[t]+d1*d1;
+      sumN[t+1]=sumN[t]+dn*dn;
+     }
+   for(int t=0;t<total;t++)
+     {
+      int from=MathMax(0,t+1-VR_WINDOW);
+      double s1=sum1[t+1]-sum1[from];
+      double sn=sumN[t+1]-sumN[from];
+      double size=K_MAX;
+      if(t>=VR_LAG && s1>0.0)
+        {
+         double excess=sn/(VR_LAG*s1)-1.0;
+         if(excess>0.0) size=MathMin(K_MAX,MathMax(K_MIN,AUTO_SCALE/MathSqrt(excess)));
+        }
+      k[t]=size*factor;
+     }
+  }
+
+// The candle of the highest high (side 1) or lowest low (-1) after `from` up
+// to `to` (`to` itself when from is to), the latest of equal ones.
 int ExtremeAfter(const MqlRates &rates[],const int side,const int from,const int to)
   {
-   int best=-1;
-   for(int j=MathMin(from+1,to);j<=to;j++)
-      if(best<0 || (side>0?rates[j].high>=rates[best].high:rates[j].low<=rates[best].low)) best=j;
+   int best=MathMin(from+1,to);
+   for(int j=best;j<=to;j++)
+      if(side>0?rates[j].high>=rates[best].high:rates[j].low<=rates[best].low) best=j;
    return best;
   }
 
-// A swing confirmed on candle `at`: labelled against the previous swing on
-// its side (HH/LH, LL/HL; EQH/EQL within Equal_Highs_Lows_Threshold ATR of
-// it, which is only a label), and offered to the trend: in a trend, a swing
-// on the trend's side since its BOS can become the weak high (low) the next
-// BOS must break; in a range, it widens the range.
-void AddSwing(BASE_STRUCTURE_STATE &state,BASE_STRUCTURE_POINT &points[],const MqlRates &rates[],
-              const double &atr[],const int side,const int bar,const int at)
+// The same from `from` itself up to `to`.
+int ExtremeSince(const MqlRates &rates[],const int side,const int from,const int to)
   {
-   double price=side>0?rates[bar].high:rates[bar].low;
-   bool have_prev=side>0?state.have_high:state.have_low;
-   double prev=side>0?state.last_high:state.last_low;
-   int prev_point=side>0?state.last_high_point:state.last_low_point;
-   int index=ArraySize(points);
-   ArrayResize(points,index+1,64);
-   points[index].pivot=bar;
-   points[index].confirmed=at;
-   points[index].time=rates[bar].time;
-   points[index].price=price;
-   points[index].side=side;
-   points[index].kind=!have_prev?0:((side>0?price>prev:price<prev)?1:-1);
-   points[index].equal=have_prev && Equal_Highs_Lows_Threshold>0.0 &&
-                       MathAbs(price-prev)<Equal_Highs_Lows_Threshold*atr[bar]?prev_point:-1;
-   if(side>0)
+   int best=from;
+   for(int j=from;j<=to;j++)
+      if(side>0?rates[j].high>=rates[best].high:rates[j].low<=rates[best].low) best=j;
+   return best;
+  }
+
+double SidePrice(const MqlRates &rates[],const int side,const int bar)
+  {
+   return side>0?rates[bar].high:rates[bar].low;
+  }
+
+void AddFound(int &sides[],double &prices[],int &pivots[],const int side,const double price,const int pivot)
+  {
+   int n=ArraySize(sides);
+   ArrayResize(sides,n+1);
+   ArrayResize(prices,n+1);
+   ArrayResize(pivots,n+1);
+   sides[n]=side;
+   prices[n]=price;
+   pivots[n]=pivot;
+  }
+
+// One candle of the zigzag: the leg tracks its extreme (a later equal high or
+// low takes over), and the first close unit[pivot] back from it confirms the
+// swing; the next leg starts from the extreme after it.  Before the first
+// swing both extremes are tracked and whichever is confirmed first starts
+// the legs.  A big candle can confirm a swing and the next one, but a leg
+// that starts on this candle waits for a later close.
+void ZigzagStep(BASE_ZIGZAG &z,const MqlRates &rates[],const double &unit[],const int i,
+                int &sides[],double &prices[],int &pivots[])
+  {
+   ArrayResize(sides,0);
+   ArrayResize(prices,0);
+   ArrayResize(pivots,0);
+   if(z.leg==0)
      {
-      state.have_high=true;
-      state.last_high=price;
-      state.last_high_time=rates[bar].time;
-      state.last_high_kind=points[index].kind;
-      state.last_high_point=index;
+      if(!z.have || rates[i].high>=z.hi) { z.hi=rates[i].high; z.hi_bar=i; }
+      if(!z.have || rates[i].low<=z.lo) { z.lo=rates[i].low; z.lo_bar=i; }
+      z.have=true;
+      bool up=rates[i].close>=z.lo+unit[z.lo_bar];
+      bool down=rates[i].close<=z.hi-unit[z.hi_bar];
+      bool low_first=up && (!down || z.lo_bar<z.hi_bar);
+      if(low_first)
+        {
+         AddFound(sides,prices,pivots,-1,z.lo,z.lo_bar);
+         z.leg=1;
+         z.ext_bar=ExtremeAfter(rates,1,z.lo_bar,i);
+         z.ext=rates[z.ext_bar].high;
+         if(down)
+           {
+            AddFound(sides,prices,pivots,1,z.hi,z.hi_bar);
+            z.leg=-1;
+            z.ext_bar=ExtremeAfter(rates,-1,z.hi_bar,i);
+            z.ext=rates[z.ext_bar].low;
+           }
+        }
+      else if(down)
+        {
+         AddFound(sides,prices,pivots,1,z.hi,z.hi_bar);
+         z.leg=-1;
+         z.ext_bar=ExtremeAfter(rates,-1,z.hi_bar,i);
+         z.ext=rates[z.ext_bar].low;
+         if(up)
+           {
+            AddFound(sides,prices,pivots,-1,z.lo,z.lo_bar);
+            z.leg=1;
+            z.ext_bar=ExtremeAfter(rates,1,z.lo_bar,i);
+            z.ext=rates[z.ext_bar].high;
+           }
+        }
+      return;
      }
-   else
+   if(z.leg>0 && rates[i].high>=z.ext) { z.ext=rates[i].high; z.ext_bar=i; }
+   if(z.leg<0 && rates[i].low<=z.ext) { z.ext=rates[i].low; z.ext_bar=i; }
+   for(int pass=0;pass<4;pass++)
      {
-      state.have_low=true;
-      state.last_low=price;
-      state.last_low_time=rates[bar].time;
-      state.last_low_kind=points[index].kind;
-      state.last_low_point=index;
-     }
-   if(state.trend==side && bar>=state.bos_bar &&
-      (!state.have_target || (side>0?price>state.target:price<state.target)))
-     {
-      state.have_target=true;
-      state.target=price;
-      state.target_time=rates[bar].time;
-      state.target_bar=bar;
-     }
-   if(state.trend==0 && side>0 && (!state.have_range_high || price>state.range_high))
-     {
-      state.have_range_high=true;
-      state.range_high=price;
-      state.range_high_time=rates[bar].time;
-      state.range_high_bar=bar;
-     }
-   if(state.trend==0 && side<0 && (!state.have_range_low || price<state.range_low))
-     {
-      state.have_range_low=true;
-      state.range_low=price;
-      state.range_low_time=rates[bar].time;
-      state.range_low_bar=bar;
+      int pivot=z.ext_bar;
+      if(z.leg>0 && rates[i].close<=z.ext-unit[pivot])
+        {
+         AddFound(sides,prices,pivots,1,z.ext,pivot);
+         z.leg=-1;
+         z.ext_bar=ExtremeAfter(rates,-1,pivot,i);
+         z.ext=rates[z.ext_bar].low;
+        }
+      else if(z.leg<0 && rates[i].close>=z.ext+unit[pivot])
+        {
+         AddFound(sides,prices,pivots,-1,z.ext,pivot);
+         z.leg=1;
+         z.ext_bar=ExtremeAfter(rates,1,pivot,i);
+         z.ext=rates[z.ext_bar].high;
+        }
+      else break;
+      if(pivot==i) break;
      }
   }
 
-void AddStructureEvent(BASE_STRUCTURE_EVENT &events[],const int bar,const int direction,const bool bos,
-                       const datetime swing_time,const int swing_bar,const double level)
+int AddEvent(BASE_EVENT &events[],const MqlRates &rates[],const int bar,const int direction,const int kind,
+             const BASE_LEVEL &level)
   {
-   int index=ArraySize(events);
-   ArrayResize(events,index+1,64);
-   events[index].bar=bar;
-   events[index].direction=direction;
-   events[index].bos=bos;
-   events[index].swing_time=swing_time;
-   events[index].swing_bar=swing_bar;
-   events[index].level=level;
-   events[index].ls=false;
-   events[index].ls_bar=-1;
+   int n=ArraySize(events);
+   ArrayResize(events,n+1);
+   events[n].bar=bar;
+   events[n].direction=direction;
+   events[n].kind=kind;
+   events[n].ls=false;
+   events[n].ls_bar=-1;
+   events[n].level=level.price;
+   events[n].swing_bar=level.bar;
+   events[n].swing_time=rates[level.bar].time;
+   return n;
   }
 
-// A BOS on candle `bar` through the swing on candle `level_bar` starts (or
-// continues) a trend: the protected level becomes the latest confirmed swing
-// on the other side (with none yet, the deepest point since the broken
-// swing), and the next BOS needs a new swing on the trend's side.
-void StartTrend(BASE_STRUCTURE_STATE &state,const BASE_STRUCTURE_POINT &points[],const MqlRates &rates[],
-                const int direction,const int level_bar,const int bar)
+void ChangeState(BASE_STATE &s,const int state,const int direction,const int bar)
   {
-   int found=-1;
-   for(int k=ArraySize(points)-1;k>=0 && found<0;k--)
-      if(points[k].side==-direction) found=k;
-   if(found>=0)
-     {
-      state.protected_level=points[found].price;
-      state.protected_time=points[found].time;
-      state.protected_bar=points[found].pivot;
-     }
-   else
-     {
-      int deepest=ExtremeAfter(rates,-direction,level_bar,bar);
-      state.protected_level=direction>0?rates[deepest].low:rates[deepest].high;
-      state.protected_time=rates[deepest].time;
-      state.protected_bar=deepest;
-     }
-   state.have_protected=true;
-   state.trend=direction;
-   state.have_target=false;
-   state.have_trail=false;
-   state.bos_bar=bar;
-   state.have_range_high=false;
-   state.have_range_low=false;
+   if(s.state!=state || s.direction!=direction) s.changed_bar=bar;
+   s.state=state;
+   s.direction=direction;
   }
 
-// A CHoCH on candle `bar`: the trend `old` lost its protected level and the
-// market is a range.  Its far edge is the old trend's extreme since the
-// protected level; the near edge waits for the next swing.
-void EnterRange(BASE_STRUCTURE_STATE &state,const BASE_STRUCTURE_EVENT &events[],const MqlRates &rates[],
-                const int old,const int bar)
+// A waiting break becomes a Transition in its direction.  Its BOS level is
+// the furthest swing in that direction since the break; its own structure is
+// condition A's pullback swing, or with B the level it broke.
+void EnterTransition(BASE_STATE &s,const int bar)
   {
-   int far=ExtremeAfter(rates,old,state.protected_bar,bar);
-   state.trend=0;
-   state.prev_trend=old;
-   state.choch_event=ArraySize(events)-1;
-   state.have_range_high=old>0;
-   state.have_range_low=old<0;
-   if(old>0)
-     {
-      state.range_high=rates[far].high;
-      state.range_high_time=rates[far].time;
-      state.range_high_bar=far;
-     }
-   else
-     {
-      state.range_low=rates[far].low;
-      state.range_low_time=rates[far].time;
-      state.range_low_bar=far;
-     }
-   state.have_protected=false;
-   state.have_target=false;
-   state.have_trail=false;
+   s.resume=s.att.from;
+   s.inval=s.att.origin;
+   ChangeState(s,BASE_TRANSITION,s.att.u,bar);
+   s.weak=s.att.best;
+   s.by_internal=!s.att.pullback.have;
+   s.prot=s.att.pullback.have?s.att.pullback:s.att.broken;
+   s.trans_break=s.att.broken;
+   s.break_bar=s.att.bar;
+   s.since=0;
+   s.att.active=false;
   }
 
-// A close beyond the range on candle `bar`: a BOS that way.  When it resumes
-// the trend the range's CHoCH broke, that CHoCH was a liquidity sweep (LS).
-void LeaveRange(BASE_STRUCTURE_STATE &state,const BASE_STRUCTURE_POINT &points[],
-                BASE_STRUCTURE_EVENT &events[],const MqlRates &rates[],const int direction,const int bar)
+void StartAttempt(BASE_STATE &s,BASE_EVENT &events[],const MqlRates &rates[],const int bar,const int u,
+                  const BASE_LEVEL &level,const BASE_LEVEL &origin,const int from,const int kind)
   {
-   double level=direction>0?state.range_high:state.range_low;
-   datetime level_time=direction>0?state.range_high_time:state.range_low_time;
-   int level_bar=direction>0?state.range_high_bar:state.range_low_bar;
-   if(state.prev_trend==direction && state.choch_event>=0 && state.choch_event==ArraySize(events)-1)
-     {
-      events[state.choch_event].ls=true;
-      events[state.choch_event].ls_bar=bar;
-     }
-   AddStructureEvent(events,bar,direction,true,level_time,level_bar,level);
-   state.prev_trend=0;
-   state.choch_event=-1;
-   StartTrend(state,points,rates,direction,level_bar,bar);
+   s.att.event=AddEvent(events,rates,bar,u,kind,level);
+   s.att.active=true;
+   s.att.u=u;
+   s.att.bar=bar;
+   s.att.broken=level;
+   s.att.origin=origin;
+   s.att.with=0;
+   s.att.against=0;
+   ClearLevel(s.att.best);
+   ClearLevel(s.att.pullback);
+   s.att.from=from;
   }
 
-// Replays swings and the trend over closed candles.  The trend, the chart
-// labels and every BOS/CHoCH/LS come from this single routine, so they can
-// never disagree.  `size` is the swing size in ATR (see SwingSize).
-//
-// Swings (ATR zigzag): the leg in progress tracks its extreme (a later equal
-// high or low takes over).  A swing high is confirmed by the first close at
-// least `size` ATR below the leg's high, the ATR being the 14-candle ATR at
-// the high's candle; the falling leg then starts from the lowest low after
-// the high.  Swing lows mirror this.  Before the first swing both extremes
-// are tracked and whichever is confirmed first starts the legs.  Highs and
-// lows always alternate, and a swing never changes once confirmed.
-//
-// Trend: Bullish, Bearish or Range.  A break is a close beyond a level by
-// BREAK_BUFFER_ATR of the latest candle's ATR.
-//  * Bullish: a close above the weak high (the highest swing high confirmed
-//    since the last BOS) is a bullish BOS, and the protected low becomes the
-//    latest confirmed swing low.  A close below the protected low is a
-//    bearish CHoCH, and the market becomes a Range.  Pullbacks that hold the
-//    protected low change nothing.
-//  * Bearish mirrors Bullish.
-//  * Range: its high is the old trend's extreme since its protected level
-//    (or the first swing high) and any higher swing high confirmed since; its
-//    low mirrors this.  A close above the range high is a bullish BOS
-//    (Bullish), below the range low a bearish BOS (Bearish).  When that
-//    resumes the trend the CHoCH broke, the CHoCH was a liquidity sweep and
-//    is relabelled LS.
-// Strong/Weak High/Low: in a bullish trend the protected low is the Strong
-// Low and the trend's running high since its BOS the Weak High (bearish
-// mirrors this); a range shows its high and low.
-bool ReplayStructure(const MqlRates &rates[],const int total,const double size,
-                     BASE_STRUCTURE_STATE &state,BASE_STRUCTURE_POINT &points[],
-                     BASE_STRUCTURE_EVENT &events[])
+void ToConsolidation(BASE_STATE &s,const int bar)
   {
-   ZeroMemory(state);
-   state.choch_event=-1;
-   state.bos_bar=-1;
-   state.last_high_point=-1;
-   state.last_low_point=-1;
+   ChangeState(s,BASE_CONSOLIDATION,s.direction,bar);
+   ClearLevel(s.weak);
+   ClearLevel(s.prot);
+   ClearLevel(s.inval);
+   s.since=0;
+   if(s.att.active) s.att.from=BASE_CONSOLIDATION;
+  }
+
+// A swing confirmed on candle i: labelled against the previous swing on its
+// side, then offered to the trend and to a waiting break (condition A).
+void OnSwing(BASE_STATE &s,BASE_POINT &points[],const MqlRates &rates[],const double &atr[],
+             const int side,const double price,const int pivot,const int i)
+  {
+   int prev=side>0?s.last_high:s.last_low;
+   int kind=0,equal=-1;
+   if(prev>=0)
+     {
+      kind=(side>0?price>points[prev].price:price<points[prev].price)?1:-1;
+      if(MathAbs(price-points[prev].price)<EQUAL_ATR*atr[pivot]) equal=prev;
+     }
+   int n=ArraySize(points);
+   ArrayResize(points,n+1);
+   points[n].pivot=pivot;
+   points[n].confirmed=i;
+   points[n].time=rates[pivot].time;
+   points[n].price=price;
+   points[n].side=side;
+   points[n].kind=kind;
+   points[n].equal=equal;
+   if(side>0) s.last_high=n;
+   else s.last_low=n;
+   s.since++;
+   int d=s.direction;
+   if(s.state!=BASE_CONSOLIDATION)
+     {
+      if(side==d && (!s.weak.have || (d>0?price>s.weak.price:price<s.weak.price))) SetLevel(s.weak,price,pivot);
+      if(side==-d) SetLevel(s.prot,price,pivot);
+     }
+   if(s.att.active)
+     {
+      int u=s.att.u;
+      if(side==u && (!s.att.best.have || (u>0?price>s.att.best.price:price<s.att.best.price)))
+         SetLevel(s.att.best,price,pivot);
+      if(side==-u)
+        {
+         double tolerance=EQUAL_ATR*atr[pivot];
+         if(u>0?price>=s.att.origin.price-tolerance:price<=s.att.origin.price+tolerance)
+           {
+            SetLevel(s.att.pullback,price,pivot);
+            EnterTransition(s,i);
+           }
+        }
+     }
+  }
+
+// Consolidation's range: the highest high and lowest low of the last
+// MAX_SWINGS swings.
+void ConsolidationRange(const BASE_POINT &points[],BASE_LEVEL &high,BASE_LEVEL &low)
+  {
+   ClearLevel(high);
+   ClearLevel(low);
+   int n=ArraySize(points);
+   for(int j=MathMax(0,n-MAX_SWINGS);j<n;j++)
+     {
+      if(points[j].side>0 && (!high.have || points[j].price>high.price)) SetLevel(high,points[j].price,points[j].pivot);
+      if(points[j].side<0 && (!low.have || points[j].price<low.price)) SetLevel(low,points[j].price,points[j].pivot);
+     }
+  }
+
+// The structure after candle i closed.
+void OnClose(BASE_STATE &s,BASE_EVENT &events[],const BASE_POINT &points[],const MqlRates &rates[],const int i)
+  {
+   double c=rates[i].close;
+   if(s.att.active)
+     {
+      int u=s.att.u;
+      bool beyond_origin=u<0?c>s.att.origin.price:c<s.att.origin.price;
+      if(s.att.with>=INTERNAL_BREAKS)
+         EnterTransition(s,i);                      // condition B
+      else if(beyond_origin || s.att.against>=INTERNAL_BREAKS)
+        {
+         // The break failed: a liquidity sweep.  A trend holds, with the
+         // sweep's extreme as its new strong level.
+         events[s.att.event].ls=true;
+         events[s.att.event].ls_bar=i;
+         s.att.active=false;
+         if(s.att.from==BASE_TRENDING)
+           {
+            int b=ExtremeSince(rates,-s.direction,s.att.bar,i);
+            SetLevel(s.prot,SidePrice(rates,-s.direction,b),b);
+           }
+        }
+     }
+   int d=s.direction;
+   if(s.state==BASE_TRENDING)
+     {
+      if(s.weak.have && (d>0?c>s.weak.price:c<s.weak.price))
+        {
+         AddEvent(events,rates,i,d,BASE_BOS,s.weak);
+         if(s.att.active)
+           {
+            // The trend went on while a CHoCH waited: that CHoCH failed (LS).
+            events[s.att.event].ls=true;
+            events[s.att.event].ls_bar=i;
+           }
+         ClearLevel(s.weak);
+         s.since=0;
+         s.break_bar=i;
+         s.att.active=false;
+        }
+      else if(!s.att.active && s.prot.have && (d>0?c<s.prot.price:c>s.prot.price))
+        {
+         // A CHoCH: the trend holds until the Transition conditions are met.
+         BASE_LEVEL origin;
+         int b=ExtremeSince(rates,d,s.prot.bar,i);
+         SetLevel(origin,SidePrice(rates,d,b),b);
+         BASE_LEVEL level=s.prot;
+         StartAttempt(s,events,rates,i,-d,level,origin,BASE_TRENDING,BASE_CHOCH);
+        }
+      else if(s.since>=MAX_SWINGS)
+         ToConsolidation(s,i);
+      return;
+     }
+   if(s.state==BASE_TRANSITION)
+     {
+      if(s.weak.have && (d>0?c>s.weak.price:c<s.weak.price))
+        {
+         // The second break: a trend.
+         AddEvent(events,rates,i,d,BASE_BOS,s.weak);
+         ChangeState(s,BASE_TRENDING,d,i);
+         ClearLevel(s.weak);
+         s.since=0;
+         s.break_bar=i;
+        }
+      else if(s.prot.have && (d>0?c<s.prot.price:c>s.prot.price))
+        {
+         if(s.resume==BASE_TRENDING && (d>0?c<s.inval.price:c>s.inval.price))
+           {
+            // Beyond the old trend's extreme too: the old trend resumes.
+            AddEvent(events,rates,i,-d,BASE_BOS,s.inval);
+            ChangeState(s,BASE_TRENDING,-d,i);
+            s.since=0;
+            s.break_bar=i;
+            ClearLevel(s.weak);
+            // Its strong level: the latest swing on that side since the old
+            // extreme (the lower high or higher low the failed Transition
+            // left), else the extreme since then.
+            int q=d>0?s.last_high:s.last_low;
+            if(q>=0 && points[q].pivot>s.inval.bar) SetLevel(s.prot,points[q].price,points[q].pivot);
+            else
+              {
+               int b=ExtremeSince(rates,d,s.inval.bar,i);
+               SetLevel(s.prot,SidePrice(rates,d,b),b);
+              }
+           }
+         else
+           {
+            // The Transition broke its own structure: that break waits.
+            BASE_LEVEL level=s.prot;
+            ToConsolidation(s,i);
+            BASE_LEVEL origin;
+            int b=ExtremeSince(rates,d,level.bar,i);
+            SetLevel(origin,SidePrice(rates,d,b),b);
+            StartAttempt(s,events,rates,i,-d,level,origin,BASE_CONSOLIDATION,BASE_CHOCH);
+           }
+        }
+      else if(s.since>=MAX_SWINGS)
+         ToConsolidation(s,i);
+      return;
+     }
+   // Consolidation: a close beyond its range is a break that waits; the
+   // pullback must hold the latest swing on the other side.
+   if(s.att.active) return;
+   BASE_LEVEL high,low,origin;
+   ConsolidationRange(points,high,low);
+   if(high.have && c>high.price)
+     {
+      if(s.last_low>=0) SetLevel(origin,points[s.last_low].price,points[s.last_low].pivot);
+      else { int b=ExtremeSince(rates,-1,high.bar,i); SetLevel(origin,rates[b].low,b); }
+      StartAttempt(s,events,rates,i,1,high,origin,BASE_CONSOLIDATION,d>0?BASE_BOS:BASE_CHOCH);
+     }
+   else if(low.have && c<low.price)
+     {
+      if(s.last_high>=0) SetLevel(origin,points[s.last_high].price,points[s.last_high].pivot);
+      else { int b=ExtremeSince(rates,1,low.bar,i); SetLevel(origin,rates[b].high,b); }
+      StartAttempt(s,events,rates,i,-1,low,origin,BASE_CONSOLIDATION,d<0?BASE_BOS:BASE_CHOCH);
+     }
+  }
+
+// An internal swing broken by candle i's close: an internal BOS (in the
+// direction of the previous internal break) or CHoCH, counted for a waiting
+// break when the swing formed after it.
+void InternalBreak(BASE_STATE &s,BASE_INTERNAL_SWING &q,BASE_EVENT &internal_events[],const MqlRates &rates[],
+                   const int side,const int i)
+  {
+   if(!q.have || q.broken || (side>0?rates[i].close<=q.price:rates[i].close>=q.price)) return;
+   q.broken=true;
+   int n=ArraySize(internal_events);
+   ArrayResize(internal_events,n+1);
+   internal_events[n].bar=i;
+   internal_events[n].direction=side;
+   internal_events[n].kind=s.internal_direction==side?BASE_BOS:BASE_CHOCH;
+   internal_events[n].ls=false;
+   internal_events[n].ls_bar=-1;
+   internal_events[n].level=q.price;
+   internal_events[n].swing_bar=q.pivot;
+   internal_events[n].swing_time=rates[q.pivot].time;
+   s.internal_direction=side;
+   s.internal_kind=internal_events[n].kind;
+   if(s.att.active && q.confirmed>=s.att.bar)
+     {
+      if(side==s.att.u) { s.att.with++; s.att.against=0; }
+      else { s.att.against++; s.att.with=0; }
+     }
+  }
+
+// Replays the structure from candle `start` (earlier candles only feed the
+// ATR and the swing size) to the latest closed candle.  The order on each
+// candle: main swings, internal swings, internal breaks, then the closes
+// against the structure's levels.
+bool ReplayStructure(const MqlRates &rates[],const int total,const int start,const double factor,BASE_STATE &s,
+                     BASE_POINT &points[],BASE_EVENT &events[],BASE_EVENT &internal_events[])
+  {
+   ZeroMemory(s);
    ArrayResize(points,0);
    ArrayResize(events,0);
-   if(total<2) return false;
-   double atr[];
+   ArrayResize(internal_events,0);
+   s.state=BASE_CONSOLIDATION;
+   s.last_high=-1;
+   s.last_low=-1;
+   s.break_bar=-1;
+   s.changed_bar=-1;
+   ClearLevel(s.weak);
+   ClearLevel(s.prot);
+   ClearLevel(s.inval);
+   ClearLevel(s.trans_break);
+   if(total<SWING_ATR_LENGTH+2 || start<0 || start>=total) return false;
+   double atr[],k[],unit[],inner[];
    SwingATR(rates,total,atr);
-   int leg=0;                  // 1 rising (tracking a high), -1 falling, 0 before the first swing
-   int high_bar=0,low_bar=0;   // before the first swing: the highest high and lowest low so far
-   int extreme_bar=-1;         // the leg's extreme
+   SwingSize(rates,total,factor,k);
+   ArrayResize(unit,total);
+   ArrayResize(inner,total);
    for(int i=0;i<total;i++)
      {
-      // 1. Swings.
-      if(leg==0)
-        {
-         if(rates[i].high>=rates[high_bar].high) high_bar=i;
-         if(rates[i].low<=rates[low_bar].low) low_bar=i;
-         bool up=rates[i].close>=rates[low_bar].low+size*atr[low_bar];
-         bool down=rates[i].close<=rates[high_bar].high-size*atr[high_bar];
-         // Both at once: the earlier extreme is the older swing.
-         if(up && (!down || low_bar<high_bar))
-           {
-            AddSwing(state,points,rates,atr,-1,low_bar,i);
-            leg=1;
-            extreme_bar=ExtremeAfter(rates,1,low_bar,i);
-            if(down)
-              {
-               AddSwing(state,points,rates,atr,1,high_bar,i);
-               leg=-1;
-               extreme_bar=ExtremeAfter(rates,-1,high_bar,i);
-              }
-           }
-         else if(down)
-           {
-            AddSwing(state,points,rates,atr,1,high_bar,i);
-            leg=-1;
-            extreme_bar=ExtremeAfter(rates,-1,high_bar,i);
-            if(up)
-              {
-               AddSwing(state,points,rates,atr,-1,low_bar,i);
-               leg=1;
-               extreme_bar=ExtremeAfter(rates,1,low_bar,i);
-              }
-           }
-        }
-      else
-        {
-         if(leg>0 && rates[i].high>=rates[extreme_bar].high) extreme_bar=i;
-         if(leg<0 && rates[i].low<=rates[extreme_bar].low) extreme_bar=i;
-         // A big candle can confirm a swing and the next one at once, but a
-         // leg that starts on this candle waits for a later close: the order
-         // of the candle's own high and low is unknown.
-         for(int pass=0;pass<4;pass++)
-           {
-            int pivot=extreme_bar;
-            if(leg>0 && rates[i].close<=rates[pivot].high-size*atr[pivot])
-              {
-               AddSwing(state,points,rates,atr,1,pivot,i);
-               leg=-1;
-               extreme_bar=ExtremeAfter(rates,-1,pivot,i);
-              }
-            else if(leg<0 && rates[i].close>=rates[pivot].low+size*atr[pivot])
-              {
-               AddSwing(state,points,rates,atr,-1,pivot,i);
-               leg=1;
-               extreme_bar=ExtremeAfter(rates,1,pivot,i);
-              }
-            else break;
-            if(pivot==i) break;
-           }
-        }
-
-      // 2. The trend.
-      double close=rates[i].close,buffer=BREAK_BUFFER_ATR*atr[i];
-      if(state.trend>0)
-        {
-         if(close<state.protected_level-buffer)
-           {
-            AddStructureEvent(events,i,-1,false,state.protected_time,state.protected_bar,state.protected_level);
-            EnterRange(state,events,rates,1,i);
-           }
-         else if(state.have_target && close>state.target+buffer)
-           {
-            AddStructureEvent(events,i,1,true,state.target_time,state.target_bar,state.target);
-            StartTrend(state,points,rates,1,state.target_bar,i);
-           }
-        }
-      else if(state.trend<0)
-        {
-         if(close>state.protected_level+buffer)
-           {
-            AddStructureEvent(events,i,1,false,state.protected_time,state.protected_bar,state.protected_level);
-            EnterRange(state,events,rates,-1,i);
-           }
-         else if(state.have_target && close<state.target-buffer)
-           {
-            AddStructureEvent(events,i,-1,true,state.target_time,state.target_bar,state.target);
-            StartTrend(state,points,rates,-1,state.target_bar,i);
-           }
-        }
-      else
-        {
-         if(state.have_range_high && close>state.range_high+buffer)
-            LeaveRange(state,points,events,rates,1,i);
-         else if(state.have_range_low && close<state.range_low-buffer)
-            LeaveRange(state,points,events,rates,-1,i);
-        }
-
-      // 3. The trend's running extreme since its BOS (the Weak High / Low).
-      if(state.trend!=0 && (!state.have_trail || (state.trend>0?rates[i].high>=state.trail:
-                                                                  rates[i].low<=state.trail)))
-        {
-         state.have_trail=true;
-         state.trail=state.trend>0?rates[i].high:rates[i].low;
-         state.trail_time=rates[i].time;
-        }
+      unit[i]=k[i]*atr[i];
+      inner[i]=unit[i]*Internal_Swing_Ratio;
      }
+   BASE_ZIGZAG main_zz,inner_zz;
+   ZeroMemory(main_zz);
+   ZeroMemory(inner_zz);
+   int sides[],pivots[];
+   double prices[];
+   for(int i=start;i<total;i++)
+     {
+      ZigzagStep(main_zz,rates,unit,i,sides,prices,pivots);
+      for(int j=0;j<ArraySize(sides);j++)
+         OnSwing(s,points,rates,atr,sides[j],prices[j],pivots[j],i);
+      ZigzagStep(inner_zz,rates,inner,i,sides,prices,pivots);
+      for(int j=0;j<ArraySize(sides);j++)
+        {
+         if(sides[j]>0)
+           {
+            s.ihigh.have=true; s.ihigh.price=prices[j]; s.ihigh.pivot=pivots[j];
+            s.ihigh.confirmed=i; s.ihigh.broken=false;
+           }
+         else
+           {
+            s.ilow.have=true; s.ilow.price=prices[j]; s.ilow.pivot=pivots[j];
+            s.ilow.confirmed=i; s.ilow.broken=false;
+           }
+        }
+      InternalBreak(s,s.ihigh,internal_events,rates,1,i);
+      InternalBreak(s,s.ilow,internal_events,rates,-1,i);
+      OnClose(s,events,points,rates,i);
+     }
+   s.k=k[total-1];
    return true;
   }
 
-// Replays structure on any timeframe without drawing it.
-bool AnalyseStructure(const ENUM_TIMEFRAMES timeframe,const int wanted,const double size,
-                      BASE_STRUCTURE_STATE &state,MqlRates &rates[],
-                      BASE_STRUCTURE_POINT &points[],BASE_STRUCTURE_EVENT &events[])
+// Copies a timeframe's closed candles for `displayed` drawn candles: the
+// replay (STRUCTURE_WARMUP_FACTOR times that) plus the closes the swing size
+// is measured over, and replays it with the timeframe's Swing Sensitivity.
+bool AnalyseStructure(const ENUM_TIMEFRAMES timeframe,const int displayed,BASE_STATE &state,MqlRates &rates[],
+                      int &start,BASE_POINT &points[],BASE_EVENT &events[],BASE_EVENT &internal_events[])
   {
    ArraySetAsSeries(rates,false);
-   int total=CopyRates(_Symbol,timeframe,1,wanted,rates);
-   return total>0 && ReplayStructure(rates,total,size,state,points,events);
+   int replay=ReplayBars(displayed);
+   int total=CopyRates(_Symbol,timeframe,1,replay+VR_WINDOW+VR_LAG,rates);
+   if(total<SWING_ATR_LENGTH+2) return false;
+   start=MathMax(0,total-replay);
+   return ReplayStructure(rates,total,start,LevelFactor(TimeframeLevel(timeframe)),state,points,events,
+                          internal_events);
   }
 
-// The trend direction: 1 Bullish, -1 Bearish, 0 Range.
-int BiasDirection(const BASE_STRUCTURE_STATE &state)
+// ------------------------------------------------------------------ texts
+string PriceText(const double price)
   {
-   return state.trend;
+   return DoubleToString(price,_Digits);
   }
 
-// Trend quality: the efficiency of the last `candles` closes (Kaufman): the
-// net move divided by the distance travelled close to close, from 0 (pure
-// chop) to 1 (a straight line), with the net move's direction.  On generated
-// markets with known trends, requiring 0.30 over 30 candles in the trend's
-// direction made Market Tradability right more often, and earlier, than
-// Base's progressive-swing, internal-structure and Hurst requirements (see
-// the README).
+string DirectionWord(const int direction)
+  {
+   return direction>0?"bullish":"bearish";
+  }
+
+string StateText(const BASE_STATE &s)
+  {
+   if(s.state==BASE_CONSOLIDATION) return "Consolidation";
+   return (s.direction>0?"Bullish ":"Bearish ")+(s.state==BASE_TRENDING?"Trending":"Transition");
+  }
+
+// The dashboard output: the state, and a break waiting for the Transition
+// conditions.
+string StateOutput(const BASE_STATE &s)
+  {
+   string text=StateText(s);
+   if(s.att.active)
+      text+=s.state==BASE_TRENDING?" (CHoCH)":" ("+DirectionWord(s.att.u)+" break)";
+   return text;
+  }
+
+int Direction(const BASE_STATE &s)
+  {
+   return s.state==BASE_CONSOLIDATION?0:s.direction;
+  }
+
+string LabelText(const BASE_POINT &point)
+  {
+   if(point.equal>=0) return point.side>0?"EQH":"EQL";
+   if(point.side>0) return point.kind>0?"HH":"LH";
+   return point.kind>0?"LL":"HL";
+  }
+
+// "HH + HL": the latest swing high against the previous one, and the same
+// for lows.
+int PreviousOnSide(const BASE_POINT &points[],const int index)
+  {
+   for(int j=index-1;j>=0;j--)
+      if(points[j].side==points[index].side) return j;
+   return -1;
+  }
+
+int SwingProgression(const BASE_STATE &s,const BASE_POINT &points[])
+  {
+   if(s.last_high<0 || s.last_low<0) return 0;
+   int ph=PreviousOnSide(points,s.last_high),pl=PreviousOnSide(points,s.last_low);
+   if(ph<0 || pl<0) return 0;
+   bool hh=points[s.last_high].price>points[ph].price,hl=points[s.last_low].price>points[pl].price;
+   bool lh=points[s.last_high].price<points[ph].price,ll=points[s.last_low].price<points[pl].price;
+   return hh && hl?1:(ll && lh?-1:0);
+  }
+
+string SwingStructureText(const BASE_STATE &s,const BASE_POINT &points[])
+  {
+   string high="no swing high yet",low="no swing low yet";
+   if(s.last_high>=0) high=points[s.last_high].kind==0?"first high":LabelText(points[s.last_high]);
+   if(s.last_low>=0) low=points[s.last_low].kind==0?"first low":LabelText(points[s.last_low]);
+   return high+" + "+low;
+  }
+
+string LatestSwingsText(const BASE_STATE &s,const BASE_POINT &points[])
+  {
+   string high=s.last_high<0?"no swing high yet":
+               (points[s.last_high].kind==0?"first high":LabelText(points[s.last_high]))+" "+PriceText(points[s.last_high].price);
+   string low=s.last_low<0?"no swing low yet":
+              (points[s.last_low].kind==0?"first low":LabelText(points[s.last_low]))+" "+PriceText(points[s.last_low].price);
+   return high+" | "+low;
+  }
+
+// Strong/Weak High/Low: in a trend or transition the level against it is
+// Strong and the level its BOS must close beyond is Weak (before the next
+// swing forms, the running extreme since its last break); Consolidation
+// shows its range.
+void StrongWeakLevels(const BASE_STATE &s,const BASE_POINT &points[],const MqlRates &rates[],const int total,
+                      BASE_LEVEL &high,string &high_name,BASE_LEVEL &low,string &low_name)
+  {
+   ClearLevel(high);
+   ClearLevel(low);
+   if(s.state==BASE_CONSOLIDATION)
+     {
+      ConsolidationRange(points,high,low);
+      high_name="Range High";
+      low_name="Range Low";
+      return;
+     }
+   BASE_LEVEL weak=s.weak;
+   if(!weak.have && s.break_bar>=0 && s.break_bar<total)
+     {
+      int b=ExtremeSince(rates,s.direction,s.break_bar,total-1);
+      SetLevel(weak,SidePrice(rates,s.direction,b),b);
+     }
+   if(s.direction>0)
+     {
+      low=s.prot;
+      low_name="Strong Low";
+      high=weak;
+      high_name="Weak High";
+     }
+   else
+     {
+      high=s.prot;
+      high_name="Strong High";
+      low=weak;
+      low_name="Weak Low";
+     }
+  }
+
+// Why the timeframe reads its state.
+string WhyText(const BASE_STATE &s)
+  {
+   if(s.state==BASE_TRENDING)
+      return "two "+DirectionWord(s.direction)+" breaks with a "+(s.direction>0?"higher low":"lower high")+
+             " between them; the trend holds while price closes "+(s.direction>0?"above the strong low":
+             "below the strong high");
+   if(s.state==BASE_TRANSITION)
+      return "a "+DirectionWord(s.direction)+" break through "+PriceText(s.trans_break.price)+", then "+
+             (s.by_internal?"two internal BOS "+(s.direction>0?"up":"down"):
+              (s.direction>0?"a higher low":"a lower high")+" at "+PriceText(s.prot.price)+
+              " that held "+PriceText(s.inval.price))+
+             "; a BOS through the "+(s.direction>0?"weak high":"weak low")+" makes it Trending";
+   return "no trending or transitional structure within the last "+(string)MAX_SWINGS+" swings";
+  }
+
+// A break waiting for the Transition conditions, in words.
+string WaitingText(const BASE_STATE &s)
+  {
+   if(!s.att.active) return "";
+   int u=s.att.u;
+   string side=u>0?"higher low":"lower high";
+   return "A "+DirectionWord(u)+" "+(s.state==BASE_TRENDING?"CHoCH":"break")+" through "+PriceText(s.att.broken.price)+
+          " is waiting: a "+side+" that holds "+PriceText(s.att.origin.price)+", or two internal BOS "+(u>0?"up":"down")+
+          ", makes it a "+(u>0?"Bullish":"Bearish")+" Transition; two internal breaks "+(u>0?"down":"up")+
+          " or a close "+(u>0?"below ":"above ")+PriceText(s.att.origin.price)+" make it an LS.";
+  }
+
+string BreakdownText(const BASE_STATE &s,const BASE_POINT &points[],const MqlRates &rates[],const int total,
+                     const int level)
+  {
+   BASE_LEVEL high,low;
+   string high_name="",low_name="";
+   StrongWeakLevels(s,points,rates,total,high,high_name,low,low_name);
+   string levels=high_name+" "+(high.have?PriceText(high.price):"none yet")+" | "+
+                 low_name+" "+(low.have?PriceText(low.price):"none yet");
+   string text="Market Trend: "+StateText(s)+"\nWhy: "+WhyText(s)+"\nLatest Swings: "+LatestSwingsText(s,points)+
+               "\nStrong/Weak: "+levels+"\nSwing Size: "+DoubleToString(s.k,2)+" ATR ("+
+               (Swing_Size_Mode==BASE_AUTO_SIZE?"Auto":"Fixed")+", level "+(string)level+"), internal "+
+               DoubleToString(s.k*Internal_Swing_Ratio,2)+" ATR";
+   string waiting=WaitingText(s);
+   if(waiting!="") text+="\n"+waiting;
+   return text;
+  }
+
+string InternalText(const BASE_STATE &s)
+  {
+   if(s.internal_direction==0) return "No break yet";
+   return (s.internal_direction>0?"Bullish":"Bearish")+(s.internal_kind==BASE_BOS?" (BOS)":" (CHoCH)");
+  }
+
+// "H4", "H4 and M15" or "H4, M30 and M15": the timeframes Market
+// Tradability uses.
+string TradabilityTimeframes()
+  {
+   string names[3];
+   int count=0;
+   names[count++]=HTFName();
+   if(Use_MTF) names[count++]=MTFName();
+   if(Use_LTF) names[count++]=LTFName();
+   string text="";
+   for(int i=0;i<count;i++) text+=(i==0?"":i==count-1?" and ":", ")+names[i];
+   return text;
+  }
+
+// How the internal structure relates to its timeframe's Market Trend.
+string InternalAgreementText(const BASE_STATE &s,const string name)
+  {
+   int d=Direction(s);
+   if(s.internal_direction==0) return "The "+name+" internal structure has no break yet.";
+   if(d==0)
+      return "The "+name+" Market Trend is in Consolidation; the internal structure is "+
+             DirectionWord(s.internal_direction)+".";
+   if(s.internal_direction==d) return "Agrees with the "+name+" Market Trend.";
+   return "Opposes the "+name+" Market Trend: a "+DirectionWord(s.internal_direction)+" move inside the "+
+          DirectionWord(d)+" "+(s.state==BASE_TRENDING?"trend":"transition")+".";
+  }
+
+string InternalTooltip(const BASE_STATE &s,const string name)
+  {
+   return "The latest break of the "+name+" internal structure (swings of "+DoubleToString(Internal_Swing_Ratio,2)+
+          " of the swing size, "+DoubleToString(s.k*Internal_Swing_Ratio,2)+" ATR).\n"+InternalAgreementText(s,name);
+  }
+
+// The HTF trend quality: the efficiency of the last `candles` closes (the
+// net move divided by the distance travelled close to close, 0 for chop and
+// 1 for a straight line) and the net move's direction.
 bool TrendQuality(const MqlRates &rates[],const int total,const int candles,double &value,int &direction)
   {
    value=0.0;
@@ -710,404 +994,6 @@ bool TrendQuality(const MqlRates &rates[],const int total,const int candles,doub
    value=path>0.0?MathAbs(net)/path:0.0;
    direction=net>0.0?1:net<0.0?-1:0;
    return true;
-  }
-string BiasText(const BASE_STRUCTURE_STATE &state)
-  {
-   if(state.trend>0) return "Bullish";
-   if(state.trend<0) return "Bearish";
-   return "Range";
-  }
-
-string PriceText(const double price)
-  {
-   return DoubleToString(price,_Digits);
-  }
-
-string BreakText(const BASE_STRUCTURE_EVENT &event)
-  {
-   return (event.direction>0?"bull ":"bear ")+(event.ls?"LS":event.bos?"BOS":"CHoCH");
-  }
-
-// A swing's label: HH/LH/LL/HL, or EQH/EQL when it is within the EQH/EQL
-// threshold of the previous swing on its side.
-string LabelText(const BASE_STRUCTURE_POINT &point)
-  {
-   if(Show_Equal_Highs_Lows && point.equal>=0) return point.side>0?"EQH":"EQL";
-   if(point.side>0) return point.kind>0?"HH":"LH";
-   return point.kind>0?"LL":"HL";
-  }
-
-string TrendWord(const int direction)
-  {
-   return direction>0?"bullish":"bearish";
-  }
-
-string HTFName() { return TimeframeName(BASETimeframe()); }
-string MTFName() { return TimeframeName(SetupTimeframe()); }
-string LTFName() { return TimeframeName(LTFTimeframe()); }
-
-// What to do on one timeframe's trend: one action and the levels that
-// decide it.
-string RecommendationText(const BASE_STRUCTURE_STATE &state)
-  {
-   if(state.trend!=0)
-     {
-      bool up=state.trend>0;
-      string text=up?"Look for buys on pullbacks while price holds above the protected low "+PriceText(state.protected_level):
-                     "Look for sells on pullbacks while price holds below the protected high "+PriceText(state.protected_level);
-      if(state.have_target)
-         text+="; a close "+(up?"above the weak high ":"below the weak low ")+PriceText(state.target)+
-               " continues the trend";
-      return text+".";
-     }
-   if(!state.have_range_high && !state.have_range_low)
-      return "Stand aside until the first swings form and price closes beyond one.";
-   string text="Stand aside";
-   if(state.have_range_high && state.have_range_low)
-      text+=" or trade only the range edges ("+PriceText(state.range_low)+" to "+PriceText(state.range_high)+")";
-   if(state.have_range_high)
-      text+="; a close above "+PriceText(state.range_high)+(state.prev_trend>0?" resumes the uptrend":" starts an uptrend");
-   if(state.have_range_low)
-      text+="; a close below "+PriceText(state.range_low)+(state.prev_trend<0?" resumes the downtrend":" starts a downtrend");
-   if(!state.have_range_low)
-      text+="; a downtrend needs a swing low first, then a close below it";
-   if(!state.have_range_high)
-      text+="; an uptrend needs a swing high first, then a close above it";
-   return text+".";
-  }
-
-// The dashboard's recommendation: the HTF's, unless the HTF trend is held
-// back by a selected lower timeframe or by Market Tradability, which it then
-// names.
-string TradeRecommendation(const BASE_STRUCTURE_STATE &htf,const BASE_STRUCTURE_STATE &mtf,
-                           const BASE_STRUCTURE_STATE &ltf,const BASE_TRADABILITY tradability)
-  {
-   int direction=htf.trend;
-   if(tradability!=BASE_TRADABLE && direction!=0)
-     {
-      string action=direction>0?"buying":"selling";
-      string lead=HTFName()+" is "+TrendWord(direction)+", but wait for ";
-      if(Use_MTF && mtf.trend!=direction)
-         return lead+MTFName()+" to turn "+TrendWord(direction)+" before "+action+".";
-      if(Use_LTF && ltf.trend!=direction)
-         return lead+LTFName()+" to turn "+TrendWord(direction)+" before "+action+".";
-      return lead+"Market Tradability (see Tradability Reason) before "+action+".";
-     }
-   return RecommendationText(htf);
-  }
-
-// The internal structure's dashboard output: its trend and latest break.
-string InternalTrendText(const BASE_STRUCTURE_STATE &internal,const BASE_STRUCTURE_EVENT &events[])
-  {
-   int last=ArraySize(events)-1;
-   if(last<0) return BiasText(internal);
-   return BiasText(internal)+" ("+(events[last].ls?"LS":events[last].bos?"BOS":"CHoCH")+")";
-  }
-
-// How the internal structure relates to the timeframe's Market Trend.
-string InternalAgreementText(const BASE_STRUCTURE_STATE &internal,const BASE_STRUCTURE_STATE &state,
-                             const string name)
-  {
-   if(state.trend==0)
-      return "The "+name+" Market Trend is a range; the internal structure is "+
-             (internal.trend==0?"a range too.":TrendWord(internal.trend)+".");
-   if(internal.trend==state.trend) return "Agrees with the "+name+" Market Trend.";
-   if(internal.trend==0)
-      return "A range inside the "+TrendWord(state.trend)+" "+name+" trend (a pause while the protected level holds).";
-   return "Opposes the "+name+" Market Trend: a "+TrendWord(internal.trend)+" move inside the "+
-          TrendWord(state.trend)+" trend (a pullback while the protected level holds).";
-  }
-
-string InternalStructureTooltip(const BASE_STRUCTURE_STATE &internal,const BASE_STRUCTURE_EVENT &events[],
-                                const BASE_STRUCTURE_STATE &state,const string name,const double size)
-  {
-   string text="Internal structure ("+DoubleToString(InternalSize(size),2)+" ATR swings, "+
-               DoubleToString(Internal_Swing_Ratio,2)+" of the "+name+" swing size)\nInternal trend: "+
-               BiasText(internal);
-   int last=ArraySize(events)-1;
-   if(last>=0) text+=" since a "+BreakText(events[last])+" through "+PriceText(events[last].level);
-   return text+"\n"+InternalAgreementText(internal,state,name);
-  }
-
-// Strong/Weak High/Low of a timeframe: in a trend the protected level is
-// Strong and the trend's running extreme since its BOS Weak; a range has its
-// high and low.
-string StrongWeakText(const BASE_STRUCTURE_STATE &state)
-  {
-   if(state.trend>0)
-      return "Strong Low "+PriceText(state.protected_level)+
-             (state.have_trail?" | Weak High "+PriceText(state.trail):"");
-   if(state.trend<0)
-      return "Strong High "+PriceText(state.protected_level)+
-             (state.have_trail?" | Weak Low "+PriceText(state.trail):"");
-   string high=state.have_range_high?"Range High "+PriceText(state.range_high):"no range high yet";
-   string low=state.have_range_low?"Range Low "+PriceText(state.range_low):"no range low yet";
-   return high+" | "+low;
-  }
-
-// Why a timeframe reads its trend: the break that set it.
-string TrendWhyText(const BASE_STRUCTURE_STATE &state,const BASE_STRUCTURE_EVENT &events[])
-  {
-   int last=ArraySize(events)-1;
-   if(state.trend!=0 && last>=0)
-      return "a "+TrendWord(state.trend)+" BOS through "+PriceText(events[last].level)+"; the protected "+
-             (state.trend>0?"low ":"high ")+PriceText(state.protected_level)+" holds";
-   if(state.prev_trend!=0 && last>=0)
-      return "the "+TrendWord(state.prev_trend)+" trend's protected "+(state.prev_trend>0?"low ":"high ")+
-             PriceText(events[last].level)+" broke (a "+TrendWord(-state.prev_trend)+" CHoCH)";
-   return "no trend yet: a close beyond the first swings sets it";
-  }
-
-// The latest swing on each side: "HH 1.2345 | HL 1.2300".
-string LatestSwingsText(const BASE_STRUCTURE_STATE &state)
-  {
-   string high=!state.have_high?"no swing high yet":
-               (state.last_high_kind==0?"first high ":state.last_high_kind>0?"HH ":"LH ")+PriceText(state.last_high);
-   string low=!state.have_low?"no swing low yet":
-              (state.last_low_kind==0?"first low ":state.last_low_kind>0?"LL ":"HL ")+PriceText(state.last_low);
-   return high+" | "+low;
-  }
-
-// The trend breakdown, joined for a tooltip.
-string BreakdownText(const BASE_STRUCTURE_STATE &state,const BASE_STRUCTURE_EVENT &events[])
-  {
-   return "Current Trend: "+BiasText(state)+
-          "\nWhy: "+TrendWhyText(state,events)+
-          "\nLatest Swings: "+LatestSwingsText(state)+
-          "\nStrong/Weak: "+StrongWeakText(state)+
-          "\nTrade Recommendations: "+RecommendationText(state);
-  }
-
-// "H4", "H4 and H1" or "H4, H1 and M15": the selected trend timeframes.
-string TrendTimeframesText()
-  {
-   string names[3];
-   int count=0;
-   if(Use_HTF) names[count++]=HTFName();
-   if(Use_MTF) names[count++]=MTFName();
-   if(Use_LTF) names[count++]=LTFName();
-   string result="";
-   for(int i=0;i<count;i++)
-      result+=(i==0?"":(i==count-1?" and ":", "))+names[i];
-   return result;
-  }
-
-// Why a timeframe has no trend: a range, and how it came about.
-string RangeText(const string name,const BASE_STRUCTURE_STATE &state)
-  {
-   if(state.prev_trend==0) return name+" has no trend yet (no close beyond its first swings).";
-   return name+" is in a range: its "+TrendWord(state.prev_trend)+" trend's protected "+
-          (state.prev_trend>0?"low":"high")+" broke (a "+TrendWord(-state.prev_trend)+" CHoCH).";
-  }
-
-// "H4", "H4 and M15": timeframes joined for a sentence.
-string JoinNames(const string &names[],const int count)
-  {
-   string result="";
-   for(int i=0;i<count;i++)
-      result+=(i==0?"":(i==count-1?" and ":", "))+names[i];
-   return result;
-  }
-
-// The latest two swings on each side of a timeframe, for the progressive
-// structure Market Tradability can require: the latest swing high and the
-// one before it, and the same for lows.
-struct BASE_SWINGS
-  {
-   bool have_highs;
-   double high;             // the latest swing high
-   double prev_high;        // the swing high before it
-   bool have_lows;
-   double low;
-   double prev_low;
-  };
-
-bool LastTwoSwings(const BASE_STRUCTURE_POINT &points[],const int side,double &current,double &previous)
-  {
-   int found=0;
-   for(int k=ArraySize(points)-1;k>=0 && found<2;k--)
-     {
-      if(points[k].side!=side) continue;
-      if(found==0) current=points[k].price;
-      else previous=points[k].price;
-      found++;
-     }
-   return found==2;
-  }
-
-void ReadSwings(const BASE_STRUCTURE_POINT &points[],BASE_SWINGS &swings)
-  {
-   ZeroMemory(swings);
-   swings.have_highs=LastTwoSwings(points,1,swings.high,swings.prev_high);
-   swings.have_lows=LastTwoSwings(points,-1,swings.low,swings.prev_low);
-  }
-
-// "HH", "LH" or "EQH" for highs; "LL", "HL" or "EQL" for lows.
-string SwingTag(const int side,const double current,const double previous)
-  {
-   if(side>0) return current>previous?"HH":current<previous?"LH":"EQH";
-   return current<previous?"LL":current>previous?"HL":"EQL";
-  }
-
-// 1 for a bullish progression (an HH and an HL), -1 for a bearish one (an LL
-// and an LH), 0 otherwise.
-int SwingProgression(const BASE_SWINGS &swings)
-  {
-   if(!swings.have_highs || !swings.have_lows) return 0;
-   if(swings.high>swings.prev_high && swings.low>swings.prev_low) return 1;
-   if(swings.low<swings.prev_low && swings.high<swings.prev_high) return -1;
-   return 0;
-  }
-
-// "HH + HL", or what is missing.
-string SwingStructureText(const BASE_SWINGS &swings)
-  {
-   return (swings.have_highs?SwingTag(1,swings.high,swings.prev_high):"no two swing highs yet")+" + "+
-          (swings.have_lows?SwingTag(-1,swings.low,swings.prev_low):"no two swing lows yet");
-  }
-
-// The structure of a timeframe for a direction: "" when it is progressive
-// (an HH and an HL for bullish, an LL and an LH for bearish), else what is
-// missing.
-string SwingProblem(const BASE_SWINGS &swings,const int direction,const string name)
-  {
-   if(!swings.have_highs || !swings.have_lows)
-      return "the "+name+" has no two swing "+(!swings.have_highs?"highs":"lows")+" yet";
-   if(SwingProgression(swings)==direction) return "";
-   return "the "+name+" swings are "+SwingStructureText(swings)+" ("+TrendWord(direction)+" needs "+
-          (direction>0?"HH + HL":"LL + LH")+")";
-  }
-
-// --------------------------------------------------------- Hurst exponent
-// The Hurst exponent H of the last Hurst_Candles closed candles of the Hurst
-// timeframe (the HTF by default), as in the 83% Strategy: a random walk
-// gives about 0.5, a trending (persistent) market more, a mean-reverting one
-// less.
-const int HURST_MIN_LAG=2;
-const int HURST_MAX_LAG=20;
-
-struct BASE_HURST
-  {
-   bool have;
-   double value;            // H
-   int candles;             // closed candles available for it
-  };
-
-ENUM_TIMEFRAMES HurstTimeframe()
-  {
-   if(Hurst_Timeframe==BASE_HURST_MTF) return SetupTimeframe();
-   if(Hurst_Timeframe==BASE_HURST_LTF) return LTFTimeframe();
-   return BASETimeframe();
-  }
-
-string HurstName() { return TimeframeName(HurstTimeframe()); }
-
-// The lagged-difference method (the generalized Hurst exponent with q = 2):
-// x = ln(close) of n closes (oldest first); for each lag tau from
-// HURST_MIN_LAG to HURST_MAX_LAG, sigma(tau) is the root mean square of
-// x[t+tau] - x[t] over the window; H is the least-squares slope of
-// ln sigma(tau) against ln tau.  The drift is not subtracted, so a steady
-// trend raises H as momentum does (with the standard deviation instead, a
-// steady trend read about 0.41, like a random walk).  False when a close is
-// not positive or the prices do not move.  Base.pine computes it in the same
-// order.
-bool HurstOf(const double &close[],const int n,double &h)
-  {
-   h=0.0;
-   if(n<=HURST_MAX_LAG) return false;
-   double x[];
-   ArrayResize(x,n);
-   for(int i=0;i<n;i++)
-     {
-      if(close[i]<=0.0) return false;
-      x[i]=MathLog(close[i]);
-     }
-   int lags=HURST_MAX_LAG-HURST_MIN_LAG+1;
-   double lt[],ls[];
-   ArrayResize(lt,lags);
-   ArrayResize(ls,lags);
-   for(int k=0;k<lags;k++)
-     {
-      int tau=HURST_MIN_LAG+k;
-      int m=n-tau;
-      double square=0.0;
-      for(int t=0;t<m;t++)
-        {
-         double move=x[t+tau]-x[t];
-         square+=move*move;
-        }
-      square/=m;
-      if(square<=0.0) return false;
-      lt[k]=MathLog((double)tau);
-      ls[k]=MathLog(MathSqrt(square));
-     }
-   double mt=0.0,ms=0.0;
-   for(int k=0;k<lags;k++)
-     {
-      mt+=lt[k];
-      ms+=ls[k];
-     }
-   mt/=lags;
-   ms/=lags;
-   double sxy=0.0,sxx=0.0;
-   for(int k=0;k<lags;k++)
-     {
-      sxy+=(lt[k]-mt)*(ls[k]-ms);
-      sxx+=(lt[k]-mt)*(lt[k]-mt);
-     }
-   h=sxy/sxx;
-   return true;
-  }
-
-void ReadHurst(BASE_HURST &hurst)
-  {
-   ZeroMemory(hurst);
-   MqlRates rates[];
-   ArraySetAsSeries(rates,false);
-   int got=CopyRates(_Symbol,HurstTimeframe(),1,Hurst_Candles,rates);
-   hurst.candles=MathMax(got,0);
-   if(got!=Hurst_Candles) return;
-   double close[];
-   ArrayResize(close,got);
-   for(int i=0;i<got;i++) close[i]=rates[i].close;
-   hurst.have=HurstOf(close,got,hurst.value);
-  }
-
-// About 0.5 is a random walk; above it a trending (persistent) market, below
-// it a mean-reverting one.  "trending" is above Hurst_Minimum, so the reading
-// agrees with Market Tradability.
-string HurstWord(const double h)
-  {
-   return h>Hurst_Minimum?"trending":h>=0.45?"random walk":"mean-reverting";
-  }
-
-// The Hurst exponent: "" when it is above Hurst_Minimum, else why not.
-string HurstProblem(const BASE_HURST &hurst)
-  {
-   if(!hurst.have)
-      return hurst.candles<Hurst_Candles?
-             "the Hurst exponent needs "+(string)Hurst_Candles+" closed "+HurstName()+" candles ("+
-             (string)hurst.candles+" so far)":"the Hurst exponent is not available (the "+HurstName()+" closes do not move)";
-   if(hurst.value>Hurst_Minimum) return "";
-   return "the Hurst exponent "+DoubleToString(hurst.value,2)+" is not above "+DoubleToString(Hurst_Minimum,2)+
-          " ("+HurstWord(hurst.value)+")";
-  }
-
-// The HTF internal structure for a direction: "" when it is in that
-// direction, else what it is.
-string InternalProblem(const BASE_STRUCTURE_STATE &internal,const int direction,const string name)
-  {
-   if(internal.trend==direction) return "";
-   return "the "+name+" internal structure is "+(internal.trend==0?"a range":TrendWord(internal.trend))+
-          ", not "+TrendWord(direction);
-  }
-
-// "a; b; c" for the reasons.
-string JoinProblems(const string &problems[],const int count)
-  {
-   string result="";
-   for(int i=0;i<count;i++) result+=(i==0?"":"; ")+problems[i];
-   return result;
   }
 
 // Trend Quality on the dashboard: "0.42 up".
@@ -1131,288 +1017,154 @@ string QualityProblem(const bool have,const double value,const int quality_direc
    return "";
   }
 
-// Market Tradability:
-//  * Tradable: the HTF trend and the trend of every selected trend timeframe
-//    are all Bullish (or all Bearish), and the HTF trend quality (see
-//    TrendQuality) is at least Trend_Quality_Minimum (0.30), its net move in
-//    the trend's direction.  Optionally, also (all off by default):
-//    progressive swings, HH + HL (LL + LH), on each of them
-//    (Require_Progressive_Swings); the HTF internal structure in the trend's
-//    direction (Require_Internal_Agreement); the Hurst exponent above
-//    Hurst_Minimum (Use_Hurst_Filter).
-//  * Not Tradable otherwise.
-// The reason names the timeframes and every condition that fails.
-BASE_TRADABILITY EvaluateTradability(const BASE_STRUCTURE_STATE &htf,const BASE_STRUCTURE_STATE &mtf,
-                                     const BASE_STRUCTURE_STATE &ltf,const BASE_STRUCTURE_STATE &htf_internal,
-                                     const BASE_SWINGS &htf_swings,const BASE_SWINGS &mtf_swings,
-                                     const BASE_SWINGS &ltf_swings,const bool have_quality,
-                                     const double quality,const int quality_direction,
-                                     const BASE_HURST &hurst,string &reason)
+// A timeframe's swings for a direction: "" when they are progressive (an HH
+// and an HL for bullish, an LL and an LH for bearish), else what is missing.
+string SwingProblem(const BASE_STATE &s,const BASE_POINT &points[],const int direction,const string name)
   {
-   int d=htf.trend;
-   int selected=(Use_HTF?1:0)+(Use_MTF?1:0)+(Use_LTF?1:0);
-   // The HTF and the selected timeframes, for the reasons.
-   int named=selected+(Use_HTF?0:1);
-   string names=Use_HTF?TrendTimeframesText():HTFName()+(selected==1?" and ":", ")+TrendTimeframesText();
-   if(d==0)
+   bool highs=s.last_high>=0 && PreviousOnSide(points,s.last_high)>=0;
+   bool lows=s.last_low>=0 && PreviousOnSide(points,s.last_low)>=0;
+   if(!highs || !lows) return "the "+name+" has no two swing "+(!highs?"highs":"lows")+" yet";
+   if(SwingProgression(s,points)==direction) return "";
+   return "the "+name+" swings are "+SwingStructureText(s,points)+" ("+DirectionWord(direction)+" needs "+
+          (direction>0?"HH + HL":"LL + LH")+")";
+  }
+
+// The HTF internal structure for a direction: "" when its latest break is
+// that way, else what it is.
+string InternalProblem(const BASE_STATE &s,const int direction,const string name)
+  {
+   if(s.internal_direction==direction) return "";
+   return "the "+name+" internal structure is "+(s.internal_direction==0?"without a break":
+          DirectionWord(s.internal_direction))+", not "+DirectionWord(direction);
+  }
+
+string InState(const BASE_STATE &s)
+  {
+   return s.state==BASE_CONSOLIDATION?"in Consolidation":StateText(s);
+  }
+
+// Market Tradability (see the README):
+//  * Tradable when the HTF is Trending, every selected MTF/LTF is Trending
+//    or in Transition the same way, and the HTF trend quality is at least
+//    Trend_Quality_Minimum in that direction.  Optionally also progressive
+//    swings (HH + HL, LL + LH) on each of them and the HTF internal structure
+//    agreeing (both off by default).
+//  * Not Tradable otherwise.  The reason names every condition that fails.
+bool EvaluateTradability(const BASE_STATE &htf,const BASE_STATE &mtf,const BASE_STATE &ltf,
+                         const BASE_POINT &htf_points[],const BASE_POINT &mtf_points[],const BASE_POINT &ltf_points[],
+                         const bool have_quality,const double quality,const int quality_direction,string &reason)
+  {
+   if(htf.state==BASE_CONSOLIDATION)
      {
-      reason=RangeText(HTFName(),htf);
-      return BASE_NOT_TRADABLE;
+      reason=HTFName()+" is in Consolidation: no trending or transitional structure within the last "+
+             (string)MAX_SWINGS+" swings.";
+      return false;
      }
-   if(Use_MTF && mtf.trend!=d)
+   int d=htf.direction;
+   if(htf.state==BASE_TRANSITION)
      {
-      reason=mtf.trend==0?RangeText(MTFName(),mtf):
-             HTFName()+" is "+TrendWord(d)+" but "+MTFName()+" is "+TrendWord(mtf.trend)+".";
-      return BASE_NOT_TRADABLE;
+      reason=HTFName()+" is in a "+StateText(htf)+": wait for the BOS that makes it Trending.";
+      return false;
      }
-   if(Use_LTF && ltf.trend!=d)
+   string other[2];
+   int count=0;
+   if(Use_MTF && Direction(mtf)!=d) other[count++]=MTFName()+" is "+InState(mtf);
+   if(Use_LTF && Direction(ltf)!=d) other[count++]=LTFName()+" is "+InState(ltf);
+   if(count>0)
      {
-      reason=ltf.trend==0?RangeText(LTFName(),ltf):
-             HTFName()+" is "+TrendWord(d)+" but "+LTFName()+" is "+TrendWord(ltf.trend)+".";
-      return BASE_NOT_TRADABLE;
+      reason=HTFName()+" is "+StateText(htf)+", but "+other[0]+(count>1?" and "+other[1]:"")+".";
+      return false;
      }
    string checks[6];
    checks[0]=QualityProblem(have_quality,quality,quality_direction,d);
-   checks[1]=Require_Progressive_Swings?SwingProblem(htf_swings,d,HTFName()):"";
-   checks[2]=Require_Progressive_Swings && Use_MTF?SwingProblem(mtf_swings,d,MTFName()):"";
-   checks[3]=Require_Progressive_Swings && Use_LTF?SwingProblem(ltf_swings,d,LTFName()):"";
-   checks[4]=Require_Internal_Agreement?InternalProblem(htf_internal,d,HTFName()):"";
-   checks[5]=Use_Hurst_Filter?HurstProblem(hurst):"";
-   string problems[6];
-   int count=0;
-   for(int k=0;k<6;k++)
-      if(checks[k]!="") problems[count++]=checks[k];
-   string lead=names+(named==1?" is ":named==2?" are both ":" are all ")+TrendWord(d);
-   if(count==0)
+   checks[1]=Require_Progressive_Swings?SwingProblem(htf,htf_points,d,HTFName()):"";
+   checks[2]=Require_Progressive_Swings && Use_MTF?SwingProblem(mtf,mtf_points,d,MTFName()):"";
+   checks[3]=Require_Progressive_Swings && Use_LTF?SwingProblem(ltf,ltf_points,d,LTFName()):"";
+   checks[4]=Require_Internal_Agreement?InternalProblem(htf,d,HTFName()):"";
+   string problems="";
+   for(int k=0;k<5;k++)
+      if(checks[k]!="") problems+=(problems==""?"":"; ")+checks[k];
+   string lead=(Use_MTF || Use_LTF?TradabilityTimeframes()+" agree: ":"")+HTFName()+" is "+StateText(htf);
+   if(problems!="")
      {
-      reason=lead+" and the "+HTFName()+" trend quality "+DoubleToString(quality,2)+" is at least "+
-             DoubleToString(Trend_Quality_Minimum,2);
-      if(Require_Progressive_Swings) reason+=", with "+(d>0?"HH + HL":"LL + LH");
-      if(Require_Internal_Agreement) reason+=", the "+HTFName()+" internal structure agrees";
-      if(Use_Hurst_Filter) reason+=", the Hurst exponent "+DoubleToString(hurst.value,2)+" is above "+
-                                   DoubleToString(Hurst_Minimum,2);
-      reason+=".";
-      return BASE_TRADABLE;
-     }
-   reason=lead+", but "+JoinProblems(problems,count)+".";
-   return BASE_NOT_TRADABLE;
-  }
-
-// Healthy Extension blocks only an overextended market.  In the HTF trend
-// direction, the extension is how far the latest LTF close is beyond the
-// latest MTF swing on the other side (the swing low in a bullish trend, the
-// swing high in a bearish one), in MTF ATR (14 candles); more than
-// Maximum_Extension_ATR (10) is overextended.  With no trend direction or no
-// MTF swing yet, or price back beyond that swing, the market is not
-// overextended.  On real data (an index H1/M15/M5, EURUSD D1/H4/H1, five
-// stocks MN/W1/D1) the 6% of Tradable candles beyond 10 MTF ATR were
-// followed by a pullback of 1 ATR before a 1 ATR move on 56% of the time
-// (48% for the rest), and price was 0.9 ATR lower after 50 candles.  The
-// v2.40 rule (0 to 3 LTF ATR from an LTF HL/LH) blocked 83% of Tradable
-// candles without those blocked doing any worse.
-// Returns EMPTY_VALUE when there is nothing to measure.
-double TrendExtension(const BASE_STRUCTURE_STATE &htf,const BASE_STRUCTURE_STATE &mtf,
-                      const double close,const double mtf_atr)
-  {
-   int direction=BiasDirection(htf);
-   if(direction==0 || mtf_atr<=0.0) return EMPTY_VALUE;
-   if(direction>0 && mtf.have_low) return (close-mtf.last_low)/mtf_atr;
-   if(direction<0 && mtf.have_high) return (mtf.last_high-close)/mtf_atr;
-   return EMPTY_VALUE;
-  }
-
-bool HealthyExtension(const double extension)
-  {
-   return extension==EMPTY_VALUE || extension<=Maximum_Extension_ATR;
-  }
-
-// "4.2 H1 ATR" for the dashboard; empty when nothing was measured.
-string ExtensionText(const double extension)
-  {
-   return extension==EMPTY_VALUE?"":DoubleToString(extension,1)+" "+MTFName()+" ATR";
-  }
-
-// Optimal Conditions: every enabled requirement must pass.  Returns the
-// result and the reason listing each failed requirement.
-bool EvaluateOptimal(const bool bias_ready,const bool healthy_extension,
-                     const bool good_volume,const double volume_ratio,
-                     const bool good_momentum,const double momentum_ratio,string &reason,
-                     const double extension=EMPTY_VALUE)
-  {
-   bool optimal=(!Use_Timeframe_Correlation_For_Optimal || bias_ready) &&
-                (!Use_Healthy_Extension_For_Optimal || healthy_extension) &&
-                (!Use_Market_Volume_For_Optimal || good_volume) &&
-                (!Use_Price_Momentum_For_Optimal || good_momentum);
-   if(optimal)
-     {
-      reason="All selected requirements are met";
-      return true;
-     }
-   reason="";
-   if(Use_Timeframe_Correlation_For_Optimal && !bias_ready)
-      reason="the selected timeframes do not correlate (see Tradability Reason)";
-   if(Use_Healthy_Extension_For_Optimal && !healthy_extension)
-      reason+=(reason==""?"":"; ")+"price is overextended"+
-              (extension==EMPTY_VALUE?"":" ("+ExtensionText(extension)+" beyond the latest "+MTFName()+" swing)");
-   if(Use_Market_Volume_For_Optimal && !good_volume)
-      reason+=(reason==""?"":"; ")+(volume_ratio<Volume_Minimum_Ratio?"volume is too low":"volume is too high");
-   if(Use_Price_Momentum_For_Optimal && !good_momentum)
-      reason+=(reason==""?"":"; ")+(momentum_ratio<Momentum_Minimum_Ratio?
-                                    "momentum is too low (price is sluggish)":
-                                    "momentum is too high (price would need to be chased)");
-   return false;
-  }
-
-// True range captures both the candle's travel and any gap from the preceding
-// close.  Relative true range is used as a direction-neutral momentum measure:
-// quiet/sluggish bars and unusually fast chase bars are both undesirable.
-double BarTrueRange(const MqlRates &rates[],const int index)
-  {
-   double range=rates[index].high-rates[index].low;
-   if(index<=0) return range;
-   return MathMax(range,MathMax(MathAbs(rates[index].high-rates[index-1].close),
-                                MathAbs(rates[index].low-rates[index-1].close)));
-  }
-
-bool ParseSession(const string source,int &start_minutes,int &end_minutes)
-  {
-   string pieces[];
-   if(StringSplit(source,'-',pieces)!=2 || StringLen(pieces[0])!=4 || StringLen(pieces[1])!=4)
+      reason=lead+", but "+problems+".";
       return false;
-   // StringToInteger silently converts malformed text (for example "AB00")
-   // to zero.  Reject anything other than the documented HHMM-HHMM format so
-   // a typo cannot unexpectedly enable a midnight session.
-   for(int part=0;part<2;part++)
-      for(int character=0;character<4;character++)
-        {
-         ushort digit=StringGetCharacter(pieces[part],character);
-         if(digit<'0' || digit>'9') return false;
-        }
-   int sh=(int)StringToInteger(StringSubstr(pieces[0],0,2));
-   int sm=(int)StringToInteger(StringSubstr(pieces[0],2,2));
-   int eh=(int)StringToInteger(StringSubstr(pieces[1],0,2));
-   int em=(int)StringToInteger(StringSubstr(pieces[1],2,2));
-   if(sh>23 || eh>23 || sm>59 || em>59) return false;
-   start_minutes=sh*60+sm; end_minutes=eh*60+em;
+     }
+   reason=lead+" and the "+HTFName()+" trend quality "+DoubleToString(quality,2)+" is at least "+
+          DoubleToString(Trend_Quality_Minimum,2);
+   if(Require_Progressive_Swings) reason+=", with "+(d>0?"HH + HL":"LL + LH");
+   if(Require_Internal_Agreement) reason+=", the "+HTFName()+" internal structure agrees";
+   reason+=".";
+   if(htf.att.active)
+      reason+=" A "+DirectionWord(htf.att.u)+" CHoCH is waiting (see the Market Trend tooltip).";
    return true;
   }
 
-bool InSession(const datetime server_time)
+// What to do on one timeframe's structure.
+string RecommendationText(const BASE_STATE &s,const BASE_POINT &points[],const MqlRates &rates[],const int total)
   {
-   if(!Use_Session_Filter || Session_Preset==BASE_24X7) return true;
-   string session="0000-2359";
-   int zone_offset=0;
-   if(Session_Preset==BASE_NEW_YORK) { session="0930-1600"; zone_offset=-300; }
-   else if(Session_Preset==BASE_LONDON) { session="0800-1700"; zone_offset=0; }
-   else if(Session_Preset==BASE_TOKYO) { session="0900-1500"; zone_offset=540; }
-   else if(Session_Preset==BASE_SYDNEY) { session="0800-1700"; zone_offset=600; }
-   else { session=Custom_Session; zone_offset=Custom_UTC_Offset_Minutes; }
-   int begin=0,end=0;
-   if(!ParseSession(session,begin,end)) return false;
-   datetime local_time=server_time+(zone_offset-Server_UTC_Offset_Minutes)*60;
-   MqlDateTime stamp; TimeToStruct(local_time,stamp);
-   int minute=stamp.hour*60+stamp.min;
-   if(begin==end) return true;
-   return begin<end?(minute>=begin && minute<end):(minute>=begin || minute<end);
-  }
-
-// Copies the newest `count` closed-bar values.  Fails while the indicator is
-// still calculating so the caller can retry instead of using partial data.
-bool CopyIndicator(const int handle,const int buffer,const int count,double &values[])
-  {
-   ArraySetAsSeries(values,false);
-   if(handle==INVALID_HANDLE || BarsCalculated(handle)<count+1) return false;
-   return CopyBuffer(handle,buffer,1,count,values)==count;
-  }
-
-// The latest closed MTF candle and its MTF MA.
-bool MTFValues(double &ma,double &open,double &close)
-  {
-   double value[1];
-   if(g_mtf_ma_handle==INVALID_HANDLE || CopyBuffer(g_mtf_ma_handle,0,1,1,value)!=1) return false;
-   ma=value[0];
-   open=iOpen(_Symbol,SetupTimeframe(),1);
-   close=iClose(_Symbol,SetupTimeframe(),1);
-   return open!=0.0 && close!=0.0;
-  }
-
-string PassText(const bool pass)
-  {
-   return pass?"PASS":"BLOCKED";
-  }
-
-// Qualifies the latest closed structure candle with the HTF MA, MTF MA,
-// session, ADX and ATR filters.  The HTF MA filter compares the latest closed
-// HTF candle with the HTF MA, the MTF MA filter the latest closed MTF candle
-// with the MTF MA.  The filters never gate structure, trend or alerts; the
-// result is shown as the tooltip of the dashboard's tradability row.
-string EntryFilterTooltip(const MqlRates &bar,const double &ma[],const double &adx[],
-                          const double &atr[])
-  {
-   bool htf_long=true,htf_short=true;
-   string htf_text="off";
-   if(Use_HTF_MA_Filter)
+   BASE_LEVEL high,low;
+   string high_name="",low_name="";
+   StrongWeakLevels(s,points,rates,total,high,high_name,low,low_name);
+   int d=s.direction;
+   if(s.state==BASE_CONSOLIDATION)
      {
-      double value=ma[ArraySize(ma)-1];
-      htf_long=HTF_MA_Filter_Mode==BASE_PRICE_ABOVE_BELOW?bar.close>value
-               :bar.close>value && bar.open>value && bar.close>bar.open;
-      htf_short=HTF_MA_Filter_Mode==BASE_PRICE_ABOVE_BELOW?bar.close<value
-                :bar.close<value && bar.open<value && bar.close<bar.open;
-      htf_text=htf_long?"long":(htf_short?"short":"neutral");
+      string text="Stand aside";
+      if(high.have && low.have)
+         text+=" or trade only the range edges ("+PriceText(low.price)+" to "+PriceText(high.price)+
+               "); a close beyond either starts a break";
+      if(s.att.active) text+="; a "+DirectionWord(s.att.u)+" break is waiting for its Transition";
+      return text+".";
      }
-   bool mtf_long=!Use_MTF_MA_Filter,mtf_short=!Use_MTF_MA_Filter;
-   string mtf_text="off";
-   double mtf_ma=0.0,mtf_open=0.0,mtf_close=0.0;
-   if(Use_MTF_MA_Filter)
-     {
-      mtf_text="unavailable";
-      if(MTFValues(mtf_ma,mtf_open,mtf_close))
-        {
-         mtf_long=MTF_MA_Filter_Mode==BASE_PRICE_ABOVE_BELOW?mtf_close>mtf_ma
-                  :mtf_close>mtf_ma && mtf_open>mtf_ma && mtf_close>mtf_open;
-         mtf_short=MTF_MA_Filter_Mode==BASE_PRICE_ABOVE_BELOW?mtf_close<mtf_ma
-                   :mtf_close<mtf_ma && mtf_open<mtf_ma && mtf_close<mtf_open;
-         mtf_text=mtf_long?"long":(mtf_short?"short":"neutral");
-        }
-     }
-   bool session=InSession(bar.time);
-   bool adx_pass=!Use_ADX_Filter || (adx[0]!=EMPTY_VALUE && adx[0]>=ADX_Minimum);
-   bool atr_pass=!Use_ATR_Filter || (atr[0]!=EMPTY_VALUE &&
-                 (ATR_Filter_Mode==BASE_ATR_MINIMUM?atr[0]>=ATR_Minimum:
-                  ATR_Filter_Mode==BASE_ATR_MAXIMUM?atr[0]<=ATR_Maximum:
-                  atr[0]>=ATR_Minimum && atr[0]<=ATR_Maximum));
-   bool long_direction=htf_long && mtf_long && session;
-   bool short_direction=htf_short && mtf_short && session;
-   bool choch_adx=!Use_ADX_Filter || Apply_ADX_Filter_To==BASE_BOS_ONLY || adx_pass;
-   string text="Entry filters, latest closed "+TimeframeName(BASETimeframe())+" candle";
-   text+="\nBOS: long "+PassText(long_direction && adx_pass && atr_pass)+
-         ", short "+PassText(short_direction && adx_pass && atr_pass);
-   text+="\nCHoCH: long "+PassText(long_direction && choch_adx && atr_pass)+
-         ", short "+PassText(short_direction && choch_adx && atr_pass);
-   text+="\nHTF MA "+htf_text+" | MTF MA "+mtf_text+" | Session "+
-         (Use_Session_Filter?(session?"in":"out"):"off");
-   text+="\nADX "+(Use_ADX_Filter?DoubleToString(adx[0],1)+" "+PassText(adx_pass):"off")+
-         " | ATR "+(Use_ATR_Filter?DoubleToString(atr[0],_Digits)+" "+PassText(atr_pass):"off");
-   return text;
+   bool up=d>0;
+   BASE_LEVEL strong=up?low:high,weak=up?high:low;
+   if(s.state==BASE_TRANSITION)
+      return "A "+StateText(s)+": wait for the BOS"+(weak.have?(up?" above ":" below ")+PriceText(weak.price):"")+
+             " before "+(up?"buying":"selling")+(strong.have?"; a close "+(up?"below ":"above ")+
+             PriceText(strong.price)+" breaks it":"")+".";
+   if(s.att.active)
+      return "A "+DirectionWord(s.att.u)+" CHoCH through "+PriceText(s.att.broken.price)+
+             " is waiting: hold off until a "+(up?"lower high":"higher low")+" (a Transition) or an LS resolves it.";
+   string text="Look for "+(up?"buys":"sells")+" on pullbacks while price holds "+(up?"above the strong low ":
+               "below the strong high ")+(strong.have?PriceText(strong.price):"");
+   if(weak.have)
+      text+="; a close "+(up?"above the weak high ":"below the weak low ")+PriceText(weak.price)+" continues the trend";
+   return text+".";
   }
 
+// The dashboard's recommendation: the HTF's, unless a selected lower
+// timeframe or Market Tradability holds the HTF trend back.
+string TradeRecommendation(const BASE_STATE &htf,const BASE_STATE &mtf,const BASE_STATE &ltf,
+                           const BASE_POINT &points[],const MqlRates &rates[],const int total,const bool tradable)
+  {
+   string text=RecommendationText(htf,points,rates,total);
+   if(tradable || htf.state!=BASE_TRENDING || htf.att.active) return text;
+   int d=htf.direction;
+   string action=d>0?"buying":"selling";
+   string lead=HTFName()+" is "+StateText(htf)+", but wait for ";
+   if(Use_MTF && Direction(mtf)!=d) return lead+MTFName()+" to turn "+DirectionWord(d)+" before "+action+".";
+   if(Use_LTF && Direction(ltf)!=d) return lead+LTFName()+" to turn "+DirectionWord(d)+" before "+action+".";
+   return lead+"Market Tradability (see Tradability Reason) before "+action+".";
+  }
+
+// --------------------------------------------------------------- drawing
 void DrawTextAnchored(const string id,const datetime time,const double price,const string text,
-                      const color clr,const ENUM_ANCHOR_POINT anchor,const int font_size)
+                      const color clr,const ENUM_ANCHOR_POINT anchor)
   {
    string name=g_prefix+id;
    if(ObjectFind(0,name)>=0 || !ObjectCreate(0,name,OBJ_TEXT,0,time,price)) return;
    ObjectSetString(0,name,OBJPROP_TEXT,text);
    ObjectSetInteger(0,name,OBJPROP_COLOR,clr);
-   ObjectSetInteger(0,name,OBJPROP_FONTSIZE,font_size);
+   ObjectSetInteger(0,name,OBJPROP_FONTSIZE,(int)Label_Size);
    ObjectSetInteger(0,name,OBJPROP_ANCHOR,anchor);
    ObjectSetInteger(0,name,OBJPROP_SELECTABLE,false);
   }
 
 // Text centred above the point, or below it when `below`.
 void DrawText(const string id,const datetime time,const double price,const string text,
-              const color clr,const bool below,const int font_size)
+              const color clr,const bool below)
   {
-   DrawTextAnchored(id,time,price,text,clr,below?ANCHOR_UPPER:ANCHOR_LOWER,font_size);
+   DrawTextAnchored(id,time,price,text,clr,below?ANCHOR_UPPER:ANCHOR_LOWER);
   }
 
 void DrawSegment(const string id,const datetime from,const double from_price,
@@ -1424,83 +1176,19 @@ void DrawSegment(const string id,const datetime from,const double from_price,
    ObjectSetInteger(0,name,OBJPROP_RAY_RIGHT,false);
    ObjectSetInteger(0,name,OBJPROP_COLOR,clr);
    ObjectSetInteger(0,name,OBJPROP_STYLE,style);
-   ObjectSetInteger(0,name,OBJPROP_WIDTH,MathMax(1,MathMin(4,width)));
+   ObjectSetInteger(0,name,OBJPROP_WIDTH,width);
    ObjectSetInteger(0,name,OBJPROP_SELECTABLE,false);
   }
 
-// BOS, CHoCH and LS share one drawing: a line from the broken swing to the
-// first candle that touches its level (see FirstTouchBar), and the caption
-// centred on that line (the candle midway between the two), above a line
-// broken upwards and below one broken downwards.  An LS keeps the place of
-// the CHoCH it replaced, in its own colour.  Object names use the candle that
-// closed through the level.
-void DrawSignal(const string kind,const int direction,const datetime swing_time,
-                const double level,const datetime break_time,const datetime end_time,
-                const datetime label_time)
+// A structure line never clips through a candle: it ends on the first candle
+// after the swing whose wick or body reaches the level (the breaking candle
+// at the latest).
+int FirstTouchBar(const MqlRates &rates[],const int swing_bar,const int break_bar,
+                  const int direction,const double level)
   {
-   bool bos=kind=="BOS",ls=kind=="LS";
-   if((bos && !Show_BOS_Labels) || (ls && !Show_LS_Labels) || (!bos && !ls && !Show_CHoCH_Labels))
-      return;
-   color clr=ls?(direction>0?Bullish_LS_Color:Bearish_LS_Color):
-             direction>0?(bos?Bullish_BOS_Color:Bullish_CHoCH_Color)
-                        :(bos?Bearish_BOS_Color:Bearish_CHoCH_Color);
-   string key=kind+(direction>0?"_UP_":"_DOWN_")+(string)break_time;
-   DrawText(key,label_time,level,kind,clr,direction<0,(int)Label_Size);
-   if(Show_Structure_Lines)
-      DrawSegment(key+"_LINE",swing_time,level,end_time,level,
-                  ls?clr:(bos?clrBlue:clrRed),Line_Style,Line_Width);
-  }
-
-string StructureLabel(const BASE_STRUCTURE_POINT &point)
-  {
-   return LabelText(point);
-  }
-
-void DrawStructurePoint(const string kind,const int side,const datetime time,const double price)
-  {
-   if(!Show_Swing_Points) return;
-   bool low=side<0;
-   color clr=low?clrTeal:clrIndianRed;
-   DrawText("STRUCTURE_"+kind+"_"+(string)time,time,price,kind,clr,low,(int)Label_Size);
-  }
-
-// Draws one replay from candle `first` onwards (earlier candles are warm-up):
-// the HH/HL/LH/LL/EQH/EQL labels (the first swing on each side has none), a
-// dotted line joining each equal high or low to the swing it equals, every
-// BOS/CHoCH/LS whose swing is drawn, and the dotted latest swing high and
-// low.
-void DrawStructure(const MqlRates &rates[],const int total,const int first,
-                   const BASE_STRUCTURE_STATE &state,const BASE_STRUCTURE_POINT &points[],
-                   const BASE_STRUCTURE_EVENT &events[])
-  {
-   int point_count=ArraySize(points);
-   for(int i=0;i<point_count;i++)
-     {
-      if(points[i].kind==0 || points[i].pivot<first) continue;
-      DrawStructurePoint(StructureLabel(points[i]),points[i].side,points[i].time,points[i].price);
-      int equal=points[i].equal;
-      if(Show_Swing_Points && Show_Equal_Highs_Lows && equal>=0 && points[equal].pivot>=first)
-         DrawSegment("EQUAL_"+(string)points[i].time,points[equal].time,points[equal].price,
-                     points[i].time,points[i].price,points[i].side>0?clrIndianRed:clrTeal,STYLE_DOT,1);
-     }
-   // A break is drawn only with its swing, so every BOS, CHoCH and LS starts
-   // from a drawn candle.
-   int event_count=ArraySize(events);
-   for(int i=0;i<event_count;i++)
-      if(events[i].swing_bar>=first)
-        {
-         int end=FirstTouchBar(rates,events[i].swing_bar,events[i].bar,events[i].direction,events[i].level);
-         int middle=(int)MathRound(0.5*(events[i].swing_bar+end));
-         DrawSignal(events[i].ls?"LS":(events[i].bos?"BOS":"CHoCH"),events[i].direction,
-                    events[i].swing_time,events[i].level,rates[events[i].bar].time,
-                    rates[end].time,rates[middle].time);
-        }
-   if(Show_Swing_Points && state.have_high)
-      DrawSegment("LAST_HIGH",state.last_high_time,state.last_high,rates[total-1].time,
-                  state.last_high,clrIndianRed,STYLE_DOT,1);
-   if(Show_Swing_Points && state.have_low)
-      DrawSegment("LAST_LOW",state.last_low_time,state.last_low,rates[total-1].time,
-                  state.last_low,clrTeal,STYLE_DOT,1);
+   for(int b=swing_bar+1;b<break_bar;b++)
+      if(direction>0?rates[b].high>=level:rates[b].low<=level) return b;
+   return break_bar;
   }
 
 // A caption faded towards the chart background (internal captions are drawn
@@ -1514,149 +1202,97 @@ color FadeColor(const color clr,const double amount)
    return (color)((b<<16)|(g<<8)|r);
   }
 
-// The internal structure's BOS/CHoCH/LS: a dashed width-1 line from the
-// broken internal swing to the first candle touching its level and a faded
-// caption centred on it, above a line broken upwards and below one broken
-// downwards.  A swing that is also a main swing is skipped, since the main
-// structure draws that level.  A break is drawn when its closing candle is
-// in the drawn window.
-void DrawInternalBreaks(const MqlRates &rates[],const BASE_STRUCTURE_EVENT &breaks[],
-                        const BASE_STRUCTURE_POINT &points[],const datetime first_time)
+// Draws one replay from candle `first` onwards:
+//  * HH/HL/LH/LL/EQH/EQL labels (the first swing on each side has none), and a
+//    dotted line joining each equal high or low to the swing it equals;
+//  * every BOS/CHoCH/LS whose swing is drawn: a line from the swing to the
+//    first candle that touches its level and the caption centred on it (BOS
+//    blue, CHoCH red, LS deep yellow);
+//  * the internal BOS/CHoCH (dashed, faded), except a break of a main swing;
+//  * Strong/Weak High/Low (Range High/Low in Consolidation), to 20 candles
+//    right of the latest one;
+//  * the latest swing high and low, dotted.
+void DrawChart(const MqlRates &rates[],const int total,const int first,const BASE_STATE &s,
+               const BASE_POINT &points[],const BASE_EVENT &events[],const BASE_EVENT &internal_events[],
+               const ENUM_TIMEFRAMES timeframe)
   {
-   if(!Show_Internal_Structure) return;
    int count=ArraySize(points);
-   for(int i=0;i<ArraySize(breaks);i++)
-     {
-      if(rates[breaks[i].bar].time<first_time) continue;
-      bool swing=false;
-      for(int k=count-1;k>=0 && !swing;k--)
-         if(points[k].side==breaks[i].direction && points[k].time==breaks[i].swing_time) swing=true;
-      if(swing) continue;
-      color clr=breaks[i].direction>0?Internal_Bullish_Color:Internal_Bearish_Color;
-      int end=FirstTouchBar(rates,breaks[i].swing_bar,breaks[i].bar,breaks[i].direction,breaks[i].level);
-      int middle=(int)MathRound(0.5*(breaks[i].swing_bar+end));
-      string key="INTERNAL_"+(breaks[i].direction>0?"BULL_":"BEAR_")+(string)rates[breaks[i].bar].time;
-      DrawSegment(key+"_SEGMENT",breaks[i].swing_time,breaks[i].level,rates[end].time,
-                  breaks[i].level,clr,STYLE_DASH,1);
-      DrawText(key,rates[middle].time,breaks[i].level,breaks[i].ls?"LS":breaks[i].bos?"BOS":"CHoCH",
-               FadeColor(clr,0.3),breaks[i].direction<0,(int)Label_Size);
-     }
-  }
-
-// Strong/Weak High/Low: dashed lines to 20 candles right of the latest
-// closed candle with their names just right of the line ends.  In a bullish
-// trend the protected low is the Strong Low and the running high since the
-// BOS the Weak High (bearish mirrors this); a range shows its Range High and
-// Range Low.
-void DrawStrongWeak(const BASE_STRUCTURE_STATE &state,const datetime last_time,
-                    const ENUM_TIMEFRAMES timeframe)
-  {
-   if(!Show_Strong_Weak_High_Low) return;
-   datetime right=last_time+20*PeriodSeconds(timeframe);
-   bool have_high=false,have_low=false;
-   double high=0.0,low=0.0;
-   datetime high_time=0,low_time=0;
-   string high_name="",low_name="";
-   if(state.trend>0)
-     {
-      have_low=state.have_protected;
-      low=state.protected_level;
-      low_time=state.protected_time;
-      low_name="Strong Low";
-      have_high=state.have_trail;
-      high=state.trail;
-      high_time=state.trail_time;
-      high_name="Weak High";
-     }
-   else if(state.trend<0)
-     {
-      have_high=state.have_protected;
-      high=state.protected_level;
-      high_time=state.protected_time;
-      high_name="Strong High";
-      have_low=state.have_trail;
-      low=state.trail;
-      low_time=state.trail_time;
-      low_name="Weak Low";
-     }
-   else
-     {
-      have_high=state.have_range_high;
-      high=state.range_high;
-      high_time=state.range_high_time;
-      high_name="Range High";
-      have_low=state.have_range_low;
-      low=state.range_low;
-      low_time=state.range_low_time;
-      low_name="Range Low";
-     }
-   if(have_high)
-     {
-      DrawSegment("STRONG_WEAK_HIGH",high_time,high,right,high,clrIndianRed,STYLE_DASH,1);
-      DrawTextAnchored("STRONG_WEAK_HIGH_TEXT",right,high,high_name,clrIndianRed,ANCHOR_LEFT,(int)Label_Size);
-     }
-   if(have_low)
-     {
-      DrawSegment("STRONG_WEAK_LOW",low_time,low,right,low,clrTeal,STYLE_DASH,1);
-      DrawTextAnchored("STRONG_WEAK_LOW_TEXT",right,low,low_name,clrTeal,ANCHOR_LEFT,(int)Label_Size);
-     }
-  }
-
-// One chart replay drawn: its structure, its internal structure (the same
-// engine with the internal swing size) and its Strong/Weak High/Low.
-void DrawChart(const MqlRates &rates[],const int total,const int first,const BASE_STRUCTURE_STATE &state,
-               const BASE_STRUCTURE_POINT &points[],const BASE_STRUCTURE_EVENT &events[],
-               const double internal_size,const ENUM_TIMEFRAMES timeframe)
-  {
-   DrawStructure(rates,total,first,state,points,events);
+   if(Show_Swing_Points)
+      for(int i=0;i<count;i++)
+        {
+         if(points[i].kind==0 || points[i].pivot<first) continue;
+         bool low=points[i].side<0;
+         DrawText("SWING_"+(string)points[i].time+(low?"_L":"_H"),points[i].time,points[i].price,LabelText(points[i]),
+                  low?LOW_COLOR:HIGH_COLOR,low);
+         int equal=points[i].equal;
+         if(equal>=0 && points[equal].pivot>=first)
+            DrawSegment("EQUAL_"+(string)points[i].time+(low?"_L":"_H"),points[equal].time,points[equal].price,
+                        points[i].time,points[i].price,low?LOW_COLOR:HIGH_COLOR,STYLE_DOT,1);
+        }
+   if(Show_Structure_Breaks)
+      for(int i=0;i<ArraySize(events);i++)
+        {
+         if(events[i].swing_bar<first) continue;
+         string kind=events[i].ls?"LS":events[i].kind==BASE_BOS?"BOS":"CHoCH";
+         color clr=events[i].ls?LS_COLOR:events[i].kind==BASE_BOS?BOS_COLOR:CHOCH_COLOR;
+         int end=FirstTouchBar(rates,events[i].swing_bar,events[i].bar,events[i].direction,events[i].level);
+         int middle=(int)MathRound(0.5*(events[i].swing_bar+end));
+         string key="BREAK_"+(events[i].direction>0?"UP_":"DOWN_")+(string)rates[events[i].bar].time;
+         DrawText(key,rates[middle].time,events[i].level,kind,clr,events[i].direction<0);
+         DrawSegment(key+"_LINE",events[i].swing_time,events[i].level,rates[end].time,events[i].level,clr,STYLE_SOLID,2);
+        }
    if(Show_Internal_Structure)
+      for(int i=0;i<ArraySize(internal_events);i++)
+        {
+         if(internal_events[i].bar<first) continue;
+         bool main_swing=false;
+         for(int k=count-1;k>=0 && !main_swing;k--)
+            if(points[k].side==internal_events[i].direction && points[k].pivot==internal_events[i].swing_bar)
+               main_swing=true;
+         if(main_swing) continue;
+         color clr=internal_events[i].direction>0?INTERNAL_BULL_COLOR:INTERNAL_BEAR_COLOR;
+         int end=FirstTouchBar(rates,internal_events[i].swing_bar,internal_events[i].bar,internal_events[i].direction,
+                               internal_events[i].level);
+         int middle=(int)MathRound(0.5*(internal_events[i].swing_bar+end));
+         string key="INTERNAL_"+(internal_events[i].direction>0?"UP_":"DOWN_")+(string)rates[internal_events[i].bar].time;
+         DrawSegment(key+"_LINE",internal_events[i].swing_time,internal_events[i].level,rates[end].time,
+                     internal_events[i].level,clr,STYLE_DASH,1);
+         DrawText(key,rates[middle].time,internal_events[i].level,internal_events[i].kind==BASE_BOS?"BOS":"CHoCH",
+                  FadeColor(clr,0.3),internal_events[i].direction<0);
+        }
+   if(Show_Strong_Weak_High_Low)
      {
-      BASE_STRUCTURE_STATE internal;
-      BASE_STRUCTURE_POINT internal_points[];
-      BASE_STRUCTURE_EVENT breaks[];
-      if(ReplayStructure(rates,total,internal_size,internal,internal_points,breaks))
-         DrawInternalBreaks(rates,breaks,points,rates[first].time);
+      BASE_LEVEL high,low;
+      string high_name="",low_name="";
+      StrongWeakLevels(s,points,rates,total,high,high_name,low,low_name);
+      datetime right=rates[total-1].time+20*PeriodSeconds(timeframe);
+      if(high.have)
+        {
+         DrawSegment("STRONG_WEAK_HIGH",rates[high.bar].time,high.price,right,high.price,HIGH_COLOR,STYLE_DASH,1);
+         DrawTextAnchored("STRONG_WEAK_HIGH_TEXT",right,high.price,high_name,HIGH_COLOR,ANCHOR_LEFT);
+        }
+      if(low.have)
+        {
+         DrawSegment("STRONG_WEAK_LOW",rates[low.bar].time,low.price,right,low.price,LOW_COLOR,STYLE_DASH,1);
+         DrawTextAnchored("STRONG_WEAK_LOW_TEXT",right,low.price,low_name,LOW_COLOR,ANCHOR_LEFT);
+        }
      }
-   DrawStrongWeak(state,rates[total-1].time,timeframe);
+   if(Show_Swing_Points && s.last_high>=0)
+      DrawSegment("LAST_HIGH",points[s.last_high].time,points[s.last_high].price,rates[total-1].time,
+                  points[s.last_high].price,HIGH_COLOR,STYLE_DOT,1);
+   if(Show_Swing_Points && s.last_low>=0)
+      DrawSegment("LAST_LOW",points[s.last_low].time,points[s.last_low].price,rates[total-1].time,
+                  points[s.last_low].price,LOW_COLOR,STYLE_DOT,1);
   }
 
-int FirstMABar(const int total,const int displayed)
-  {
-   return MathMax(1,total-MathMin(500,displayed));
-  }
-
-// The HTF MA over the drawn HTF candles and the MTF MA over the drawn MTF
-// candles (at most 500 segments each).
-void DrawAverageLines(const MqlRates &rates[],const int total,const int displayed,
-                      const double &ma[],const MqlRates &mtf[],const double &mtf_ma[],
-                      const int mtf_count)
-  {
-   if(Show_HTF_MA_Line && Use_HTF_MA_Filter && ArraySize(ma)==total)
-      for(int i=FirstMABar(total,displayed);i<total;i++)
-         DrawSegment("HTF_MA_"+(string)rates[i].time,rates[i-1].time,ma[i-1],rates[i].time,ma[i],
-                     HTF_MA_Color,STYLE_SOLID,2);
-   for(int i=1;i<mtf_count;i++)
-      DrawSegment("MTF_MA_"+(string)mtf[i].time,mtf[i-1].time,mtf_ma[i-1],mtf[i].time,mtf_ma[i],
-                  MTF_MA_Color,STYLE_SOLID,2);
-  }
-
-void SendBASEAlert(const string signal,const datetime bar_time)
-  {
-   static datetime last_alert=0;
-   if(bar_time<=last_alert) return;
-   last_alert=bar_time;
-   string message=_Symbol+" "+TimeframeName(BASETimeframe())+" "+signal;
-   if(Enable_Popup_Alerts) Alert(message);
-   if(Enable_Push_Notifications) SendNotification(message);
-  }
-
-// Dashboard styling: component names are black and bold, and only the
-// outputs are coloured.  Trends are green (Bullish), red (Bearish) or grey
-// (Range); tradability and conditions are green when they pass and red when
-// they do not.  There is no background or border.
+// -------------------------------------------------------------- dashboard
+// Component names are black and bold, and only the outputs are coloured:
+// green bullish / Tradable / good quality, red bearish / Not Tradable / poor
+// quality, grey Consolidation.
 const int DASHBOARD_FONT_SIZE=10;
 const int DASHBOARD_ROW_HEIGHT=18;
 const int DASHBOARD_INDENT=12;
+const int DASHBOARD_WRAP_CHARS=48;
 const color DASHBOARD_TEXT_COLOR=clrBlack;
 const color DASHBOARD_POSITIVE_COLOR=clrGreen;
 const color DASHBOARD_NEGATIVE_COLOR=clrRed;
@@ -1664,17 +1300,15 @@ const color DASHBOARD_NEUTRAL_COLOR=clrGray;
 
 struct BASE_DASHBOARD_ROW
   {
-   string label;            // component name; empty for a spacer row
-   string value;            // output
+   string label;            // component name; empty for a continuation row
+   string value;
    color value_color;
    string tooltip;
-   bool bold;
    int indent;
   };
 
 void AddDashboardRow(BASE_DASHBOARD_ROW &rows[],const string label,const string value,
-                     const color value_color,const string tooltip="",const bool bold=true,
-                     const int indent=0)
+                     const color value_color,const string tooltip="",const int indent=0)
   {
    int index=ArraySize(rows);
    ArrayResize(rows,index+1);
@@ -1682,17 +1316,13 @@ void AddDashboardRow(BASE_DASHBOARD_ROW &rows[],const string label,const string 
    rows[index].value=value;
    rows[index].value_color=value_color;
    rows[index].tooltip=tooltip;
-   rows[index].bold=bold;
    rows[index].indent=indent;
   }
 
-// Long outputs (the Tradability Reason and Trade Recommendations) wrap onto
-// continuation rows of at most DASHBOARD_WRAP_CHARS characters, broken
-// between words; the continuation rows have no component name.
-const int DASHBOARD_WRAP_CHARS=48;
-
+// A long output wraps onto continuation rows of at most DASHBOARD_WRAP_CHARS
+// characters, broken between words.
 void AddWrappedDashboardRow(BASE_DASHBOARD_ROW &rows[],const string label,const string value,
-                            const color value_color,const string tooltip="")
+                            const color value_color)
   {
    string words[];
    int count=StringSplit(value,' ',words);
@@ -1703,25 +1333,20 @@ void AddWrappedDashboardRow(BASE_DASHBOARD_ROW &rows[],const string label,const 
       if(words[i]=="") continue;
       if(line!="" && StringLen(line)+1+StringLen(words[i])>DASHBOARD_WRAP_CHARS)
         {
-         AddDashboardRow(rows,first?label:"",line,value_color,tooltip);
+         AddDashboardRow(rows,first?label:"",line,value_color);
          first=false;
          line="";
         }
       line+=(line==""?"":" ")+words[i];
      }
-   if(line!="" || first) AddDashboardRow(rows,first?label:"",line,value_color,tooltip);
+   if(line!="" || first) AddDashboardRow(rows,first?label:"",line,value_color);
   }
 
-string DashboardFont(const bool bold)
-  {
-   return bold?"Arial Bold":"Arial";
-  }
-
-int DashboardTextWidth(const string text,const bool bold)
+int DashboardTextWidth(const string text)
   {
    uint width=0,height=0;
    // A negative size is in tenths of a point, as OBJPROP_FONTSIZE is drawn.
-   if(!TextSetFont(DashboardFont(bold),-DASHBOARD_FONT_SIZE*10) || !TextGetSize(text,width,height))
+   if(!TextSetFont("Arial Bold",-DASHBOARD_FONT_SIZE*10) || !TextGetSize(text,width,height))
       return StringLen(text)*DASHBOARD_FONT_SIZE;
    return (int)width;
   }
@@ -1738,42 +1363,32 @@ void DrawDashboardText(const string name,const int x,const int y,const string te
    ObjectSetInteger(0,name,OBJPROP_FONTSIZE,DASHBOARD_FONT_SIZE);
    ObjectSetInteger(0,name,OBJPROP_SELECTABLE,false);
    ObjectSetInteger(0,name,OBJPROP_HIDDEN,true);
-   ObjectSetString(0,name,OBJPROP_FONT,DashboardFont(bold));
+   ObjectSetString(0,name,OBJPROP_FONT,bold?"Arial Bold":"Arial");
    ObjectSetString(0,name,OBJPROP_TEXT,text);
    // "\n" suppresses MT5's default tooltip, which would show the object name.
    ObjectSetString(0,name,OBJPROP_TOOLTIP,tooltip==""?"\n":tooltip);
   }
 
-// Two aligned columns: the component names, then their outputs.
 void DrawDashboardRows(const BASE_DASHBOARD_ROW &rows[])
   {
    int count=ArraySize(rows);
    int column=0;
    for(int i=0;i<count;i++)
-      if(rows[i].label!="")
-         column=MathMax(column,rows[i].indent+DashboardTextWidth(rows[i].label,rows[i].bold));
+      if(rows[i].label!="") column=MathMax(column,rows[i].indent+DashboardTextWidth(rows[i].label));
    column+=10+8;
-   // A spacer row (no name, no value) draws nothing; a continuation row
-   // (no name) draws only its value.
    for(int i=0;i<count;i++)
      {
-      if(rows[i].label=="" && rows[i].value=="") continue;
       int y=10+i*DASHBOARD_ROW_HEIGHT;
       string name=g_prefix+"DASHBOARD_"+(string)i;
       if(rows[i].label!="")
-         DrawDashboardText(name,10+rows[i].indent,y,rows[i].label,DASHBOARD_TEXT_COLOR,rows[i].bold,
-                           rows[i].tooltip);
-      DrawDashboardText(name+"_VALUE",column,y,rows[i].value,rows[i].value_color,false,
-                        rows[i].tooltip);
+         DrawDashboardText(name,10+rows[i].indent,y,rows[i].label,DASHBOARD_TEXT_COLOR,true,rows[i].tooltip);
+      DrawDashboardText(name+"_VALUE",column,y,rows[i].value,rows[i].value_color,false,rows[i].tooltip);
      }
   }
 
-color TrendColor(const BASE_STRUCTURE_STATE &state)
+color DirectionColor(const int direction)
   {
-   int direction=BiasDirection(state);
-   if(direction>0) return DASHBOARD_POSITIVE_COLOR;
-   if(direction<0) return DASHBOARD_NEGATIVE_COLOR;
-   return DASHBOARD_NEUTRAL_COLOR;
+   return direction>0?DASHBOARD_POSITIVE_COLOR:direction<0?DASHBOARD_NEGATIVE_COLOR:DASHBOARD_NEUTRAL_COLOR;
   }
 
 color PassColor(const bool pass)
@@ -1781,287 +1396,115 @@ color PassColor(const bool pass)
    return pass?DASHBOARD_POSITIVE_COLOR:DASHBOARD_NEGATIVE_COLOR;
   }
 
-// The swing structure under a timeframe's Market Trend, indented: the latest
-// swing high against the previous one and the same for lows; green for an HH
-// and an HL, red for an LL and an LH.
-void AddSwingStructureRow(BASE_DASHBOARD_ROW &rows[],const BASE_SWINGS &swings)
+// One timeframe: its Market Trend (the breakdown is the tooltip) and its
+// internal structure.
+void AddTimeframeRows(BASE_DASHBOARD_ROW &rows[],const string title,const BASE_STATE &s,const BASE_POINT &points[],
+                      const MqlRates &rates[],const int total,const string name,const int level)
   {
-   int progression=SwingProgression(swings);
-   string tip="Latest swing high "+(swings.have_highs?PriceText(swings.high)+" vs previous "+PriceText(swings.prev_high):"-")+
-              "; latest swing low "+(swings.have_lows?PriceText(swings.low)+" vs previous "+PriceText(swings.prev_low):"-")+
-              "\nMarket Tradability needs HH + HL (bullish) or LL + LH (bearish).";
-   AddDashboardRow(rows,"Swing Structure:",SwingStructureText(swings),
-                   progression>0?DASHBOARD_POSITIVE_COLOR:progression<0?DASHBOARD_NEGATIVE_COLOR:DASHBOARD_NEUTRAL_COLOR,
-                   tip,true,DASHBOARD_INDENT);
+   AddDashboardRow(rows,title,StateOutput(s),DirectionColor(Direction(s)),BreakdownText(s,points,rates,total,level));
+   if(Show_Internal_On_Dashboard)
+      AddDashboardRow(rows,"Internal Structure:",InternalText(s),DirectionColor(s.internal_direction),
+                      InternalTooltip(s,name),DASHBOARD_INDENT);
   }
 
-// The internal structure under its timeframe's Market Trend, indented; the
-// tooltip gives its latest break and how it relates to the Market Trend.
-void AddInternalStructureRow(BASE_DASHBOARD_ROW &rows[],const BASE_STRUCTURE_STATE &internal,
-                             const BASE_STRUCTURE_EVENT &internal_events[],
-                             const BASE_STRUCTURE_STATE &state,const string name,const double size)
+void SendBaseAlert(const string signal,const datetime bar_time)
   {
-   if(!Show_Internal_On_Dashboard) return;
-   AddDashboardRow(rows,"Internal Structure:",InternalTrendText(internal,internal_events),TrendColor(internal),
-                   InternalStructureTooltip(internal,internal_events,state,name,size),true,DASHBOARD_INDENT);
+   static datetime last_alert=0;
+   if(bar_time<=last_alert) return;
+   last_alert=bar_time;
+   string message=_Symbol+" "+HTFName()+" "+signal;
+   if(Enable_Popup_Alerts) Alert(message);
+   if(Enable_Push_Notifications) SendNotification(message);
   }
 
-// Each selected timeframe's Market Trend (its breakdown is the tooltip) with
-// its swing and internal structure, the HTF Trend Quality, the Hurst
-// exponent when it is required, Market Tradability (the entry filters are
-// its tooltip), the reason, the HTF trade recommendation, and, when any is
-// selected, Optimal Conditions with each selected condition (the reason is
-// the tooltip).
-void DrawDashboard(const BASE_STRUCTURE_STATE &htf,const string htf_breakdown,
-                   const string recommendation,const BASE_STRUCTURE_STATE &mtf,
-                   const string mtf_breakdown,const BASE_STRUCTURE_STATE &ltf,
-                   const string ltf_breakdown,const BASE_STRUCTURE_STATE &htf_internal,
-                   const BASE_STRUCTURE_EVENT &htf_internal_events[],const BASE_STRUCTURE_STATE &mtf_internal,
-                   const BASE_STRUCTURE_EVENT &mtf_internal_events[],const BASE_STRUCTURE_STATE &ltf_internal,
-                   const BASE_STRUCTURE_EVENT &ltf_internal_events[],
-                   const BASE_SWINGS &htf_swings,const BASE_SWINGS &mtf_swings,const BASE_SWINGS &ltf_swings,
-                   const bool have_quality,const double quality,const int quality_direction,
-                   const BASE_HURST &hurst,const BASE_TRADABILITY tradability,
-                   const string tradability_reason,const string filter_tooltip,
-                   const bool optimal,const string optimal_reason,const bool correlated,
-                   const bool healthy_extension,const double extension,const bool good_volume,const double volume_ratio,
-                   const bool good_momentum,const double momentum_ratio)
+// The HTF breaks and state change of its newest closed candle, for the alert.
+string NewestSignal(const BASE_STATE &s,const BASE_EVENT &events[],const int total)
   {
-   Comment("");
+   string signal="";
+   for(int i=0;i<ArraySize(events);i++)
+     {
+      if(events[i].ls && events[i].ls_bar==total-1)
+         signal+=(signal==""?"":" + ")+"LS (the "+DirectionWord(events[i].direction)+" break failed)";
+      if(events[i].bar==total-1)
+         signal+=(signal==""?"":" + ")+(events[i].kind==BASE_BOS?"BOS ":"CHoCH ")+DirectionWord(events[i].direction);
+     }
+   if(s.changed_bar==total-1) signal+=(signal==""?"":"; ")+"now "+StateText(s);
+   return signal;
+  }
+
+// ---------------------------------------------------------------- rebuild
+// Returns false while history is still being synchronized.  Every series is
+// gathered before any chart object is touched, so a retry keeps the previous
+// drawing instead of blanking the chart; the timer retries every two seconds.
+bool Rebuild(const bool permit_alert)
+  {
+   ENUM_TIMEFRAMES chart_timeframe=(ENUM_TIMEFRAMES)_Period;
+   BASE_STATE htf,mtf,ltf,chart;
+   MqlRates htf_rates[],mtf_rates[],ltf_rates[],chart_rates[];
+   BASE_POINT htf_points[],mtf_points[],ltf_points[],chart_points[];
+   BASE_EVENT htf_events[],mtf_events[],ltf_events[],chart_events[];
+   BASE_EVENT htf_internal[],mtf_internal[],ltf_internal[],chart_internal[];
+   int htf_start=0,mtf_start=0,ltf_start=0,chart_start=0;
+   ZeroMemory(mtf);
+   ZeroMemory(ltf);
+   if(!AnalyseStructure(HTF(),StructureBars(),htf,htf_rates,htf_start,htf_points,htf_events,htf_internal))
+      return false;
+   if(Use_MTF && !AnalyseStructure(MTF(),DisplayedBars(MTF()),mtf,mtf_rates,mtf_start,mtf_points,mtf_events,mtf_internal))
+      return false;
+   if(Use_LTF && !AnalyseStructure(LTF(),DisplayedBars(LTF()),ltf,ltf_rates,ltf_start,ltf_points,ltf_events,ltf_internal))
+      return false;
+   bool anchored=chart_timeframe==HTF();
+   if(!anchored &&
+      !AnalyseStructure(chart_timeframe,DisplayedBars(chart_timeframe),chart,chart_rates,chart_start,chart_points,
+                        chart_events,chart_internal))
+      return false;
+
+   ObjectsDeleteAll(0,g_prefix);
+   int htf_total=ArraySize(htf_rates);
+   if(anchored)
+      DrawChart(htf_rates,htf_total,MathMax(htf_start,htf_total-StructureBars()),htf,htf_points,htf_events,
+                htf_internal,chart_timeframe);
+   else
+     {
+      int chart_total=ArraySize(chart_rates);
+      DrawChart(chart_rates,chart_total,MathMax(chart_start,chart_total-DisplayedBars(chart_timeframe)),chart,
+                chart_points,chart_events,chart_internal,chart_timeframe);
+     }
+
+   // The dashboard: each timeframe's Market Trend and internal structure,
+   // the HTF Trend Quality, Market Tradability, its reason and the trade
+   // recommendation.
    BASE_DASHBOARD_ROW rows[];
-   if(Use_HTF)
-     {
-      AddDashboardRow(rows,"HTF Market Trend ("+HTFName()+"):",BiasText(htf),TrendColor(htf),
-                      htf_breakdown);
-      AddSwingStructureRow(rows,htf_swings);
-      AddInternalStructureRow(rows,htf_internal,htf_internal_events,htf,HTFName(),HTFSwingSize());
-     }
-   if(Use_MTF)
-     {
-      AddDashboardRow(rows,"MTF Market Trend ("+MTFName()+"):",BiasText(mtf),TrendColor(mtf),
-                      mtf_breakdown);
-      AddSwingStructureRow(rows,mtf_swings);
-      AddInternalStructureRow(rows,mtf_internal,mtf_internal_events,mtf,MTFName(),MTFSwingSize());
-     }
-   if(Use_LTF)
-     {
-      AddDashboardRow(rows,"LTF Market Trend ("+LTFName()+"):",BiasText(ltf),TrendColor(ltf),
-                      ltf_breakdown);
-      AddSwingStructureRow(rows,ltf_swings);
-      AddInternalStructureRow(rows,ltf_internal,ltf_internal_events,ltf,LTFName(),LTFSwingSize());
-     }
+   AddTimeframeRows(rows,"HTF Market Trend ("+HTFName()+"):",htf,htf_points,htf_rates,htf_total,HTFName(),
+                    HTF_Swing_Level);
+   if(Use_MTF) AddTimeframeRows(rows,"MTF Market Trend ("+MTFName()+"):",mtf,mtf_points,mtf_rates,ArraySize(mtf_rates),
+                                MTFName(),MTF_Swing_Level);
+   if(Use_LTF) AddTimeframeRows(rows,"LTF Market Trend ("+LTFName()+"):",ltf,ltf_points,ltf_rates,ArraySize(ltf_rates),
+                                LTFName(),LTF_Swing_Level);
+   double quality=0.0;
+   int quality_direction=0;
+   bool have_quality=TrendQuality(htf_rates,htf_total,Trend_Quality_Candles,quality,quality_direction);
    AddDashboardRow(rows,"Trend Quality ("+HTFName()+"):",QualityText(have_quality,quality,quality_direction),
-                   !have_quality || htf.trend==0?DASHBOARD_NEUTRAL_COLOR:
-                   PassColor(quality>=Trend_Quality_Minimum && quality_direction==htf.trend),
+                   !have_quality || htf.state!=BASE_TRENDING?DASHBOARD_NEUTRAL_COLOR:
+                   PassColor(quality>=Trend_Quality_Minimum && quality_direction==htf.direction),
                    "Efficiency of the last "+(string)Trend_Quality_Candles+" closed "+HTFName()+
                    " candles: the net move divided by the distance travelled close to close, from 0 (chop) to 1 "+
                    "(a straight line), and its direction. Market Tradability needs at least "+
                    DoubleToString(Trend_Quality_Minimum,2)+" in the trend's direction.");
-   if(Use_Hurst_Filter)
-      AddDashboardRow(rows,"Hurst Exponent ("+HurstName()+"):",
-                      hurst.have?"H "+DoubleToString(hurst.value,2)+" ("+HurstWord(hurst.value)+")":"Not available",
-                      hurst.have?PassColor(hurst.value>Hurst_Minimum):DASHBOARD_NEUTRAL_COLOR,
-                      "The last "+(string)Hurst_Candles+" closed "+HurstName()+" candles. Market Tradability needs H above "+
-                      DoubleToString(Hurst_Minimum,2)+"; about 0.5 is a random walk, above it a trending market, below it a "+
-                      "mean-reverting one.");
-   AddDashboardRow(rows,"Market Tradability:",tradability==BASE_TRADABLE?"Tradable":"Not Tradable",
-                   PassColor(tradability==BASE_TRADABLE),filter_tooltip);
-   AddWrappedDashboardRow(rows,"Tradability Reason:",tradability_reason,DASHBOARD_TEXT_COLOR);
-   AddWrappedDashboardRow(rows,"Trade Recommendations:",recommendation,DASHBOARD_TEXT_COLOR);
-   // Optimal Conditions only when at least one requirement is selected (none
-   // by default).
-   if(!Use_Timeframe_Correlation_For_Optimal && !Use_Healthy_Extension_For_Optimal &&
-      !Use_Market_Volume_For_Optimal && !Use_Price_Momentum_For_Optimal)
-     {
-      DrawDashboardRows(rows);
-      return;
-     }
-   AddDashboardRow(rows,"","",DASHBOARD_TEXT_COLOR);
-   AddDashboardRow(rows,"Optimal Conditions:",optimal?"OPTIMAL":"NOT OPTIMAL",PassColor(optimal),
-                   optimal_reason);
-   if(Use_Timeframe_Correlation_For_Optimal)
-      AddDashboardRow(rows,"Timeframe Correlation:",PassText(correlated),PassColor(correlated),
-                      optimal_reason,true,DASHBOARD_INDENT);
-   if(Use_Healthy_Extension_For_Optimal)
-      AddDashboardRow(rows,"Healthy Extension:",PassText(healthy_extension)+
-                      (extension==EMPTY_VALUE?"":" ("+ExtensionText(extension)+")"),
-                      PassColor(healthy_extension),optimal_reason,true,DASHBOARD_INDENT);
-   if(Use_Market_Volume_For_Optimal)
-      AddDashboardRow(rows,"Market Volume:",PassText(good_volume)+" ("+DoubleToString(volume_ratio,2)+
-                      "x average)",PassColor(good_volume),optimal_reason,true,DASHBOARD_INDENT);
-   if(Use_Price_Momentum_For_Optimal)
-      AddDashboardRow(rows,"Price Momentum:",PassText(good_momentum)+" ("+
-                      DoubleToString(momentum_ratio,2)+"x average range)",PassColor(good_momentum),
-                      optimal_reason,true,DASHBOARD_INDENT);
+   string reason="";
+   bool tradable=EvaluateTradability(htf,mtf,ltf,htf_points,mtf_points,ltf_points,have_quality,quality,
+                                     quality_direction,reason);
+   AddDashboardRow(rows,"Market Tradability:",tradable?"Tradable":"Not Tradable",PassColor(tradable),
+                   "Tradable when the HTF is Trending, every selected MTF/LTF is Trending or in Transition the same way, "+
+                   "and the HTF trend quality is at least "+DoubleToString(Trend_Quality_Minimum,2)+" that way.");
+   AddWrappedDashboardRow(rows,"Tradability Reason:",reason,DASHBOARD_TEXT_COLOR);
+   AddWrappedDashboardRow(rows,"Trade Recommendations:",
+                          TradeRecommendation(htf,mtf,ltf,htf_points,htf_rates,htf_total,tradable),DASHBOARD_TEXT_COLOR);
+   Comment("");
    DrawDashboardRows(rows);
-  }
 
-// Returns false while history or an indicator is still being synchronized.
-// Every series is gathered before any chart object is touched, so an early
-// retry (common straight after attaching or a timeframe change) keeps the
-// previous drawing instead of blanking the chart.  The timer then retries the
-// same bar every two seconds until the build completes.
-bool Rebuild(const bool permit_alert)
-  {
-   ENUM_TIMEFRAMES timeframe=BASETimeframe();
-   ENUM_TIMEFRAMES chart_timeframe=(ENUM_TIMEFRAMES)_Period;
-   double size=HTFSwingSize();
-   int displayed=StructureBars();
-   MqlRates rates[];
-   ArraySetAsSeries(rates,false);
-   int total=CopyRates(_Symbol,timeframe,1,ReplayBars(displayed),rates);
-   if(total<SWING_ATR_LENGTH+2) return false;
-
-   // Only the MA line needs history; the filters use the latest closed bar.
-   double ma[],adx[],atr[];
-   if(Use_HTF_MA_Filter && !CopyIndicator(g_htf_ma_handle,0,Show_HTF_MA_Line?total:1,ma)) return false;
-   if(Use_ADX_Filter && !CopyIndicator(g_adx_handle,0,1,adx)) return false;
-   if(Use_ATR_Filter && !CopyIndicator(g_atr_handle,0,1,atr)) return false;
-
-   // The MTF and LTF trends are replayed over the same elapsed time as the
-   // structure timeframe (plus the same warm-up), so every trend has
-   // comparable context instead of a few hours of lower-timeframe candles.
-   BASE_STRUCTURE_STATE setup_state,ltf_state;
-   MqlRates setup_rates[],ltf_rates[];
-   BASE_STRUCTURE_POINT setup_points[],ltf_points[];
-   BASE_STRUCTURE_EVENT setup_events[],ltf_events[];
-   if(!AnalyseStructure(SetupTimeframe(),ReplayBars(ChartStructureBars(SetupTimeframe())),
-                        MTFSwingSize(),setup_state,setup_rates,setup_points,setup_events))
-      return false;
-   if(!AnalyseStructure(LTFTimeframe(),ReplayBars(ChartStructureBars(LTFTimeframe())),
-                        LTFSwingSize(),ltf_state,ltf_rates,ltf_points,ltf_events))
-      return false;
-   int ltf_total=ArraySize(ltf_rates);
-
-   // Labels follow the chart period, while the dashboard state stays on
-   // Structure_Timeframe.
-   bool anchored=chart_timeframe==timeframe;
-   MqlRates chart_rates[];
-   ArraySetAsSeries(chart_rates,false);
-   int chart_total=0;
-   if(!anchored)
-     {
-      chart_total=CopyRates(_Symbol,chart_timeframe,1,
-                            ReplayBars(ChartStructureBars(chart_timeframe)),chart_rates);
-      if(chart_total<=0) return false;
-     }
-
-   BASE_STRUCTURE_STATE structure_state;
-   BASE_STRUCTURE_POINT points[];
-   BASE_STRUCTURE_EVENT events[];
-   ReplayStructure(rates,total,size,structure_state,points,events);
-
-   // The internal structure of each trend timeframe (the same engine with the
-   // internal swing size), for the dashboard and, when required, Market
-   // Tradability.
-   BASE_STRUCTURE_STATE htf_internal,mtf_internal,ltf_internal;
-   BASE_STRUCTURE_POINT unused[];
-   BASE_STRUCTURE_EVENT htf_internal_events[],mtf_internal_events[],ltf_internal_events[];
-   ReplayStructure(rates,total,InternalSize(size),htf_internal,unused,htf_internal_events);
-   ReplayStructure(setup_rates,ArraySize(setup_rates),InternalSize(MTFSwingSize()),mtf_internal,unused,
-                   mtf_internal_events);
-   ReplayStructure(ltf_rates,ltf_total,InternalSize(LTFSwingSize()),ltf_internal,unused,ltf_internal_events);
-
-   // The MTF MA line, if shown, over the drawn MTF candles.
-   MqlRates mtf_rates[];
-   double mtf_ma[];
-   int mtf_count=0;
-   ArraySetAsSeries(mtf_rates,false);
-   if(Show_MTF_MA_Line && Use_MTF_MA_Filter)
-     {
-      mtf_count=MathMin(501,ChartStructureBars(SetupTimeframe()));
-      if(CopyRates(_Symbol,SetupTimeframe(),1,mtf_count,mtf_rates)!=mtf_count ||
-         !CopyIndicator(g_mtf_ma_handle,0,mtf_count,mtf_ma))
-         mtf_count=0;
-     }
-
-   ObjectsDeleteAll(0,g_prefix);
-   if(anchored)
-      DrawChart(rates,total,MathMax(0,total-displayed),structure_state,points,events,
-                InternalSize(size),timeframe);
-   else
-     {
-      BASE_STRUCTURE_STATE chart_state;
-      BASE_STRUCTURE_POINT chart_points[];
-      BASE_STRUCTURE_EVENT chart_events[];
-      double chart_size=ChartSwingSize(chart_timeframe);
-      if(ReplayStructure(chart_rates,chart_total,chart_size,chart_state,chart_points,chart_events))
-         DrawChart(chart_rates,chart_total,MathMax(0,chart_total-ChartStructureBars(chart_timeframe)),
-                   chart_state,chart_points,chart_events,InternalSize(chart_size),chart_timeframe);
-     }
-   DrawAverageLines(rates,total,displayed,ma,mtf_rates,mtf_ma,mtf_count);
-
-   // The latest two swings on each side of each trend timeframe, the HTF
-   // trend quality and the Hurst exponent, for Market Tradability.
-   BASE_SWINGS htf_swings,mtf_swings,ltf_swings;
-   ReadSwings(points,htf_swings);
-   ReadSwings(setup_points,mtf_swings);
-   ReadSwings(ltf_points,ltf_swings);
-   double quality=0.0;
-   int quality_direction=0;
-   bool have_quality=TrendQuality(rates,total,Trend_Quality_Candles,quality,quality_direction);
-   BASE_HURST hurst;
-   ZeroMemory(hurst);
-   if(Use_Hurst_Filter) ReadHurst(hurst);
-   string tradability_reason="";
-   BASE_TRADABILITY tradability=EvaluateTradability(structure_state,setup_state,ltf_state,htf_internal,
-                                                    htf_swings,mtf_swings,ltf_swings,have_quality,quality,
-                                                    quality_direction,hurst,tradability_reason);
-   // The timeframes correlate whenever the market is Tradable: every selected
-   // timeframe then agrees on the direction.
-   bool bias_ready=tradability==BASE_TRADABLE;
-   double setup_atr[];
-   int setup_total=ArraySize(setup_rates);
-   SwingATR(setup_rates,setup_total,setup_atr);
-   double extension=TrendExtension(structure_state,setup_state,ltf_rates[ltf_total-1].close,
-                                   setup_total>0?setup_atr[setup_total-1]:0.0);
-   bool healthy_extension=HealthyExtension(extension);
-
-   int volume_length=MathMin(Volume_Average_Length,ltf_total-1);
-   double average_volume=0.0;
-   for(int i=ltf_total-1-volume_length;i<ltf_total-1;i++) average_volume+=(double)ltf_rates[i].tick_volume;
-   if(volume_length>0) average_volume/=volume_length;
-   double volume_ratio=average_volume>0.0?(double)ltf_rates[ltf_total-1].tick_volume/average_volume:0.0;
-   bool good_volume=average_volume>0.0 && volume_ratio>=Volume_Minimum_Ratio &&
-                    volume_ratio<=Volume_Maximum_Ratio;
-   int momentum_length=MathMin(Momentum_Average_Length,ltf_total-2);
-   double average_true_range=0.0;
-   for(int i=ltf_total-1-momentum_length;i<ltf_total-1;i++)
-      average_true_range+=BarTrueRange(ltf_rates,i);
-   if(momentum_length>0) average_true_range/=momentum_length;
-   double momentum_ratio=average_true_range>0.0?
-                         BarTrueRange(ltf_rates,ltf_total-1)/average_true_range:0.0;
-   bool good_momentum=average_true_range>0.0 &&
-                      momentum_ratio>=Momentum_Minimum_Ratio &&
-                      momentum_ratio<=Momentum_Maximum_Ratio;
-   string optimal_reason="";
-   bool optimal=EvaluateOptimal(bias_ready,healthy_extension,good_volume,volume_ratio,
-                                good_momentum,momentum_ratio,optimal_reason,extension);
-
-   DrawDashboard(structure_state,BreakdownText(structure_state,events),
-                 TradeRecommendation(structure_state,setup_state,ltf_state,tradability),
-                 setup_state,BreakdownText(setup_state,setup_events),
-                 ltf_state,BreakdownText(ltf_state,ltf_events),
-                 htf_internal,htf_internal_events,mtf_internal,mtf_internal_events,ltf_internal,ltf_internal_events,
-                 htf_swings,mtf_swings,ltf_swings,have_quality,quality,quality_direction,hurst,
-                 tradability,tradability_reason,EntryFilterTooltip(rates[total-1],ma,adx,atr),
-                 optimal,optimal_reason,bias_ready,healthy_extension,extension,good_volume,volume_ratio,
-                 good_momentum,momentum_ratio);
-   // Alert every break that became known on the newest closed candle; an LS
-   // (the old trend resuming after a CHoCH) comes first, then the BOS that
-   // resumed it.
-   string signal="";
-   for(int i=ArraySize(events)-1;i>=0 && events[i].bar==total-1;i--)
-      signal=(events[i].bos?"BOS ":"CHoCH ")+(events[i].direction>0?"bullish":"bearish")+
-             (signal==""?"":" + ")+signal;
-   for(int i=ArraySize(events)-1;i>=0;i--)
-      if(events[i].ls && events[i].ls_bar==total-1)
-        {
-         signal="LS (the "+(events[i].direction>0?"bullish":"bearish")+" CHoCH failed)"+
-                (signal==""?"":" + ")+signal;
-         break;
-        }
-   if(permit_alert && signal!="") SendBASEAlert(signal,rates[total-1].time);
+   string signal=NewestSignal(htf,htf_events,htf_total);
+   if(permit_alert && signal!="") SendBaseAlert(signal,htf_rates[htf_total-1].time);
    ChartRedraw();
    return true;
   }
@@ -2069,11 +1512,9 @@ bool Rebuild(const bool permit_alert)
 bool ValidInputs()
   {
    string problem="";
-   if(HTF_Swing_Level<MIN_DETECTION_LEVEL || HTF_Swing_Level>MAX_DETECTION_LEVEL ||
-      MTF_Swing_Level<MIN_DETECTION_LEVEL || MTF_Swing_Level>MAX_DETECTION_LEVEL ||
-      LTF_Swing_Level<MIN_DETECTION_LEVEL || LTF_Swing_Level>MAX_DETECTION_LEVEL)
-      problem="each Swing Size must be between "+(string)MIN_DETECTION_LEVEL+" and "+
-              (string)MAX_DETECTION_LEVEL;
+   if(HTF_Swing_Level<MIN_LEVEL || HTF_Swing_Level>MAX_LEVEL || MTF_Swing_Level<MIN_LEVEL ||
+      MTF_Swing_Level>MAX_LEVEL || LTF_Swing_Level<MIN_LEVEL || LTF_Swing_Level>MAX_LEVEL)
+      problem="each Swing Sensitivity must be between "+(string)MIN_LEVEL+" and "+(string)MAX_LEVEL;
    else if(Internal_Swing_Ratio<0.2 || Internal_Swing_Ratio>0.9)
       problem="the Internal Swing Size must be between 0.2 and 0.9 of the swing size";
    else if(Trend_Quality_Candles<5 || Trend_Quality_Candles>200)
@@ -2081,17 +1522,7 @@ bool ValidInputs()
    else if(Trend_Quality_Minimum<0.0 || Trend_Quality_Minimum>=1.0)
       problem="the Trend Quality minimum must be 0 to below 1";
    else if(Bars_To_Process<100)
-      problem="Bars_To_Process must be at least 100";
-   else if(HTF_MA_Length<1 || MTF_MA_Length<1 || ADX_Length<1 || ATR_Length<1)
-      problem="HTF MA, MTF MA, ADX and ATR lengths must be positive";
-   else if(Equal_Highs_Lows_Threshold<0.0 || Equal_Highs_Lows_Threshold>0.5)
-      problem="the EQH/EQL Threshold must be between 0 and 0.5";
-   else if(Hurst_Candles<50 || Hurst_Candles>400)
-      problem="Hurst_Candles must be 50 to 400";
-   else if(Hurst_Minimum<0.0 || Hurst_Minimum>=1.0)
-      problem="Hurst_Minimum must be 0 to below 1";
-   else if(!Use_HTF && !Use_MTF && !Use_LTF)
-      problem="enable at least one trend analysis timeframe";
+      problem="Bars To Process must be at least 100";
    if(problem=="") return true;
    Print("BASE 2.0: invalid input - ",problem,".");
    return false;
@@ -2101,17 +1532,10 @@ int OnInit()
   {
    if(!ValidInputs()) return INIT_PARAMETERS_INCORRECT;
    // MT5 keeps an EA's global variables across a chart timeframe change, so
-   // explicitly forget the previous chart's bars.  Otherwise a first build that
-   // waits for data would never be retried until the next LTF candle.
-   g_last_ltf_bar=0;
-   g_last_structure_bar=0;
-   g_last_setup_bar=0;
-   ENUM_TIMEFRAMES timeframe=BASETimeframe();
+   // forget the previous chart's candles; otherwise a first build that waits
+   // for data would not be retried until the next candle.
+   ArrayInitialize(g_last_bar,0);
    g_prefix="BASE2_"+(string)ChartID()+"_";
-   if(Use_HTF_MA_Filter && (g_htf_ma_handle=iMA(_Symbol,timeframe,HTF_MA_Length,0,BASEMAMethod(HTF_MA_Type),PRICE_CLOSE))==INVALID_HANDLE) return INIT_FAILED;
-   if(Use_MTF_MA_Filter && (g_mtf_ma_handle=iMA(_Symbol,SetupTimeframe(),MTF_MA_Length,0,BASEMAMethod(MTF_MA_Type),PRICE_CLOSE))==INVALID_HANDLE) return INIT_FAILED;
-   if(Use_ADX_Filter && (g_adx_handle=iADX(_Symbol,timeframe,ADX_Length))==INVALID_HANDLE) return INIT_FAILED;
-   if(Use_ATR_Filter && (g_atr_handle=iATR(_Symbol,timeframe,ATR_Length))==INVALID_HANDLE) return INIT_FAILED;
    if(!EventSetTimer(2)) return INIT_FAILED;
    CheckForBar();
    return INIT_SUCCEEDED;
@@ -2120,40 +1544,33 @@ int OnInit()
 void OnDeinit(const int reason)
   {
    EventKillTimer();
-   if(g_htf_ma_handle!=INVALID_HANDLE) IndicatorRelease(g_htf_ma_handle);
-   if(g_mtf_ma_handle!=INVALID_HANDLE) IndicatorRelease(g_mtf_ma_handle);
-   if(g_adx_handle!=INVALID_HANDLE) IndicatorRelease(g_adx_handle);
-   if(g_atr_handle!=INVALID_HANDLE) IndicatorRelease(g_atr_handle);
-   g_htf_ma_handle=INVALID_HANDLE;
-   g_mtf_ma_handle=INVALID_HANDLE;
-   g_adx_handle=INVALID_HANDLE;
-   g_atr_handle=INVALID_HANDLE;
    ObjectsDeleteAll(0,g_prefix);
    Comment("");
   }
 
+// Rebuilds when a new candle opens on the chart, the HTF, or a selected MTF
+// or LTF.
 void CheckForBar()
   {
-   datetime current=iTime(_Symbol,LTFTimeframe(),0);
-   datetime structure_current=iTime(_Symbol,BASETimeframe(),0);
-   datetime setup_current=iTime(_Symbol,SetupTimeframe(),0);
-   if(current==0 || structure_current==0 || setup_current==0) return;
-   bool changed=current!=g_last_ltf_bar || structure_current!=g_last_structure_bar ||
-                setup_current!=g_last_setup_bar;
-   if(changed)
+   ENUM_TIMEFRAMES watched[4];
+   watched[0]=(ENUM_TIMEFRAMES)_Period;
+   watched[1]=HTF();
+   watched[2]=Use_MTF?MTF():HTF();
+   watched[3]=Use_LTF?LTF():HTF();
+   datetime now[4];
+   bool changed=false,first=false;
+   for(int i=0;i<4;i++)
      {
-      // The first build after attaching never alerts.
-      bool alert=g_last_ltf_bar!=0 && g_last_structure_bar!=0 && g_last_setup_bar!=0;
-      // Do not consume the bar until every required series has loaded.  When
-      // Rebuild reports temporary unavailability, OnTimer will retry in two
-      // seconds even if no tick arrives on the newly selected timeframe.
-      if(Rebuild(alert))
-        {
-         g_last_ltf_bar=current;
-         g_last_structure_bar=structure_current;
-         g_last_setup_bar=setup_current;
-        }
+      now[i]=iTime(_Symbol,watched[i],0);
+      if(now[i]==0) return;
+      if(now[i]!=g_last_bar[i]) changed=true;
+      if(g_last_bar[i]==0) first=true;
      }
+   if(!changed) return;
+   // The first build after attaching never alerts.  The candles are only
+   // consumed once every series has loaded.
+   if(Rebuild(!first))
+      for(int i=0;i<4;i++) g_last_bar[i]=now[i];
   }
 
 void OnTick() { CheckForBar(); }
