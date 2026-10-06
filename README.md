@@ -2008,3 +2008,307 @@ and Python mirrors:
     by a change of direction on the forming candle;
   - structure stayed within the processed candles.
 - **The Pine file parses** with pynescript (a syntax check only).
+
+## ORB Strategy (`ORB Strategy.mq5`)
+
+An Opening Range Breakout EA. It was built after comparing ORB with CRT
+(Candle Range Theory) on the data available here. ORB was the only one of
+the two with an edge beyond chance, so it is the one built. Its default exit
+has the highest win rate that still kept an edge.
+
+Nothing here has been compiled in MetaEditor or run in the MT5 Strategy
+Tester. The EA was checked in the test harness (MQL5 compiled as C++ against
+a mock terminal; see [How it was checked](#how-the-orb-strategy-was-checked)),
+and the strategy research used Python backtests.
+
+### ORB against CRT: the study
+
+**What was compared.**
+- **ORB**, from published work and existing EAs:
+  - Zarattini and Aziz (2023), the 5-minute ORB on QQQ: enter in the
+    direction of the first 5-minute candle, stop at its other end, target
+    10R or the close. They report a 24% win rate and +0.13R a trade, without
+    spread or slippage. An independent replication found it breaks even at
+    about 2.2 cents a share of slippage.
+  - Zarattini, Barbon and Aziz (2024): the plain 5-minute ORB on US stocks
+    had a Sharpe ratio of 0.48. Restricted to the day's 20 "stocks in play"
+    it reached 2.81. That filter needs a scan of thousands of stocks, which
+    a single-symbol EA cannot do.
+  - Crabel (1990): narrow opening ranges tend to come before trend days.
+    This was tested as a range-width filter.
+  - MQL5 ORB EAs: a London 07:00-08:00 GMT range, a breakout buffer, a fixed
+    reward-to-risk and one trade per session.
+- **CRT**, from the ICT-derived guides and the MQL5 CRT articles:
+  - candle 1 sets the range;
+  - candle 2 sweeps its high (low) and closes back inside;
+  - the trade aims for the other side during candle 3.
+  - Entries tested: candle 3's open, 50% of candle 2, or a retest of the
+    swept level.
+  - Targets tested: the other side of candle 1, its middle, or 0.5 to 1.5R,
+    with the stop beyond the sweep.
+  - Filters tested: the 1, 5 and 9 New York key times on H4, the sweep
+    depth, where candle 2 closed, the trend and the range size.
+  - CRT has no published, audited results. Guides quote 45-65% win rates.
+
+**Data.** All of it was local; nothing was downloaded.
+- EURUSD H1, April 2017 to February 2018 (5,000 candles).
+- Euro Stoxx 50 futures M1, January and February 2006 (41 days).
+- Daily candles:
+  - GOOG, INTC, NVDA, ORCL and YHOO (1995-2015);
+  - the Euro Stoxx 50 (2006).
+
+**Method.**
+- **Combinations:** every combination of the variants, 2,160 to 4,704 per
+  family.
+- **Costs:**
+  - 1 pip round trip on EURUSD;
+  - 1 point on the futures;
+  - 0.10% on stocks.
+- **Pessimistic fills:**
+  - a stop is never closer than 4 times the cost;
+  - when a candle touches both the stop and the target, the stop counts
+    first.
+- **Train and test:** the first 60% of each data set chose the settings;
+  the last 40% tested them.
+- **Shuffled control:** the same search ran on 8 copies of the data, with
+  the candles shuffled within each hour of the day. That keeps the daily
+  pattern of volatility but removes any real structure, so whatever the
+  search finds there is luck. A real edge has to beat it.
+
+**Results.** The share of combinations that were profitable on both the
+training and the test part:
+
+| Family | Real data | Shuffled (median) |
+|---|---|---|
+| EURUSD ORB | 22.3% | 8.2% |
+| EURUSD CRT, H1 | 0.0% | 0.0% |
+| EURUSD CRT, H4 | 0.6% | 1.4% |
+| EURUSD CRT, D1 (about 40 trades) | 14.0% | 12.8% |
+| Daily CRT, 5 stocks and the index | 0.1% | 0.0% |
+| Futures ORB (41 days) | 8.7% | 16.4% |
+| Futures CRT, H1 (41 days) | 1.0% | 2.2% |
+
+- **ORB:** ORB on EURUSD is the only family clearly above chance. Its best
+  test result was 66 trades, 39% won, +0.35R a trade and a profit factor of
+  1.59. That was the London-open range, held to the close.
+- **CRT:** it never beat its shuffled control where there were enough
+  trades. The best H4 CRT settings from the training part lost 0.09 to 0.19R
+  a trade on the test part.
+- **Futures:** the futures sample (41 days, about 12 test trades a setting)
+  is too small to decide anything.
+- **Win rate is mostly geometry.** A small target wins often on any market.
+  Choosing the highest training win rate found ORB settings that won 69-86%
+  of their test trades but made only +0.03 to +0.06R a trade. The same search
+  on shuffled data also found 70-80% winners. A win rate alone says little;
+  what counts is how far it beats the shuffled data at the same target.
+
+### Exits: win rate against profit
+
+These rows use a London 08:00-09:00 range, entries until 12:00 and a close
+at 16:00 London time, entering on the break with the stop on the other side.
+The data is EURUSD, April 2017 to February 2018: 180 trades.
+
+| Take profit | Win rate | Average | Profit factor | Shuffled: win rate / average |
+|---|---|---|---|---|
+| 0.5R | 68% | 0.00R | 0.99 | 67% / -0.04R |
+| 0.75R | 61% | +0.05R | 1.15 | 60% / 0.00R |
+| **1R (default)** | **57%** | **+0.09R** | **1.23** | 53% / 0.00R |
+| 1.5R | 53% | +0.14R | 1.33 | 45% / +0.01R |
+| None: close at 16:00 | 50% | +0.38R | 1.83 | 39% / +0.07R |
+
+- **1R, the default.** This is the highest win rate that still beat the
+  shuffled data on both win rate and average, on both parts:
+  - 58% and +0.09R on the training part;
+  - 55% and +0.09R on the test part.
+
+  The edge is small, though. On the shuffled data, the 90th-percentile
+  average was +0.08R.
+- **Holding to the close** (`Take_Profit_R` = 0) is the stronger result:
+  - it wins 11 points more often than on shuffled data;
+  - it averages five times as much as on shuffled data.
+
+  Choose it if profit matters more to you than the win rate.
+- **0.75R and below** win more often, but no more often than on shuffled
+  data. That is not an edge.
+- **A partial close at 0.75R with the stop moved to breakeven** won 61%.
+  Hourly data could not settle its average: depending on the order of
+  prices inside a candle, it fell between -0.05R and +0.18R. Test it on tick
+  data before relying on it.
+- **Futures cross-check.** The same rules on the 2006 futures, with a
+  60-minute range:
+  - 1R: 59% won, +0.23R a trade;
+  - held to the close: 48% won, +0.31R a trade.
+
+  That is only 27 trades. A 15-minute range lost on the same data.
+
+### The rules
+
+- **Session clock.** The session times are in London time by default; New
+  York time or the broker's server time can be chosen instead. See [Time
+  zones](#orb-time-zones).
+- **The opening range.** It is the high and low of the M1 candles from
+  `Range_Start` to `Range_End` (08:00-09:00). The day is skipped when:
+  - the range has fewer M1 candles than half its minutes (a holiday or a
+    late open);
+  - it is wider than `Max_Range_ADR_Percent` of the 10-day average daily
+    range (off by default).
+- **The entry.** From `Range_End` until `Last_Entry` (12:00), the first
+  break decides:
+  - **Break** (default): the chart price (bid) reaches the range high plus
+    the buffer, and the EA buys at the ask. At the range low minus the
+    buffer, it sells.
+  - **Close**: a `Close_Timeframe` candle closes beyond the range. Only a
+    candle that opened at or after the range end counts. The order is sent
+    on the next candle's first tick.
+- **One attempt a day.** The first break decides, even when it cannot be
+  traded, for example because the stop is too close.
+- **The stop.** It goes on the other side of the range, or at its middle.
+  A sell's stop carries the spread, because sells close on the ask.
+- **No trade** when the stop is closer than `Min_Stop_Spreads` (4) times the
+  spread, or than the broker allows.
+- **The target.** It is `Take_Profit_R` times the risk, and the risk is
+  measured from the actual entry. A setting of 0 means no target.
+- **The partial close** (optional). At `Partial_Close_R`, the EA closes
+  `Partial_Close_Percent` of the position and moves the stop to the entry.
+- **The time exit.** A position still open at `Close_Time` (16:00) on the
+  day it opened is closed.
+- **The size.** It is `Risk_Percent` of the balance, lost at the stop.
+- **Attached late.** When the EA is attached after the range has ended:
+  - if price already broke the range, there is no trade that day;
+  - after `Last_Entry`, there is none either.
+
+### ORB time zones
+
+The EA turns server time into the Session Clock using
+`Server_GMT_Offset` (the winter offset) and `Server_DST`.
+- **Most MT5 brokers** run GMT+2 in winter and GMT+3 in summer on the US
+  rule, so New York 17:00 is 00:00 server time. These are the defaults.
+- **The London open** is then 10:00 server time for most of the year. It
+  is 11:00 for two to three weeks in March and in October/November, while
+  the US is on summer time and the UK is not.
+- **Check your broker.** Compare the server time in Market Watch with GMT
+  in winter. Set `Server_DST` to EU or None if the broker follows those.
+- **Other sessions.** New York 09:30-09:45 (or 09:30-10:30) is the usual
+  range for US indices. Set `Session_Clock` to New York.
+- **Server time.** With `Session_Clock` on server time, nothing is
+  converted: the times are the chart's.
+
+### Inputs
+
+- **Session:**
+  - `Session_Clock`, `Range_Start`, `Range_End`, `Last_Entry`, `Close_Time`;
+  - `Server_GMT_Offset`, `Server_DST`.
+- **Entry:**
+  - `Entry_Mode` (break or candle close), `Close_Timeframe` (close entries);
+  - `Breakout_Buffer_Percent` (% of the range);
+  - `Max_Range_ADR_Percent` (0 = off), `Min_Stop_Spreads`.
+- **Exits:**
+  - `Stop_Loss_At` (other side or middle);
+  - `Take_Profit_R` (0 = hold to the Close Time);
+  - `Partial_Close_R` (0 = off), `Partial_Close_Percent`.
+- **Risk:** `Trade_Mode` (Strategy Tester only by default), `Risk_Percent`
+  (1%), `Magic_Number`.
+- **Optimization:** `Optimization_Criterion`, `Minimum_Trades`.
+- **Chart:** `Show_Ranges`, `Show_Panel`, `Enable_Alerts`.
+
+### Optimizing in the Strategy Tester
+
+- Choose **Custom max** as the optimization criterion. The EA then
+  returns `Optimization_Criterion`:
+  - **Win rate** (default). It counts only with at least `Minimum_Trades`
+    trades and a positive average R; otherwise it is 0. That keeps the
+    optimizer from buying a high win rate with a losing system.
+  - **Average R a trade.**
+  - **Profit factor.**
+- Use **Every tick based on real ticks**.
+- Optimize on one period and confirm on a later one: the Forward setting.
+  With 30 trades or fewer, no result means much.
+- As the study above shows, a higher win rate from a closer target is
+  usually not an edge. Compare win rates at the same `Take_Profit_R`.
+
+### The panel and the chart
+
+- Each day's range is a blue box, with green and red dashed break levels
+  that run to the Close Time. The last 30 days stay on the chart.
+- **The panel:**
+  - the session times;
+  - today's range (its size in points and as a % of the average daily
+    range);
+  - what happened today: waiting, armed, the trade, or why there was no
+    trade;
+  - the open position;
+  - the results since the EA started: trades, win rate, average R and
+    profit factor.
+- At the end of a test run, the same results are printed in the Journal.
+
+### MetaTrader 5
+
+Install `ORB Strategy.mq5` in `MQL5/Experts` and compile it. It runs on any
+chart period; the range is always built from M1 candles. `Trade_Mode` is
+**Strategy Tester only** by default.
+
+### How the ORB Strategy was checked
+
+- **Every trade follows the rules.** The harness ran tick-level backtests
+  covering:
+  - the 2006 futures M1 data with 10 settings;
+  - 4 generated EURUSD-like markets of 120 days with 4 settings each;
+  - 20 runs that attach the EA mid-morning.
+
+  The settings included:
+  - break and close entries, including a range end inside a candle;
+  - the middle stop, buffers and the range-width filter;
+  - holding to the close and partial closes;
+  - New York and London clocks, and US and EU server DST.
+
+  Every one of the 2,151 trades matched an independently written model of
+  the rules. That model has its own range, filters, time zones, stop, target
+  and size arithmetic. Each trade's entry time, side, price, volume and
+  stored risk matched, and so did every close (price, volume and time).
+- **Time zones.** 250,344 server-to-clock conversions matched a table of
+  published DST dates (2016-2027), and the DST functions were checked at the
+  40 changes. Four readable anchors were checked too, for example London
+  08:00 = 11:00 server time on 18 March 2024.
+- **The results, OnTester and the panel** matched the deal history, also
+  while a position was open.
+- **Inputs.** 8 invalid input combinations were rejected.
+- **The EA matches the research model.** On the futures data it took the
+  same trades as the Python model in the same direction (29 of 29 days), with
+  the same win rate. The average R differed only by the cost model (-0.60
+  against -0.65R).
+- **The tests catch mistakes.** Each of 20 planted mistakes made them fail.
+  Among them:
+  - triggering buys on the ask;
+  - a sell stop without the spread;
+  - a close one minute late;
+  - the range including its end candle;
+  - DST on the wrong Sunday or an hour late;
+  - a target or size 10% off;
+  - no breakeven, or no last-entry time;
+  - close entries from a candle that began inside the range;
+  - a win rate that ignores the average;
+  - open trades counted in the results;
+  - no check for a range already broken when attaching late;
+  - a London clock without DST;
+  - a panel that never refreshes.
+- **Limits:**
+  - the backtest figures come from a Python model of the rules on hourly
+    EURUSD data, not from the EA itself;
+  - the data is one currency pair over 10 months, a strongly trending
+    period (1.07 to 1.25);
+  - with hourly candles, the order of prices inside an hour is unknown, so
+    the stop was counted first.
+
+  Results on other symbols and years will differ, and past results do not
+  promise future ones.
+
+**Sources:**
+- Zarattini and Aziz, "Can Day Trading Really Be Profitable?" (SSRN
+  4416622);
+- an independent replication
+  (https://github.com/giovannibrusco/zarattini-2023-orb-qqq);
+- Zarattini, Barbon and Aziz, "A Profitable Day Trading Strategy For The
+  U.S. Equity Market" (SSRN 4729284);
+- Crabel, "Day Trading with Short Term Price Patterns and Opening Range
+  Breakout" (1990);
+- MQL5 articles 20339 (session ORB) and 20323 (CRT).
