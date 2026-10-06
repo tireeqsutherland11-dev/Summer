@@ -2009,17 +2009,20 @@ and Python mirrors:
   - structure stayed within the processed candles.
 - **The Pine file parses** with pynescript (a syntax check only).
 
-## ORB Strategy (`ORB Strategy.mq5`)
+## ORB Strategy (`ORB Strategy.mq5` and `ORB Strategy.pine`)
 
-An Opening Range Breakout EA. It was built after comparing ORB with CRT
-(Candle Range Theory) on the data available here. ORB was the only one of
-the two with an edge beyond chance, so it is the one built. Its default exit
-has the highest win rate that still kept an edge.
+An Opening Range Breakout EA, with a TradingView strategy that follows the
+same rules. It was built after comparing ORB with CRT (Candle Range Theory)
+on the data available here. ORB was the only one of the two with an edge
+beyond chance, so it is the one built. Its default exit has the highest win
+rate that still kept an edge.
 
-Nothing here has been compiled in MetaEditor or run in the MT5 Strategy
-Tester. The EA was checked in the test harness (MQL5 compiled as C++ against
-a mock terminal; see [How it was checked](#how-the-orb-strategy-was-checked)),
-and the strategy research used Python backtests.
+Nothing here has been compiled in MetaEditor, run in the MT5 Strategy Tester
+or run in TradingView. The EA was checked in the test harness (MQL5 compiled
+as C++ against a mock terminal), and the Pine strategy against the EA through
+a line-by-line Python copy (see [How it was
+checked](#how-the-orb-strategy-was-checked)). The strategy research used
+Python backtests.
 
 ### ORB against CRT: the study
 
@@ -2247,6 +2250,43 @@ Install `ORB Strategy.mq5` in `MQL5/Experts` and compile it. It runs on any
 chart period; the range is always built from M1 candles. `Trade_Mode` is
 **Strategy Tester only** by default.
 
+### TradingView (`ORB Strategy.pine`)
+
+Add `ORB Strategy.pine` to a chart of 1 to 15 minutes.
+- **The candles must fit the range.** The range is built from the chart's
+  candles, so its start and length must be multiples of the chart's minutes.
+  Otherwise each day reads "the chart's candles do not fit the opening range".
+  For the default 60-minute range, any chart from 1 to 15 minutes works (30
+  and 60 do too).
+- **Time zones.** `Session Clock` is London, New York or the symbol's
+  exchange time. TradingView applies the daylight saving itself, so there are
+  no broker-offset inputs.
+- **Entries:**
+  - **Break:** stop orders at the range high and low, on the first tick
+    beyond them. The first to fill cancels the other (an OCA group).
+  - **Candle close:** the chart's own candles are used (there is no Candle
+    Timeframe input). The order fills at the next candle's open.
+- **The same inputs otherwise,** plus `Quantity Step`. There is no Trade
+  Mode, Magic Number, minimum stop in spreads or optimization criterion: they
+  have no TradingView equivalent.
+- **The panel** shows the same rows as the EA's. The `Results` row gives the
+  closed positions, with partial closes joined to their position: the win
+  rate, average R and profit factor.
+- **Alerts.** With `Alerts (entries)` on, an `alert()` call fires when a
+  position opens. Create an alert on the strategy with "Any alert() function
+  call" to receive it.
+- **Differences from the EA:**
+  - **Spread:** Pine has none. The EA's entries pay it, and its sell stops
+    carry it.
+  - **The range** comes from the chart's candles, not from M1 candles.
+  - **Candle-close sizing:** the size of a candle-close entry is worked out
+    from the signal candle's close; the EA uses the actual fill.
+  - **Breakeven after a partial close:** the stop moves to the entry from
+    the next candle; the EA moves it on the same tick.
+  - **A gap through the break level** fills at the open. On that candle the
+    target is still planned from the level; from the next candle it is
+    measured from the fill.
+
 ### How the ORB Strategy was checked
 
 - **Every trade follows the rules.** The harness ran tick-level backtests
@@ -2276,6 +2316,39 @@ chart period; the range is always built from M1 candles. `Trade_Mode` is
   same trades as the Python model in the same direction (29 of 29 days), with
   the same win rate. The average R differed only by the cost model (-0.60
   against -0.65R).
+- **The Pine strategy matches the EA.** A line-by-line Python copy of the Pine
+  script ran with TradingView's order handling:
+  - orders placed at a candle's close work from the next candle;
+  - stop and limit orders fill at their price, or at the open when a candle
+    opens beyond them;
+  - each candle runs open, the nearer extreme, the other extreme, close;
+  - the first entry to fill cancels the other.
+
+  The EA ran on the same 1-minute candles, along the same price path one tick
+  at a time, without spread. There were 22 runs: the futures data with 10
+  settings, and 3 generated markets with 4 settings each (London and New York
+  clocks, partial closes, close entries).
+  - **Trade for trade:** 21 runs matched, 1,752 positions in all. The entry
+    candle, side, price and size matched, and so did every close (candle,
+    price and size).
+  - **Candle-close entries on the futures:** they matched on timing and
+    prices, but 25 of 39 sizes differed, because Pine sizes from the signal
+    candle's close.
+  - **Other chart periods:** on 5- and 15-minute charts, the Pine copy traded
+    the same 39 days, in the same direction, as on 1-minute candles. A range
+    that does not fit the candles (09:00-09:10 on 15 minutes) was skipped
+    every day.
+  - **An EA bug found and fixed.** A price exactly on the partial-close level
+    could miss it through floating-point rounding, so the EA closed a tick
+    later. It now allows a thousandth of a point of slack, and the harness
+    model was corrected the same way.
+  - **Planted mistakes in the Pine copy:** 9 of 10 made the comparison fail.
+    Among them were the wrong last-entry or close time, no breakeven, no OCA
+    group, the range without its first candle, an unrounded break level and a
+    London clock without DST. The tenth allowed close entries on the range's
+    last candle, which cannot change a trade, because that candle closes
+    inside the range.
+- **The Pine file parses** with pynescript (a syntax check only).
 - **The tests catch mistakes.** Each of 20 planted mistakes made them fail.
   Among them:
   - triggering buys on the ask;

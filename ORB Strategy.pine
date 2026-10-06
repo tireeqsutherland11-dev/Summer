@@ -1,0 +1,384 @@
+//@version=6
+// ORB Strategy - Opening Range Breakout, as a TradingView strategy. Same rules
+// as ORB Strategy.mq5.
+//
+// The opening range is the high and low of the chart's candles from Range
+// Start to Range End (08:00-09:00 London time by default). From Range End
+// until No New Entries From (12:00), the first break of the range decides the
+// day's one trade:
+//  * Break (default): stop orders at the range high and low (plus the buffer);
+//    the first to fill cancels the other.
+//  * Candle close: a chart candle that opened at or after the range end closes
+//    beyond the range; the order fills at the next candle's open.
+// The stop goes on the other side of the range (or its middle), the target
+// Take Profit R times the risk from the fill (0 = none), and a position still
+// open at Close Time (16:00) is closed. An optional partial close at Partial
+// Close R moves the stop to the entry. The size risks Risk % of the balance
+// (initial capital plus net profit) at the stop.
+//
+// Run it on a chart whose candles fit the range: 1 to 15 minutes for the
+// default 60-minute range. A range wider than Skip Ranges Wider Than % of the
+// 10-day average daily range is not traded (off by default).
+strategy("ORB Strategy", shorttitle = "ORB", overlay = true, initial_capital = 10000, default_qty_type = strategy.fixed, default_qty_value = 1, pyramiding = 0, calc_on_order_fills = false, process_orders_on_close = false, margin_long = 0, margin_short = 0, max_boxes_count = 100, max_lines_count = 200)
+
+// ---------------------------------------------------------------- inputs
+grpSession = "Session (times on the Session Clock)"
+clockInput = input.string("London", "Session Clock", options = ["London", "New York", "Exchange"], group = grpSession, tooltip = "The clock the session times are written in. London and New York follow their own daylight saving; Exchange is the symbol's own time zone.")
+rangeStartInput = input.string("08:00", "Opening Range Start", group = grpSession, tooltip = "HH:MM on the Session Clock.")
+rangeEndInput = input.string("09:00", "Opening Range End (entries from here)", group = grpSession, tooltip = "HH:MM on the Session Clock. The range is complete at this time and entries can start.")
+lastEntryInput = input.string("12:00", "No New Entries From", group = grpSession, tooltip = "HH:MM on the Session Clock. Unfilled orders are cancelled here.")
+closeTimeInput = input.string("16:00", "Close Open Trades At", group = grpSession, tooltip = "HH:MM on the Session Clock. A position still open is closed at the open of the first candle at or after this time.")
+
+grpEntry = "Entry"
+entryModeInput = input.string("Break", "Entry", options = ["Break", "Candle close"], group = grpEntry, tooltip = "Break: stop orders at the range high and low plus the buffer; the first to fill cancels the other. Candle close: a chart candle closes beyond the range and the order fills at the next candle's open.")
+bufferPercent = input.float(0.0, "Breakout Buffer (% of the range)", minval = 0.0, step = 1.0, group = grpEntry, tooltip = "How far beyond the range high (low) the price must go, as a share of the range's height.")
+maxRangeAdr = input.float(0.0, "Skip Ranges Wider Than (% of 10-day ADR, 0 = off)", minval = 0.0, step = 5.0, group = grpEntry, tooltip = "No trade when the opening range is wider than this share of the average daily range of the 10 days before.")
+
+grpExit = "Exits"
+stopAtInput = input.string("Other side of the range", "Stop Loss At", options = ["Other side of the range", "Middle of the range"], group = grpExit)
+takeProfitR = input.float(1.0, "Take Profit (R, 0 = hold to Close Time)", minval = 0.0, step = 0.25, group = grpExit, tooltip = "The target as a multiple of the risk, measured from the fill. 0: no target; the position is closed at the Close Time (or by the stop).")
+partialR = input.float(0.0, "Partial Close At (R, 0 = off)", minval = 0.0, step = 0.25, group = grpExit, tooltip = "Close part of the position at this multiple of the risk, then move the stop to the entry. Must be below the Take Profit.")
+partialPercent = input.float(50.0, "Partial Close Size (%)", minval = 1.0, maxval = 99.0, step = 5.0, group = grpExit)
+
+grpRisk = "Risk"
+riskPercent = input.float(1.0, "Risk (%) Per Trade", minval = 0.01, maxval = 100.0, step = 0.1, group = grpRisk, tooltip = "Share of the balance (initial capital plus net profit) lost at the stop. Quantity = balance x risk / (stop distance x point value).")
+qtyStep = input.float(0.01, "Quantity Step", minval = 0.000001, group = grpRisk, tooltip = "Order quantities are rounded down to a multiple of this.")
+
+grpChart = "Chart"
+showRanges = input.bool(true, "Show The Opening Ranges", group = grpChart, tooltip = "Each armed day's range as a box, with its break levels until the Close Time. The last 30 days are kept.")
+showPanel = input.bool(true, "Show The Panel", group = grpChart)
+alertsOn = input.bool(false, "Alerts (entries)", group = grpChart, tooltip = "An alert() call when a position opens. Create an alert on this strategy with 'Any alert() function call' to receive it.")
+
+// ------------------------------------------------------------------ time
+// "HH:MM" -> minutes after midnight, or na.
+parseMinutes(string s) =>
+    array<string> parts = str.split(s, ":")
+    int result = na
+    if parts.size() == 2 and str.length(parts.get(0)) >= 1 and str.length(parts.get(0)) <= 2 and str.length(parts.get(1)) == 2
+        bool digits = true
+        for p in parts
+            for i = 0 to str.length(p) - 1
+                string c = str.substring(p, i, i + 1)
+                if not str.contains("0123456789", c)
+                    digits := false
+        if digits
+            int h = int(str.tonumber(parts.get(0)))
+            int m = int(str.tonumber(parts.get(1)))
+            if h <= 23 and m <= 59
+                result := h * 60 + m
+    result
+
+minutesText(int minutes) =>
+    int h = math.floor(minutes / 60)
+    int m = minutes % 60
+    (h < 10 ? "0" : "") + str.tostring(h) + ":" + (m < 10 ? "0" : "") + str.tostring(m)
+
+rangeStart = parseMinutes(rangeStartInput)
+rangeEnd = parseMinutes(rangeEndInput)
+lastEntry = parseMinutes(lastEntryInput)
+closeTime = parseMinutes(closeTimeInput)
+if na(rangeStart) or na(rangeEnd) or na(lastEntry) or na(closeTime)
+    runtime.error("ORB Strategy: the session times must be written HH:MM (00:00 to 23:59).")
+if rangeEnd <= rangeStart
+    runtime.error("ORB Strategy: Opening Range End must be after Opening Range Start.")
+if lastEntry <= rangeEnd
+    runtime.error("ORB Strategy: No New Entries From must be after Opening Range End.")
+if closeTime < lastEntry
+    runtime.error("ORB Strategy: Close Open Trades At must be at or after No New Entries From.")
+if partialR > 0 and takeProfitR > 0 and partialR >= takeProfitR
+    runtime.error("ORB Strategy: Partial Close At must be below the Take Profit.")
+
+string tz = clockInput == "London" ? "Europe/London" : clockInput == "New York" ? "America/New_York" : syminfo.timezone
+string clockName = clockInput == "Exchange" ? "exchange" : clockInput
+bool breakMode = entryModeInput == "Break"
+bool stopAtMiddle = stopAtInput == "Middle of the range"
+
+// The average high-low range of the 10 daily candles before today.
+float adr10 = request.security(syminfo.tickerid, "D", ta.sma(high - low, 10)[1], lookahead = barmerge.lookahead_on)
+
+priceText(float p) => str.tostring(p, format.mintick)
+
+// Order prices on the symbol's tick grid, as the EA's: a break level is the
+// first tick beyond the range, a stop is rounded away from the entry, a
+// target to the nearest tick, and a partial-close level to the first tick
+// at or beyond it.
+tickUp(float p) => math.ceil(p / syminfo.mintick - 1e-9) * syminfo.mintick
+tickDown(float p) => math.floor(p / syminfo.mintick + 1e-9) * syminfo.mintick
+tickBeyond(float p, float dir) => dir > 0 ? tickUp(p) : tickDown(p)
+
+// ------------------------------------------------------------- the day
+ST_WAITING = 0     // before the end of the opening range
+ST_ARMED = 1       // the range is known; waiting for the first break
+ST_DONE = 2        // traded, or skipped, for the day
+
+type OrbDay
+    int key = na
+    int rangeFrom = na
+    int rangeTo = na
+    int lastEntry = na
+    int closeAt = na
+    int state = 0
+    bool haveRange = false
+    float hi = na
+    float lo = na
+    int bars = 0
+    bool misaligned = false
+    float adr = na
+    float buyLevel = na
+    float sellLevel = na
+    float buySl = na
+    float sellSl = na
+    string status = ""
+
+var OrbDay day = OrbDay.new()
+var array<box> rangeBoxes = array.new<box>()
+var array<line> rangeLines = array.new<line>()
+
+// The open position: its plan and how it is managed.
+var float posSl = na
+var float posQty = na
+var int posCloseAt = na
+var int lastEntryTime = na
+var bool posBreakeven = false
+var map<int, float> riskByEntry = map.new<int, float>()
+
+method skip(OrbDay d, string reason) =>
+    d.state := ST_DONE
+    d.status := "no trade today: " + reason
+
+orbQty(float entry, float sl) =>
+    float dist = math.abs(entry - sl)
+    float riskCash = (strategy.initial_capital + strategy.netprofit) * riskPercent / 100
+    dist > 0 ? math.floor(riskCash / (dist * syminfo.pointvalue) / qtyStep) * qtyStep : 0.0
+
+method drawRange(OrbDay d) =>
+    if showRanges
+        rangeBoxes.push(box.new(d.rangeFrom, d.hi, d.rangeTo, d.lo, xloc = xloc.bar_time, border_color = color.new(color.blue, 40), bgcolor = color.new(color.blue, 85)))
+        rangeLines.push(line.new(d.rangeTo, d.buyLevel, d.closeAt, d.buyLevel, xloc = xloc.bar_time, color = color.green, style = line.style_dashed))
+        rangeLines.push(line.new(d.rangeTo, d.sellLevel, d.closeAt, d.sellLevel, xloc = xloc.bar_time, color = color.red, style = line.style_dashed))
+        while rangeBoxes.size() > 30
+            box.delete(rangeBoxes.shift())
+        while rangeLines.size() > 60
+            line.delete(rangeLines.shift())
+
+int barMinutes = int(timeframe.in_seconds() / 60)
+
+if barstate.isconfirmed
+    // A new session day on the Session Clock.
+    int y = year(time, tz)
+    int mo = month(time, tz)
+    int dd = dayofmonth(time, tz)
+    int key = y * 10000 + mo * 100 + dd
+    if key != day.key
+        day := OrbDay.new()
+        day.key := key
+        day.rangeFrom := timestamp(tz, y, mo, dd, math.floor(rangeStart / 60), rangeStart % 60)
+        day.rangeTo := timestamp(tz, y, mo, dd, math.floor(rangeEnd / 60), rangeEnd % 60)
+        day.lastEntry := timestamp(tz, y, mo, dd, math.floor(lastEntry / 60), lastEntry % 60)
+        day.closeAt := timestamp(tz, y, mo, dd, math.floor(closeTime / 60), closeTime % 60)
+        day.state := ST_WAITING
+        day.status := "waiting for the opening range (" + minutesText(rangeStart) + "-" + minutesText(rangeEnd) + " " + clockName + ")"
+
+    // The opening range from the chart's candles; it is complete on the candle
+    // that ends at or after Range End.
+    if day.state == ST_WAITING
+        if time >= day.rangeFrom and time < day.rangeTo
+            day.hi := na(day.hi) ? high : math.max(day.hi, high)
+            day.lo := na(day.lo) ? low : math.min(day.lo, low)
+            day.bars += 1
+            if time_close > day.rangeTo
+                day.misaligned := true
+        else if time < day.rangeFrom and time_close > day.rangeFrom
+            day.misaligned := true
+        if time_close >= day.rangeTo
+            int minutes = rangeEnd - rangeStart
+            if not timeframe.isintraday
+                day.skip("use an intraday chart")
+            else if day.misaligned
+                day.skip("the chart's candles do not fit the opening range (use " + str.tostring(minutes) + " minutes or a divisor of it)")
+            else if day.bars * barMinutes * 2 < minutes
+                day.skip("the opening range has too few prices (" + str.tostring(day.bars) + " candles)")
+            else if time_close >= day.lastEntry
+                day.skip("the opening range ends too close to the last entry time")
+            else if day.hi <= day.lo
+                day.skip("the opening range is flat")
+            else
+                day.haveRange := true
+                day.adr := adr10
+                float buffer = bufferPercent / 100 * (day.hi - day.lo)
+                float mid = (day.hi + day.lo) / 2
+                day.buyLevel := tickUp(day.hi + buffer)
+                day.sellLevel := tickDown(day.lo - buffer)
+                day.buySl := tickDown(stopAtMiddle ? mid : day.lo)
+                day.sellSl := tickUp(stopAtMiddle ? mid : day.hi)
+                if maxRangeAdr > 0 and na(day.adr)
+                    day.skip("the 10-day average daily range is unavailable")
+                else if maxRangeAdr > 0 and day.hi - day.lo > maxRangeAdr / 100 * day.adr
+                    day.skip("the range is " + str.tostring(100 * (day.hi - day.lo) / day.adr, "0") + "% of the average daily range (more than " + str.tostring(maxRangeAdr, "0") + "%)")
+                else
+                    day.state := ST_ARMED
+                    day.status := "armed: buy above " + priceText(day.buyLevel) + ", sell below " + priceText(day.sellLevel) + " until " + minutesText(lastEntry) + " " + clockName
+                    day.drawRange()
+
+    // A new position since the last candle (it may already have closed).
+    // (Explicit ifs: a trade index is only read when that trade exists.)
+    bool isOpen = strategy.opentrades > 0
+    int latestEntry = na
+    float entryPx = na
+    float size = na
+    if isOpen
+        latestEntry := strategy.opentrades.entry_time(0)
+        entryPx := strategy.opentrades.entry_price(0)
+        size := strategy.opentrades.size(0)
+    else if strategy.closedtrades > 0
+        int k = strategy.closedtrades - 1
+        latestEntry := strategy.closedtrades.entry_time(k)
+        entryPx := strategy.closedtrades.entry_price(k)
+        size := strategy.closedtrades.size(k)
+    if not na(latestEntry) and latestEntry != lastEntryTime
+        lastEntryTime := latestEntry
+        bool isLong = size > 0
+        posSl := isLong ? day.buySl : day.sellSl
+        posQty := math.abs(size)
+        posCloseAt := day.closeAt
+        posBreakeven := false
+        riskByEntry.put(latestEntry, math.abs(entryPx - posSl))
+        day.state := ST_DONE
+        float risk = math.abs(entryPx - posSl)
+        day.status := (isLong ? "buy " : "sell ") + str.tostring(posQty) + " at " + priceText(entryPx) + ", SL " + priceText(posSl) + (takeProfitR > 0 ? ", TP " + priceText(math.round_to_mintick(entryPx + (isLong ? 1 : -1) * takeProfitR * risk)) : ", no TP") + " (close at " + minutesText(closeTime) + " " + clockName + ")"
+        if alertsOn
+            alert("ORB Strategy " + syminfo.ticker + ": " + day.status, alert.freq_once_per_bar_close)
+
+    // The open position: closed at the Close Time of its day; otherwise its
+    // stop, target and partial close, measured from the fill.  After the
+    // partial close the stop is at the entry.
+    if strategy.position_size != 0 and strategy.opentrades > 0
+        bool isLong = strategy.position_size > 0
+        string id = isLong ? "ORB buy" : "ORB sell"
+        float openPx = strategy.opentrades.entry_price(0)
+        float risk = math.abs(openPx - posSl)
+        float dirSign = isLong ? 1.0 : -1.0
+        float tp = takeProfitR > 0 ? math.round_to_mintick(openPx + dirSign * takeProfitR * risk) : na
+        if time_close >= posCloseAt
+            strategy.close_all(comment = "Close Time")
+        else
+            if partialR > 0 and not posBreakeven and math.abs(strategy.position_size) < posQty - qtyStep / 2
+                posBreakeven := true
+            if partialR > 0 and not posBreakeven
+                strategy.exit(id + " partial", from_entry = id, qty_percent = partialPercent, stop = posSl, limit = tickBeyond(openPx + dirSign * partialR * risk, dirSign), comment_loss = "SL", comment_profit = "Partial")
+            strategy.exit(id + " exit", from_entry = id, stop = posBreakeven ? openPx : posSl, limit = tp, comment_loss = posBreakeven ? "BE" : "SL", comment_profit = "TP")
+
+    // The orders for the next candle while the range is armed.
+    if day.state == ST_ARMED and strategy.position_size == 0
+        if time_close >= day.lastEntry
+            strategy.cancel("ORB buy")
+            strategy.cancel("ORB sell")
+            day.skip("no break before " + minutesText(lastEntry) + " " + clockName)
+        else if breakMode
+            string oca = "ORB " + str.tostring(day.key)
+            float qtyBuy = orbQty(day.buyLevel, day.buySl)
+            float qtySell = orbQty(day.sellLevel, day.sellSl)
+            float riskBuy = day.buyLevel - day.buySl
+            float riskSell = day.sellSl - day.sellLevel
+            if qtyBuy > 0
+                strategy.entry("ORB buy", strategy.long, qty = qtyBuy, stop = day.buyLevel, oca_name = oca, oca_type = strategy.oca.cancel, comment = "ORB buy")
+                if partialR > 0
+                    strategy.exit("ORB buy partial", from_entry = "ORB buy", qty_percent = partialPercent, stop = day.buySl, limit = tickUp(day.buyLevel + partialR * riskBuy), comment_loss = "SL", comment_profit = "Partial")
+                strategy.exit("ORB buy exit", from_entry = "ORB buy", stop = day.buySl, limit = takeProfitR > 0 ? math.round_to_mintick(day.buyLevel + takeProfitR * riskBuy) : na, comment_loss = "SL", comment_profit = "TP")
+            if qtySell > 0
+                strategy.entry("ORB sell", strategy.short, qty = qtySell, stop = day.sellLevel, oca_name = oca, oca_type = strategy.oca.cancel, comment = "ORB sell")
+                if partialR > 0
+                    strategy.exit("ORB sell partial", from_entry = "ORB sell", qty_percent = partialPercent, stop = day.sellSl, limit = tickDown(day.sellLevel - partialR * riskSell), comment_loss = "SL", comment_profit = "Partial")
+                strategy.exit("ORB sell exit", from_entry = "ORB sell", stop = day.sellSl, limit = takeProfitR > 0 ? math.round_to_mintick(day.sellLevel - takeProfitR * riskSell) : na, comment_loss = "SL", comment_profit = "TP")
+            if qtyBuy <= 0 and qtySell <= 0
+                day.skip("the position size rounds to zero")
+        else if time >= day.rangeTo
+            // Candle close: the first close beyond the range decides.
+            int dir = close > day.buyLevel ? 1 : close < day.sellLevel ? -1 : 0
+            if dir != 0
+                float sl = dir > 0 ? day.buySl : day.sellSl
+                float qty = orbQty(close, sl)
+                if qty <= 0
+                    day.skip("the position size rounds to zero")
+                else
+                    string id = dir > 0 ? "ORB buy" : "ORB sell"
+                    float risk = math.abs(close - sl)
+                    strategy.entry(id, dir > 0 ? strategy.long : strategy.short, qty = qty, comment = id)
+                    if partialR > 0
+                        strategy.exit(id + " partial", from_entry = id, qty_percent = partialPercent, stop = sl, limit = tickBeyond(close + dir * partialR * risk, dir), comment_loss = "SL", comment_profit = "Partial")
+                    strategy.exit(id + " exit", from_entry = id, stop = sl, limit = takeProfitR > 0 ? math.round_to_mintick(close + dir * takeProfitR * risk) : na, comment_loss = "SL", comment_profit = "TP")
+                    day.state := ST_DONE
+                    day.status := (dir > 0 ? "buy" : "sell") + " on the close beyond the range (fills at the next open)"
+
+// --------------------------------------------------------------- panel
+DASH_TEXT_COLOR = color.black
+var table dash = table.new(position.top_right, 2, 6, bgcolor = color.new(color.white, 100), frame_width = 0, border_width = 0)
+
+dashRow(int row, string component, string output, color outputColor) =>
+    table.cell(dash, 0, row, component, text_color = DASH_TEXT_COLOR, text_halign = text.align_left, text_valign = text.align_top, text_size = size.small, text_formatting = text.format_bold)
+    table.cell(dash, 1, row, output, text_color = outputColor, text_halign = text.align_left, text_valign = text.align_top, text_size = size.small)
+
+// The closed positions: partial closes are joined to their position (same
+// entry time). A win has a positive net profit; R is the price move
+// (size-weighted) over the risk at the fill.
+resultsText() =>
+    map<int, float> profit = map.new<int, float>()
+    map<int, float> move = map.new<int, float>()
+    map<int, float> qty = map.new<int, float>()
+    array<int> order = array.new<int>()
+    if strategy.closedtrades > 0
+        for k = 0 to strategy.closedtrades - 1
+            int et = strategy.closedtrades.entry_time(k)
+            if not profit.contains(et)
+                order.push(et)
+                profit.put(et, 0.0)
+                move.put(et, 0.0)
+                qty.put(et, 0.0)
+            float size = strategy.closedtrades.size(k)
+            profit.put(et, profit.get(et) + strategy.closedtrades.profit(k))
+            move.put(et, move.get(et) + (strategy.closedtrades.exit_price(k) - strategy.closedtrades.entry_price(k)) * size)
+            qty.put(et, qty.get(et) + math.abs(size))
+    int openEntry = na
+    if strategy.opentrades > 0
+        openEntry := strategy.opentrades.entry_time(0)
+    int trades = 0
+    int wins = 0
+    int rTrades = 0
+    float sumR = 0.0
+    float grossWin = 0.0
+    float grossLoss = 0.0
+    for et in order
+        if na(openEntry) or et != openEntry
+            trades += 1
+            float p = profit.get(et)
+            if p > 0
+                wins += 1
+                grossWin += p
+            else
+                grossLoss -= p
+            float risk = riskByEntry.contains(et) ? riskByEntry.get(et) : na
+            if not na(risk) and risk > 0
+                sumR += move.get(et) / qty.get(et) / risk
+                rTrades += 1
+    float avgR = rTrades > 0 ? sumR / rTrades : 0.0
+    float pf = grossLoss > 0 ? grossWin / grossLoss : grossWin > 0 ? 99.0 : 0.0
+    trades == 0 ? "no closed trades yet" : str.tostring(trades) + " trades, win rate " + str.tostring(100.0 * wins / trades, "0.0") + "%, average " + (avgR >= 0 ? "+" : "") + str.tostring(avgR, "0.00") + "R, profit factor " + str.tostring(pf, "0.00")
+
+if showPanel and barstate.islast
+    table.clear(dash, 0, 0, 1, 5)
+    dashRow(0, "ORB Strategy", syminfo.ticker, DASH_TEXT_COLOR)
+    dashRow(1, "Session:", "range " + minutesText(rangeStart) + "-" + minutesText(rangeEnd) + ", entries until " + minutesText(lastEntry) + ", close " + minutesText(closeTime) + " (" + clockName + " time)", DASH_TEXT_COLOR)
+    string rangeText = "-"
+    if day.haveRange
+        rangeText := priceText(day.lo) + " - " + priceText(day.hi) + " (" + str.tostring((day.hi - day.lo) / syminfo.mintick, "0") + " ticks"
+        if not na(day.adr) and day.adr > 0
+            rangeText += ", " + str.tostring(100 * (day.hi - day.lo) / day.adr, "0") + "% of ADR"
+        rangeText += ")"
+    dashRow(2, "Range:", rangeText, DASH_TEXT_COLOR)
+    dashRow(3, "Today:", day.status, DASH_TEXT_COLOR)
+    string posText = "none"
+    if strategy.position_size != 0 and strategy.opentrades > 0
+        float openPx = strategy.opentrades.entry_price(0)
+        posText := (strategy.position_size > 0 ? "buy " : "sell ") + str.tostring(math.abs(strategy.position_size)) + " at " + priceText(openPx) + ", SL " + priceText(posBreakeven ? openPx : posSl)
+    dashRow(4, "Position:", posText, strategy.position_size > 0 ? color.green : strategy.position_size < 0 ? color.red : DASH_TEXT_COLOR)
+    dashRow(5, "Results:", resultsText(), DASH_TEXT_COLOR)

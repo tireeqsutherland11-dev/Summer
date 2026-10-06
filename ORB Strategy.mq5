@@ -629,7 +629,8 @@ void ManagePosition()
    double progress=buy?tick.bid-open:open-tick.ask;
    if(ticket!=g_partial_ticket)
      {
-      if(progress<Partial_Close_R*risk) return;
+      // A thousandth of a point of slack: a price exactly on the level counts.
+      if(progress<Partial_Close_R*risk-0.001*_Point) return;
       double part=StepVolume(volume*Partial_Close_Percent/100.0);
       double minimum=SymbolInfoDouble(_Symbol,SYMBOL_VOLUME_MIN);
       if(part>=minimum && volume-part>=minimum)
