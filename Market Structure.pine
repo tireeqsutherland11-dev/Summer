@@ -1,0 +1,251 @@
+//@version=6
+// Market Structure - Swings, BOS, CHoCH and Order Blocks
+//
+// A rebuild of the structure engine of "Market Structure BOS/CHOCH/MSB/FVG/
+// OB/BB (Nephew_Sam_)" (tradingview.com/v/PmIP7HAZ). That script is published
+// as protected source, so this is reconstructed from its description, settings
+// and release notes. Only the swing points, BOS, CHoCH and order blocks are
+// kept: no FVG, breaker blocks or MSB.
+//
+// Why it reads structure more smoothly than an ATR zigzag:
+//  * Swings are fractal pivots: a swing high is a candle whose high is above
+//    the Left Bars before it and the Right Bars after it (the "pivot
+//    strength"). It is confirmed Right Bars later and never changes. The
+//    swing size adapts to the market's own rhythm instead of a fixed ATR
+//    distance, and the author recommends a strength of 3-6.
+//  * Each swing is labelled HH/LH (or LL/HL) against the previous swing on
+//    its side.
+//  * Breakout Confirmation: a level breaks on a candle close beyond it
+//    (Close) or on its wick (Wick). There is no ATR buffer and no Range
+//    state: the last break always sets the trend.
+//  * BOS / CHoCH: a break in the trend's direction is a BOS, a break against
+//    it a CHoCH, and the CHoCH flips the trend at once.
+//     - Protected Swings (default): in a bullish trend the BOS level is the
+//       highest swing high since the last bullish break (pullback highs
+//       below it are internal and ignored) and the CHoCH level is the
+//       protected low, the low the last bullish break was launched from.
+//       Pullbacks that hold it are only pullbacks. Bearish mirrors this.
+//     - Latest Pivots: every break is of the latest unbroken swing high or
+//       low, the classic and more reactive reading.
+//  * Order blocks: after each BOS/CHoCH the script loops back from the
+//    break to the swing it broke and marks that leg's order block: the last
+//    opposite candle at the leg's origin (Origin), or every opposite candle
+//    in the leg that the next candle engulfed and price has not filled yet
+//    (All In Leg). A block extends until price fills it, by close or wick.
+//
+// Everything is read from closed candles, so nothing repaints.
+indicator("Market Structure - BOS/CHoCH/OB", shorttitle = "Market Structure", overlay = true, max_labels_count = 500, max_lines_count = 500, max_boxes_count = 500, max_bars_back = 5000)
+// ---------------------------------------------------------------- inputs
+grpStructure = "Market Structure"
+leftBars = input.int(5, "Pivot Left Bars", minval = 1, maxval = 50, group = grpStructure, tooltip = "Pivot strength to the left: how many candles before a swing high (low) must have lower highs (higher lows). The author recommends 3-6. Lower finds more, smaller swings.")
+rightBars = input.int(5, "Pivot Right Bars", minval = 1, maxval = 50, group = grpStructure, tooltip = "Pivot strength to the right: how many candles after a swing high (low) must have lower highs (higher lows). A swing is confirmed this many candles after it forms. Lower confirms faster.")
+breakType = input.string("Close", "Breakout Confirmation", options = ["Close", "Wick"], group = grpStructure, tooltip = "Close: the breakout candle must close beyond the swing. Wick: its high (low) beyond the swing is enough.")
+structureMode = input.string("Protected Swings", "Structure Mode", options = ["Protected Swings", "Latest Pivots"], group = grpStructure, tooltip = "Protected Swings: in a bullish trend a BOS breaks the highest swing high since the last bullish break and a CHoCH breaks the low that break was launched from (bearish mirrors this), so pullbacks inside the trend are ignored. Latest Pivots: every break is of the latest swing high or low, more reactive and noisier.")
+
+grpSwing = "Swing Points"
+showSwings = input.bool(true, "Show HH/HL/LH/LL", group = grpSwing, tooltip = "Label each swing high HH or LH and each swing low LL or HL against the previous swing on its side.")
+swingHighColor = input.color(color.gray, "Swing High Color", group = grpSwing, tooltip = "Text color of the HH/LH labels.")
+swingLowColor = input.color(color.gray, "Swing Low Color", group = grpSwing, tooltip = "Text color of the LL/HL labels.")
+
+grpBos = "BOS"
+showBos = input.bool(true, "Show BOS", group = grpBos, tooltip = "Display BOS (break of structure): a break in the trend's direction.")
+bullBosColor = input.color(#089981, "Bullish BOS Color", group = grpBos, tooltip = "Line and caption color of bullish BOS.")
+bearBosColor = input.color(#F23645, "Bearish BOS Color", group = grpBos, tooltip = "Line and caption color of bearish BOS.")
+
+grpChoch = "CHoCH"
+showChoch = input.bool(true, "Show CHoCH", group = grpChoch, tooltip = "Display CHoCH (change of character): a break against the trend. It flips the trend.")
+bullChochColor = input.color(#2962FF, "Bullish CHoCH Color", group = grpChoch, tooltip = "Line and caption color of bullish CHoCH.")
+bearChochColor = input.color(#FF9800, "Bearish CHoCH Color", group = grpChoch, tooltip = "Line and caption color of bearish CHoCH.")
+
+grpLines = "Labels and Lines"
+labelSizeInput = input.string("Small", "Label Size", options = ["Tiny", "Small", "Normal", "Large"], group = grpLines, tooltip = "Text size of the swing, BOS and CHoCH labels.")
+lineStyleInput = input.string("Dashed", "Line Style", options = ["Solid", "Dashed", "Dotted"], group = grpLines, tooltip = "Style of the BOS/CHoCH lines.")
+lineWidth = input.int(1, "Line Width", minval = 1, maxval = 4, group = grpLines, tooltip = "Width of the BOS/CHoCH lines.")
+
+grpOb = "Order Blocks"
+showOb = input.bool(true, "Show Order Blocks", group = grpOb, tooltip = "After each BOS/CHoCH, loop back from the break to the swing it broke and mark the order block of that leg.")
+obMode = input.string("Origin", "Order Blocks Per Break", options = ["Origin", "All In Leg"], group = grpOb, tooltip = "Origin: one block, the last opposite candle at the leg's origin (the last down candle before the up move for a bullish break), stretched to the swing's extreme. All In Leg: every opposite candle in the leg that the next candle engulfed (closed beyond) and price has not filled yet.")
+bullObColor = input.color(color.new(#089981, 80), "Bullish OB Color", group = grpOb, tooltip = "Fill color of bullish order blocks (from bullish breaks).")
+bearObColor = input.color(color.new(#F23645, 80), "Bearish OB Color", group = grpOb, tooltip = "Fill color of bearish order blocks (from bearish breaks).")
+extendOb = input.bool(true, "Extend Boxes Until Filled", group = grpOb, tooltip = "Extend each block to the right until price fills it. Off: a block ends at its break candle.")
+obFillType = input.string("Close", "Fill Type", options = ["Close", "Wick"], group = grpOb, tooltip = "A block is filled when a candle closes beyond its far side (Close) or its wick reaches beyond it (Wick).")
+hideFilled = input.bool(false, "Hide Filled Boxes", group = grpOb, tooltip = "Delete a block once it is filled. Off: it stays on the chart and stops extending at the candle that filled it.")
+maxObs = input.int(10, "Max Unfilled Boxes", minval = 1, maxval = 100, group = grpOb, tooltip = "How many unfilled blocks are kept. The oldest is deleted when a new one exceeds this.")
+
+labelSize = labelSizeInput == "Tiny" ? size.tiny : labelSizeInput == "Small" ? size.small : labelSizeInput == "Normal" ? size.normal : size.large
+lineStyle = lineStyleInput == "Solid" ? line.style_solid : lineStyleInput == "Dashed" ? line.style_dashed : line.style_dotted
+strict = structureMode == "Protected Swings"
+closeBreak = breakType == "Close"
+obFillClose = obFillType == "Close"
+NO_FILL = color.new(color.white, 100)
+MAX_LOOKBACK = 4999
+
+// ---------------------------------------------------------------- drawing
+// A BOS/CHoCH: a line from the broken swing to the breakout candle, captioned
+// at its middle, above the level for a bullish break and below for bearish.
+drawBreak(int fromBar, float level, bool bull, string txt, color clr) =>
+    line.new(fromBar, level, bar_index, level, xloc = xloc.bar_index, color = clr, style = lineStyle, width = lineWidth)
+    label.new(int(math.round(0.5 * (fromBar + bar_index))), level, txt, xloc = xloc.bar_index, yloc = yloc.price, color = NO_FILL, style = bull ? label.style_label_down : label.style_label_up, textcolor = clr, size = labelSize)
+
+var array<box> obBoxes = array.new<box>()
+var array<bool> obIsBull = array.new<bool>()
+
+// An order block from candle `left` up to the breakout candle, kept in the
+// unfilled list (the oldest is deleted past Max Unfilled Boxes).
+addOb(int left, float top, float bottom, bool bull) =>
+    clr = bull ? bullObColor : bearObColor
+    b = box.new(left, top, bar_index, bottom, xloc = xloc.bar_index, border_color = color.new(clr, 50), border_width = 1, bgcolor = clr, text = "OB", text_size = size.tiny, text_color = color.new(clr, 0), text_halign = text.align_right, text_valign = text.align_center)
+    obBoxes.push(b)
+    obIsBull.push(bull)
+    if obBoxes.size() > maxObs
+        box.delete(obBoxes.shift())
+        obIsBull.shift()
+    b
+
+// ---------------------------------------------------------------- structure
+ph = ta.pivothigh(high, leftBars, rightBars)
+pl = ta.pivotlow(low, leftBars, rightBars)
+
+// trend: 1 bullish, -1 bearish, 0 before the first break.
+// bullLvl/bullBar: the level whose break is bullish (the weak high in a
+// bullish trend, the protected high in a bearish one); bearLvl mirrors it.
+var int trend = 0
+var float prevPh = na
+var float prevPl = na
+var float bullLvl = na
+var int bullBar = na
+var float bearLvl = na
+var int bearBar = na
+
+bool bullBos = false
+bool bearBos = false
+bool bullChoch = false
+bool bearChoch = false
+
+if barstate.isconfirmed
+    // Fill and extend the unfilled order blocks.
+    if obBoxes.size() > 0
+        for i = obBoxes.size() - 1 to 0
+            b = obBoxes.get(i)
+            filled = obIsBull.get(i) ? (obFillClose ? close : low) < b.get_bottom() : (obFillClose ? close : high) > b.get_top()
+            if filled
+                if hideFilled
+                    b.delete()
+                else
+                    b.set_right(bar_index)
+                obBoxes.remove(i)
+                obIsBull.remove(i)
+            else if extendOb
+                b.set_right(bar_index)
+
+    // Swing points. A new swing high is the bullish level: always in Latest
+    // Pivots and before the first break; in a bullish trend only when it is
+    // above the weak high (or the weak high was just broken). In a bearish
+    // trend the protected high holds and lower highs do not move it.
+    if not na(ph)
+        int phBar = bar_index - rightBars
+        if showSwings and not na(prevPh)
+            label.new(phBar, ph, ph > prevPh ? "HH" : "LH", xloc = xloc.bar_index, yloc = yloc.price, color = NO_FILL, style = label.style_label_down, textcolor = swingHighColor, size = labelSize)
+        prevPh := ph
+        if not strict or trend == 0 or (trend == 1 and (na(bullLvl) or ph > bullLvl))
+            bullLvl := ph
+            bullBar := phBar
+    if not na(pl)
+        int plBar = bar_index - rightBars
+        if showSwings and not na(prevPl)
+            label.new(plBar, pl, pl < prevPl ? "LL" : "HL", xloc = xloc.bar_index, yloc = yloc.price, color = NO_FILL, style = label.style_label_up, textcolor = swingLowColor, size = labelSize)
+        prevPl := pl
+        if not strict or trend == 0 or (trend == -1 and (na(bearLvl) or pl < bearLvl))
+            bearLvl := pl
+            bearBar := plBar
+
+    upSrc = closeBreak ? close : high
+    dnSrc = closeBreak ? close : low
+
+    if not na(bullLvl) and upSrc > bullLvl
+        bool isChoch = trend == -1
+        int len = math.min(bar_index - bullBar, MAX_LOOKBACK)
+        // The leg's origin: the lowest low since the broken swing.
+        float oLow = low
+        int oOff = 0
+        for i = 0 to len
+            if low[i] < oLow
+                oLow := low[i]
+                oOff := i
+        if isChoch ? showChoch : showBos
+            drawBreak(bullBar, bullLvl, true, isChoch ? "CHoCH" : "BOS", isChoch ? bullChochColor : bullBosColor)
+        if showOb
+            if obMode == "Origin"
+                // The last down candle at or before the origin, down to the
+                // broken swing, stretched to the origin's low.
+                int k = -1
+                for i = oOff to len
+                    if close[i] < open[i]
+                        k := i
+                        break
+                k := k < 0 ? oOff : k
+                addOb(bar_index - k, high[k], math.min(low[k], oLow), true)
+            else if len >= 1
+                // Every down candle the next candle closed above, that no
+                // later candle up to the break has filled.
+                float runMin = obFillClose ? close : low
+                for i = 1 to len
+                    if close[i] < open[i] and close[i - 1] > open[i - 1] and close[i - 1] > high[i] and runMin >= low[i]
+                        addOb(bar_index - i, high[i], low[i], true)
+                    runMin := math.min(runMin, obFillClose ? close[i] : low[i])
+        bullChoch := isChoch
+        bullBos := not isChoch
+        trend := 1
+        if strict
+            // The protected low is the origin of this break.
+            bearLvl := oLow
+            bearBar := bar_index - oOff
+        bullLvl := na
+        bullBar := na
+    else if not na(bearLvl) and dnSrc < bearLvl
+        bool isChoch = trend == 1
+        int len = math.min(bar_index - bearBar, MAX_LOOKBACK)
+        // The leg's origin: the highest high since the broken swing.
+        float oHigh = high
+        int oOff = 0
+        for i = 0 to len
+            if high[i] > oHigh
+                oHigh := high[i]
+                oOff := i
+        if isChoch ? showChoch : showBos
+            drawBreak(bearBar, bearLvl, false, isChoch ? "CHoCH" : "BOS", isChoch ? bearChochColor : bearBosColor)
+        if showOb
+            if obMode == "Origin"
+                // The last up candle at or before the origin, down to the
+                // broken swing, stretched to the origin's high.
+                int k = -1
+                for i = oOff to len
+                    if close[i] > open[i]
+                        k := i
+                        break
+                k := k < 0 ? oOff : k
+                addOb(bar_index - k, math.max(high[k], oHigh), low[k], false)
+            else if len >= 1
+                // Every up candle the next candle closed below, that no
+                // later candle up to the break has filled.
+                float runMax = obFillClose ? close : high
+                for i = 1 to len
+                    if close[i] > open[i] and close[i - 1] < open[i - 1] and close[i - 1] < low[i] and runMax <= high[i]
+                        addOb(bar_index - i, high[i], low[i], false)
+                    runMax := math.max(runMax, obFillClose ? close[i] : high[i])
+        bearChoch := isChoch
+        bearBos := not isChoch
+        trend := -1
+        if strict
+            // The protected high is the origin of this break.
+            bullLvl := oHigh
+            bullBar := bar_index - oOff
+        bearLvl := na
+        bearBar := na
+
+// ---------------------------------------------------------------- alerts
+alertcondition(bullBos, "Bullish BOS", "{{ticker}} {{interval}}: bullish BOS")
+alertcondition(bearBos, "Bearish BOS", "{{ticker}} {{interval}}: bearish BOS")
+alertcondition(bullChoch, "Bullish CHoCH", "{{ticker}} {{interval}}: bullish CHoCH (the bearish trend's protected high broke)")
+alertcondition(bearChoch, "Bearish CHoCH", "{{ticker}} {{interval}}: bearish CHoCH (the bullish trend's protected low broke)")
+alertcondition(bullBos or bearBos or bullChoch or bearChoch, "Any BOS / CHoCH", "{{ticker}} {{interval}}: market structure break")
